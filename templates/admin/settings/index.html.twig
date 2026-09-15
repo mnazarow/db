@@ -54,6 +54,7 @@
             <div><dt>Каталог</dt><dd><code>{{ storage.dir }}</code> — {{ storage.writable ? 'доступен для записи' : 'НЕДОСТУПЕН для записи' }}</dd></div>
             <div><dt>Лимит размера файла</dt><dd>{{ storage.max_mb }} МБ (PHP: upload_max_filesize {{ storage.php_upload_max }}, post_max_size {{ storage.php_post_max }})</dd></div>
             <div><dt>Разрешённые форматы</dt><dd>{{ storage.extensions|join(', ') }}</dd></div>
+            <div><dt>Каталог импорта</dt><dd><code>{{ storage.import_dir }}</code> — {{ storage.import_writable ? 'доступен для записи' : 'не создан или недоступен для записи' }} · <a href="{{ path('admin_import') }}">Импорт из каталога</a></dd></div>
         </dl>
     </div>
     <div class="card">

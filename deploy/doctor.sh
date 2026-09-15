@@ -33,6 +33,11 @@ else
     check "Конфигурация nginx корректна (nginx -t)" nginx -t
     check "Каталог текущего релиза существует" test -d "${APP_DIR}/current/public"
     check "Хранилище документов доступно для записи пользователю ${SERVICE_USER}" runuser -u "${SERVICE_USER}" -- test -w "${APP_DIR}/shared/storage"
+    if [[ -d "${APP_DIR}/shared/import" ]]; then
+        check "Каталог импорта доступен для записи пользователю ${SERVICE_USER}" runuser -u "${SERVICE_USER}" -- test -w "${APP_DIR}/shared/import"
+        pending=$(find "${APP_DIR}/shared/import" -type f 2>/dev/null | wc -l)
+        [[ "${pending}" -gt 0 ]] && info "В каталоге импорта ${APP_DIR}/shared/import ожидают ${pending} файл(ов) — панель администратора → Импорт."
+    fi
     check "Подключение к базе данных" mysql_exec "${DB_HOST}" "${DB_PORT}" "${DB_USER}" "${DB_PASSWORD}" "SELECT 1"
     info "Проверка приложения (app:check):"
     runuser -u "${SERVICE_USER}" -- php "${APP_DIR}/current/bin/console" app:check --env=prod --no-interaction 2>&1 | sed 's/^/   /' || PROBLEMS=$((PROBLEMS + 1))

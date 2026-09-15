@@ -1,0 +1,57 @@
+{% extends 'admin/_layout.html.twig' %}
+
+{% block title %}Импорт: {{ job.plan.label }}{% endblock %}
+{% block admin_title %}Импорт: {{ job.plan.label }}{% endblock %}
+{% block admin_actions %}
+    <a class="btn btn--ghost" href="{{ path('admin_import') }}">Новый импорт</a>
+{% endblock %}
+
+{% block admin_body %}
+<div class="card" data-import-job="{{ path('admin_import_job_run', {id: job.id}) }}" data-token="{{ csrf_token('import') }}" data-label="{{ job.plan.label }}" data-finished="{{ job.finished ? '1' : '0' }}" data-autostart="{{ job.finished ? '0' : '1' }}">
+    <div class="card__head">
+        <h2 class="h-section">Ход выполнения</h2>
+        <span data-job-status>
+            {% if job.error %}<span class="badge badge--overdue"><span class="badge__dot"></span>Ошибка</span>
+            {% elseif job.finished %}<span class="badge badge--done"><span class="badge__dot"></span>Завершён</span>
+            {% else %}<span class="badge badge--progress"><span class="badge__dot"></span>Выполняется</span>{% endif %}
+        </span>
+    </div>
+    <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ job.progressPercent }}">
+        <div class="progress__bar" data-job-bar style="width: {{ job.progressPercent }}%"></div>
+    </div>
+    <div class="progress__text"><span data-job-position>{{ job.state.position }}</span> из {{ job.total }} элементов · <span data-job-percent>{{ job.progressPercent }}</span>%</div>
+    <div class="alert alert--danger" data-job-error {% if not job.error %}hidden{% endif %}>{{ job.error }}</div>
+    <div class="alert alert--warning" data-job-network hidden>Нет связи с сервером — повторная попытка через несколько секунд…</div>
+
+    <dl class="meta meta--stack import-counters">
+        {% for key, label in counters %}
+            <div><dt>{{ label }}</dt><dd data-counter="{{ key }}">{{ job.state.counters[key]|default(0) }}</dd></div>
+        {% endfor %}
+    </dl>
+
+    <div class="form-actions">
+        <button type="button" class="btn btn--pill" data-job-continue {% if job.finished %}hidden{% endif %}>Продолжить</button>
+        <button type="button" class="btn btn--ghost" data-job-pause {% if job.finished %}hidden{% endif %}>Приостановить</button>
+        <a class="btn btn--pill" data-job-open href="{{ root_section ? path('app_section_show', {id: root_section.id}) : path('app_home') }}" {% if not job.finished %}hidden{% endif %}>Открыть {{ root_section ? 'раздел «' ~ root_section.name ~ '»' : 'разделы' }}</a>
+        <a class="btn btn--ghost" href="{{ path('admin_sections') }}">Дерево разделов</a>
+    </div>
+    <p class="form-help">Задание создано {{ job.createdAt|date('d.m.Y H:i') }} ({{ job.actorName }}). Каталог: <code>{{ job.plan.dir }}</code>. Целевой раздел: {{ target ? target.fullName : '(верхний уровень)' }}{% if job.options.rootAsSection %}, раздел по имени папки{% endif %}.</p>
+</div>
+
+<div class="card table-card">
+    <div class="card__head card__head--padded"><h2 class="h-section">Журнал</h2><span class="text-muted" data-job-log-note>{% if job.state.log|length > log|length %}показаны последние {{ log|length }} записей{% endif %}</span></div>
+    <div class="table-scroll">
+        <table class="admin-table log-table">
+            <thead><tr><th>Элемент</th><th>Результат</th><th>Подробности</th></tr></thead>
+            <tbody data-job-log>
+            {% for line in log %}
+                {% set cls = {section_new: 'done', doc_new: 'done', version_new: 'shifted', section_exists: 'progress', unchanged: 'none', exists: 'soon', skipped: 'soon', error: 'overdue'}[line.result]|default('none') %}
+                <tr><td>{{ line.type == 'dir' ? '▸ ' }}{{ line.path == '' ? job.plan.label : line.path }}</td><td class="col-nowrap"><span class="badge badge--{{ cls }}"><span class="badge__dot"></span>{{ labels[line.result]|default(line.result) }}</span></td><td class="text-muted">{{ line.message }}</td></tr>
+            {% else %}
+                <tr data-job-log-empty><td colspan="3" class="text-muted">Пока ничего не обработано.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

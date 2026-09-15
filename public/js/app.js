@@ -93,7 +93,139 @@
                 window.location.href = tpl.replace('/versions/0/compare/0', '/versions/' + a + '/compare/' + b);
             });
         }
+
+        /* Импорт из каталога: выполнение задания порциями с показом хода */
+        var jobCard = document.querySelector('[data-import-job]');
+        if (jobCard) { importJob(jobCard); }
     });
+
+    function importJob(card) {
+        var url = card.getAttribute('data-import-job');
+        var token = card.getAttribute('data-token');
+        var label = card.getAttribute('data-label') || '(каталог)';
+        var finished = card.getAttribute('data-finished') === '1';
+        var running = false, paused = false, failures = 0;
+        var bar = card.querySelector('[data-job-bar]');
+        var position = card.querySelector('[data-job-position]');
+        var percent = card.querySelector('[data-job-percent]');
+        var status = card.querySelector('[data-job-status]');
+        var errorBox = card.querySelector('[data-job-error]');
+        var networkBox = card.querySelector('[data-job-network]');
+        var btnContinue = card.querySelector('[data-job-continue]');
+        var btnPause = card.querySelector('[data-job-pause]');
+        var btnOpen = card.querySelector('[data-job-open]');
+        var logBody = document.querySelector('[data-job-log]');
+        var logNote = document.querySelector('[data-job-log-note]');
+        var badgeClass = { section_new: 'done', doc_new: 'done', version_new: 'shifted', section_exists: 'progress', unchanged: 'none', exists: 'soon', skipped: 'soon', error: 'overdue' };
+
+        function badge(cls, text) {
+            return '<span class="badge badge--' + cls + '"><span class="badge__dot"></span>' + escapeHtml(text) + '</span>';
+        }
+        function setStatus(state) {
+            if (!status) { return; }
+            if (state === 'error') { status.innerHTML = badge('overdue', 'Ошибка'); }
+            else if (state === 'done') { status.innerHTML = badge('done', 'Завершён'); }
+            else if (state === 'paused') { status.innerHTML = badge('none', 'Приостановлен'); }
+            else { status.innerHTML = badge('progress', 'Выполняется'); }
+        }
+        function render(data) {
+            if (bar) { bar.style.width = data.percent + '%'; bar.parentNode.setAttribute('aria-valuenow', data.percent); }
+            if (position) { position.textContent = data.position; }
+            if (percent) { percent.textContent = data.percent; }
+            Object.keys(data.counters || {}).forEach(function (key) {
+                var el = card.querySelector('[data-counter="' + key + '"]');
+                if (el) { el.textContent = data.counters[key]; }
+            });
+            if (logBody && data.log) {
+                var html = '';
+                data.log.forEach(function (line) {
+                    var cls = badgeClass[line.result] || 'none';
+                    html += '<tr><td>' + (line.type === 'dir' ? '▸ ' : '') + escapeHtml(line.path === '' ? label : line.path) + '</td><td class="col-nowrap">' + badge(cls, line.label) + '</td><td class="text-muted">' + escapeHtml(line.message || '') + '</td></tr>';
+                });
+                if (html) { logBody.innerHTML = html; }
+                if (logNote) { logNote.textContent = data.log.length >= 300 ? 'показаны последние ' + data.log.length + ' записей' : ''; }
+            }
+            if (data.root_section && btnOpen) {
+                btnOpen.setAttribute('href', data.root_section.url);
+                btnOpen.textContent = 'Открыть раздел «' + data.root_section.name.split(' / ').pop() + '»';
+            }
+            if (data.error) {
+                if (errorBox) { errorBox.textContent = data.error; errorBox.hidden = false; }
+                setStatus('error');
+            }
+            if (data.finished) {
+                finished = true;
+                if (!data.error) { setStatus('done'); }
+                if (btnContinue) { btnContinue.hidden = true; }
+                if (btnPause) { btnPause.hidden = true; }
+                if (btnOpen) { btnOpen.hidden = false; }
+            }
+        }
+        function tick() {
+            if (finished || paused || running) { return; }
+            running = true;
+            var body = new FormData();
+            body.append('_token', token);
+            fetch(url, { method: 'POST', body: body, credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+                .then(function (r) {
+                    if (r.status === 409) { return r.json().then(function () { return { busy: true }; }); }
+                    if (!r.ok) { return r.json().catch(function () { return {}; }).then(function (d) { throw new Error(d.error || ('Ошибка сервера ' + r.status)); }); }
+                    return r.json();
+                })
+                .then(function (data) {
+                    running = false;
+                    failures = 0;
+                    if (networkBox) { networkBox.hidden = true; }
+                    if (data.busy) { setTimeout(tick, 2000); return; }
+                    render(data);
+                    if (!finished && !paused) { setTimeout(tick, 150); }
+                })
+                .catch(function (err) {
+                    running = false;
+                    failures++;
+                    if (failures >= 5) {
+                        if (errorBox) { errorBox.textContent = err.message; errorBox.hidden = false; }
+                        setStatus('paused');
+                        paused = true;
+                        if (btnContinue) { btnContinue.hidden = false; }
+                        return;
+                    }
+                    if (networkBox) { networkBox.hidden = false; }
+                    setTimeout(tick, 3000);
+                });
+        }
+        if (btnContinue) {
+            btnContinue.addEventListener('click', function () {
+                paused = false; failures = 0;
+                if (errorBox) { errorBox.hidden = true; }
+                setStatus('running');
+                if (btnPause) { btnPause.hidden = false; }
+                btnContinue.hidden = true;
+                tick();
+            });
+        }
+        if (btnPause) {
+            btnPause.addEventListener('click', function () {
+                paused = true;
+                setStatus('paused');
+                btnPause.hidden = true;
+                if (btnContinue) { btnContinue.hidden = false; }
+            });
+        }
+        window.addEventListener('beforeunload', function (e) {
+            if (!finished && !paused) { e.preventDefault(); e.returnValue = ''; }
+        });
+        if (!finished && card.getAttribute('data-autostart') === '1') {
+            if (btnContinue) { btnContinue.hidden = true; }
+            tick();
+        }
+    }
+
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, function (c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+        });
+    }
 
     function humanSize(bytes) {
         if (bytes < 1024) { return bytes + ' Б'; }

@@ -78,6 +78,7 @@ body {
     flex-direction: column;
 }
 img, svg { display: block; max-width: 100%; }
+[hidden] { display: none !important; }
 a { color: var(--blue); text-decoration: none; }
 a:hover { text-decoration: underline; }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; background: var(--gray-bg); padding: 2px 6px; border-radius: 6px; }
@@ -654,6 +655,21 @@ a.chip { text-decoration: none; }
 
 /* Форма поиска в домене */
 .ldap-lookup { margin-bottom: 8px; }
+
+/* --- Импорт из каталога --------------------------------------------------------- */
+.badge { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.progress { height: 12px; border-radius: 999px; background: var(--blue-pale); overflow: hidden; margin: 6px 0 8px; }
+.progress__bar { height: 100%; background: linear-gradient(90deg, var(--blue-light), var(--blue)); border-radius: 999px; transition: width .3s ease; min-width: 0; }
+.progress__text { font-size: 13px; color: var(--muted); margin-bottom: 14px; font-variant-numeric: tabular-nums; }
+.import-counters { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px 24px; margin: 6px 0 18px; }
+.import-counters dd { font-family: var(--font-head); font-size: 28px; line-height: 1; color: var(--blue); }
+.plan-table td, .log-table td { padding: 8px 12px; font-size: 13.5px; }
+.plan-table .col-nowrap, .log-table .col-nowrap { white-space: nowrap; }
+.plan-table__dir td { background: var(--blue-bg); }
+.plan-table .tree-cell { min-width: 260px; }
+.log-table td:first-child { word-break: break-word; }
+.hints { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.table-scroll { overflow-x: auto; }
 
 /* --- Адаптивность компонентов --------------------------------------------------- */
 @media (max-width: 1250px) {

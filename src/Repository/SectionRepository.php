@@ -96,6 +96,22 @@ final class SectionRepository extends ServiceEntityRepository
         return $this->findOneBy(['slug' => $slug]);
     }
 
+    /** Подраздел с таким названием (без учёта регистра) у заданного родителя; null — верхний уровень. */
+    public function findChildByName(?Section $parent, string $name): ?Section
+    {
+        $qb = $this->createQueryBuilder('s')
+            ->andWhere('LOWER(s.name) = :name')->setParameter('name', mb_strtolower(trim($name)))
+            ->orderBy('s.position', 'ASC')->addOrderBy('s.id', 'ASC')
+            ->setMaxResults(1);
+        if (null === $parent) {
+            $qb->andWhere('s.parent IS NULL');
+        } else {
+            $qb->andWhere('s.parent = :p')->setParameter('p', $parent);
+        }
+
+        return $qb->getQuery()->getOneOrNullResult();
+    }
+
     public function slugExists(string $slug, ?int $exceptId = null): bool
     {
         $qb = $this->createQueryBuilder('s')->select('COUNT(s.id)')->andWhere('s.slug = :slug')->setParameter('slug', $slug);

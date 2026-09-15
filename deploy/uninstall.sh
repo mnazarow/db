@@ -100,6 +100,9 @@ else
     if [[ "${INSTALL_MODE}" == "native" && -d "${APP_DIR}/shared/storage" ]]; then
         KEEP_DIR="${BACKUP_DIR:-${DEFAULT_BACKUP_DIR}}/storage-kept-$(date '+%Y%m%d-%H%M%S')"
         mkdir -p "${KEEP_DIR}" && cp -a "${APP_DIR}/shared/storage/." "${KEEP_DIR}/" && ok "Файлы документов сохранены в ${KEEP_DIR}"
+        if [[ -d "${APP_DIR}/shared/import" ]] && [[ -n "$(ls -A "${APP_DIR}/shared/import" 2>/dev/null)" ]]; then
+            mkdir -p "${KEEP_DIR}-import" && cp -a "${APP_DIR}/shared/import/." "${KEEP_DIR}-import/" && ok "Неимпортированные файлы из каталога импорта сохранены в ${KEEP_DIR}-import"
+        fi
     fi
     rm -rf "${APP_DIR}" && ok "Каталог ${APP_DIR} удалён (база данных сохранена)"
 fi

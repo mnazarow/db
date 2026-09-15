@@ -31,6 +31,7 @@ final class SettingsController extends AbstractController
         private readonly bool $notifyAdmins,
         private readonly int $defaultValidityMonths,
         private readonly string $timezone,
+        private readonly string $importDir,
     ) {
     }
 
@@ -48,6 +49,8 @@ final class SettingsController extends AbstractController
                 'extensions' => $this->storage->getAllowedExtensions(),
                 'php_upload_max' => \ini_get('upload_max_filesize'),
                 'php_post_max' => \ini_get('post_max_size'),
+                'import_dir' => $this->importDir,
+                'import_writable' => is_dir($this->importDir) && is_writable($this->importDir),
             ],
             'validity' => ['soon_days' => $this->validity->getSoonDays(), 'default_months' => $this->defaultValidityMonths, 'timezone' => $this->timezone],
             'mail' => ['from' => $this->mailFrom, 'notify_admins' => $this->notifyAdmins, 'dsn_set' => 'null://null' !== ($_SERVER['MAILER_DSN'] ?? $_ENV['MAILER_DSN'] ?? 'null://null')],

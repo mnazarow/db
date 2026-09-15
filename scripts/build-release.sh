@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  Сборка дистрибутива портала документации: dist/oem-status-portal-<версия>.tar.gz (+ .sha256).
+#  Сборка дистрибутива портала документации: dist/docportal-<версия>.tar.gz (+ .sha256).
 #  В архив входит каталог vendor/, поэтому на сервере Composer и доступ к packagist.org не нужны.
 #  Использование: ./scripts/build-release.sh [--no-vendor]
 # =============================================================================
@@ -31,8 +31,8 @@ EXCLUDES=(
 [[ "${WITH_VENDOR}" == "0" ]] && EXCLUDES+=(--exclude '/vendor')
 
 rsync -a "${EXCLUDES[@]}" ./ "${STAGE}/${NAME}/"
-mkdir -p "${STAGE}/${NAME}/var/cache" "${STAGE}/${NAME}/var/log" "${STAGE}/${NAME}/var/storage"
-touch "${STAGE}/${NAME}/var/storage/.gitkeep"
+mkdir -p "${STAGE}/${NAME}/var/cache" "${STAGE}/${NAME}/var/log" "${STAGE}/${NAME}/var/storage" "${STAGE}/${NAME}/var/import"
+touch "${STAGE}/${NAME}/var/storage/.gitkeep" "${STAGE}/${NAME}/var/import/.gitkeep"
 chmod +x "${STAGE}/${NAME}/bin/console" "${STAGE}/${NAME}"/deploy/*.sh "${STAGE}/${NAME}"/scripts/*.sh "${STAGE}/${NAME}/docker/entrypoint.sh"
 
 SUFFIX=""

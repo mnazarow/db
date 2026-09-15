@@ -1,0 +1,86 @@
+{% extends 'admin/_layout.html.twig' %}
+
+{% block title %}План импорта{% endblock %}
+{% block admin_title %}План импорта: {{ plan.label }}{% endblock %}
+{% block admin_actions %}
+    <a class="btn btn--ghost" href="{{ path('admin_import', values|filter(v => v is not same as(false) and v is not same as('') and v is not same as(0))) }}">← Изменить параметры</a>
+{% endblock %}
+
+{% block admin_body %}
+{% set total_actions = expected.section_new + expected.doc_new + expected.version_new %}
+<div class="grid grid--two">
+    <div class="card">
+        <h2 class="h-section">Что будет сделано</h2>
+        <dl class="meta meta--stack">
+            <div><dt>Каталог</dt><dd><code>{{ plan.dir }}</code></dd></div>
+            <div><dt>Целевой раздел</dt><dd>{{ target ? target.fullName : '(верхний уровень)' }}{% if options.rootAsSection %} → новый/существующий раздел «{{ plan.label }}»{% endif %}</dd></div>
+            <div><dt>Документы</dt><dd>{{ options.publish ? 'публикуются сразу' : 'создаются как черновики' }}, срок актуальности — {{ options.validityMonths > 0 ? options.validityMonths ~ ' мес.' : 'бессрочно' }}</dd></div>
+            <div><dt>Изменившиеся файлы</dt><dd>{{ options.updateExisting ? 'новая версия существующего документа' : 'пропускаются' }}</dd></div>
+            <div><dt>Исходные файлы</dt><dd>{{ options.deleteSource ? 'удаляются после переноса (опустевшие папки — тоже)' : 'остаются на месте (копирование)' }}</dd></div>
+        </dl>
+        <div class="chips" style="margin-top: 14px">
+            <span class="chip chip--static chip--done"><span class="chip__dot"></span>Новых разделов <span class="chip__count">{{ expected.section_new }}</span></span>
+            <span class="chip chip--static chip--progress"><span class="chip__dot"></span>Существующих разделов <span class="chip__count">{{ expected.section_exists }}</span></span>
+            <span class="chip chip--static chip--done"><span class="chip__dot"></span>Новых документов <span class="chip__count">{{ expected.doc_new }}</span></span>
+            <span class="chip chip--static chip--shifted"><span class="chip__dot"></span>Новых версий <span class="chip__count">{{ expected.version_new }}</span></span>
+            <span class="chip chip--static chip--none"><span class="chip__dot"></span>Без изменений <span class="chip__count">{{ expected.unchanged }}</span></span>
+            <span class="chip chip--static chip--soon"><span class="chip__dot"></span>Пропущено <span class="chip__count">{{ expected.skipped + expected.exists }}</span></span>
+        </div>
+        {% if summary.skipped|length > 0 %}
+            <ul class="bullets bullets--small" style="margin-top: 14px">
+                {% for reason, count in summary.skipped %}<li>{{ constant('App\\Service\\Import\\ImportPlan::SKIP_LABELS')[reason]|default(reason) }} — {{ count }}</li>{% endfor %}
+            </ul>
+        {% endif %}
+        <form method="post" action="{{ path('admin_import_start') }}" class="form-actions" {% if options.deleteSource %}data-confirm="Исходные файлы будут удалены после переноса. Начать импорт?"{% endif %}>
+            <input type="hidden" name="_token" value="{{ csrf_token('import') }}">
+            <input type="hidden" name="folder" value="{{ values.folder }}">
+            <input type="hidden" name="section" value="{{ values.section }}">
+            {% if values.root_as_section %}<input type="hidden" name="root_as_section" value="1">{% endif %}
+            <input type="hidden" name="status" value="{{ values.status }}">
+            <input type="hidden" name="validity" value="{{ values.validity }}">
+            {% if values.update %}<input type="hidden" name="update" value="1">{% endif %}
+            {% if values.delete_source %}<input type="hidden" name="delete_source" value="1">{% endif %}
+            {% if values.any_extension %}<input type="hidden" name="any_extension" value="1">{% endif %}
+            <button type="submit" class="btn btn--pill" {{ total_actions == 0 ? 'disabled' }}>Начать импорт</button>
+            <a class="btn btn--ghost" href="{{ path('admin_import') }}">Отмена</a>
+        </form>
+        {% if total_actions == 0 %}<p class="form-help">Ничего создавать или обновлять не требуется.</p>{% endif %}
+    </div>
+    <div class="card card--info">
+        <h2 class="h-section">Итого в каталоге</h2>
+        <dl class="meta meta--stack">
+            <div><dt>Папок → разделов</dt><dd>{{ summary.dirs }}{% if summary.dirsSkipped > 0 %} (пропущено {{ summary.dirsSkipped }}){% endif %}</dd></div>
+            <div><dt>Файлов → документов</dt><dd>{{ summary.files }}, {{ summary.bytes|filesize }}{% if summary.filesSkipped > 0 %} (пропущено {{ summary.filesSkipped }}){% endif %}</dd></div>
+        </dl>
+        <p style="margin-top: 14px">Импорт выполняется порциями: страница задания сама запрашивает обработку следующих файлов и показывает ход выполнения. Не закрывайте её до завершения — иначе импорт остановится, но его можно будет продолжить.</p>
+    </div>
+</div>
+
+<div class="card table-card">
+    <div class="table-scroll">
+        <table class="admin-table plan-table">
+            <thead><tr><th>Элемент</th><th>Тип / размер</th><th>Действие</th></tr></thead>
+            <tbody>
+            {% for e in rows %}
+                {% set depth = e.path == '' ? 0 : e.path|split('/')|length %}
+                {% set cls = {section_new: 'done', doc_new: 'done', version_new: 'shifted', section_exists: 'progress', unchanged: 'none', exists: 'soon', skipped: 'soon', error: 'overdue'}[e.result|default('skipped')]|default('none') %}
+                <tr class="{{ e.type == 'dir' ? 'plan-table__dir' }}">
+                    <td>
+                        <div class="tree-cell" style="--depth: {{ e.type == 'dir' ? (depth > 0 ? depth - 1 : 0) : depth }}">
+                            <span class="tree-cell__line" aria-hidden="true"></span>
+                            <span class="tree-cell__name">{% if e.type == 'dir' %}▸ {{ e.path == '' ? plan.label : e.name }}{% else %}{{ e.name }}{% endif %}</span>
+                            {% if e.type == 'dir' and e.descFile|default(null) %}<div class="hints">описание из {{ e.descFile }}</div>{% endif %}
+                        </div>
+                    </td>
+                    <td class="col-nowrap">{{ e.type == 'dir' ? 'раздел' : e.size|filesize }}</td>
+                    <td><span class="badge badge--{{ cls }}"><span class="badge__dot"></span>{{ labels[e.result|default('skipped')]|default(e.result) }}</span>{% if e.message|default('') %} <span class="text-muted">— {{ e.message }}</span>{% endif %}</td>
+                </tr>
+            {% endfor %}
+            {% if plan.count > rows_limit %}
+                <tr><td colspan="3" class="text-muted">… и ещё {{ plan.count - rows_limit }} элементов (полный список — в журнале задания после выполнения).</td></tr>
+            {% endif %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

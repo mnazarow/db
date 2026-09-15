@@ -4,7 +4,9 @@
 (./scripts/dev-server.sh). Запуск: python3 tests/e2e_screens.py http://127.0.0.1:8080 docs/images
 """
 import pathlib
+import re
 import sys
+import time
 import tempfile
 
 from playwright.sync_api import expect, sync_playwright
@@ -12,7 +14,35 @@ from playwright.sync_api import expect, sync_playwright
 BASE = sys.argv[1].rstrip('/') if len(sys.argv) > 1 else 'http://127.0.0.1:8080'
 OUT = pathlib.Path(sys.argv[2] if len(sys.argv) > 2 else 'docs/images')
 OUT.mkdir(parents=True, exist_ok=True)
+# Каталог импорта того сервера, который проверяется (IMPORT_DIR); нужен для шага «Импорт из каталога».
+IMPORT_DIR = pathlib.Path(sys.argv[3] if len(sys.argv) > 3 else 'var/import')
 PASSWORD = 'Demo12345'
+# Имя тестового пользователя уникально: демо-данные (app:demo:load --force) пользователей не удаляют.
+TEST_USER = 'test%d' % (int(time.time()) % 1000000)
+
+
+def make_import_tree(root):
+    """Образец дерева папок для проверки импорта: папки → разделы, файлы → документы."""
+    import shutil
+    if root.exists():
+        shutil.rmtree(root)
+    files = {
+        'README.txt': 'Документы отдела технического контроля (импорт из сетевой папки).',
+        'Положение_об_ОТК.docx': 'docx' * 200,
+        'Инструкции по контролю/описание.txt': 'Инструкции по входному и приёмочному контролю.',
+        'Инструкции по контролю/2024/ИК-01_Входной_контроль_металла.pdf': '%PDF-1.4 ik01',
+        'Инструкции по контролю/2024/ИК-02_Контроль сварных швов.pdf': '%PDF-1.4 ik02',
+        'Инструкции по контролю/2025/ИК-03 Приёмочный контроль.pdf': '%PDF-1.4 ik03',
+        'Протоколы испытаний/Протокол 1.pdf': '%PDF-1.4 p1',
+        'Протоколы испытаний/Протокол 2.pdf': '%PDF-1.4 p2',
+        'Протоколы испытаний/Протокол 10.pdf': '%PDF-1.4 p10',
+        'Протоколы испытаний/Thumbs.db': 'x',
+        'Черновики_2023/старый_отчёт.exe': 'MZ',
+    }
+    for rel, content in files.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding='utf-8')
 
 
 def shot(page, name, full=True):
@@ -202,9 +232,9 @@ with sync_playwright() as p:
     page.goto(BASE + '/admin/users')
     shot(page, '34-admin-users')
     page.goto(BASE + '/admin/users/new')
-    page.fill('#user_username', 'testuser')
+    page.fill('#user_username', TEST_USER)
     page.fill('#user_displayName', 'Тестов Тест Тестович')
-    page.fill('#user_email', 'testuser@example.ru')
+    page.fill('#user_email', TEST_USER + '@example.ru')
     page.fill('#user_plainPassword', 'Temp12345')
     page.check('#user_mustChangePassword')
     shot(page, '35-admin-user-form')
@@ -217,7 +247,7 @@ with sync_playwright() as p:
     page.goto(BASE + '/admin/statistics')
     shot(page, '37-admin-statistics')
     page.goto(BASE + '/admin/events')
-    shot(page, '38-admin-events')
+    shot(page, '38-admin-events', full=False)
     page.goto(BASE + '/admin/settings')
     shot(page, '39-admin-settings')
     page.click('form[action$="/ldap-test"] button')
@@ -225,6 +255,28 @@ with sync_playwright() as p:
     page.click('form[action$="/expiry-run"] button')
     expect(page.locator('.alert--success').first).to_contain_text('Проверка сроков выполнена')
     shot(page, '40-admin-expiry-run', full=False)
+    # 4а. Импорт из каталога: папки → разделы, файлы → документы
+    make_import_tree(IMPORT_DIR / 'Архив ОТК')
+    page.goto(BASE + '/admin/import')
+    expect(page.locator('#import-folder')).to_contain_text('Архив ОТК')
+    page.select_option('#import-folder', 'Архив ОТК')
+    page.select_option('#import-section', label='Производство')
+    page.check('#import-root-as-section')
+    shot(page, '42-admin-import')
+    page.click('button[type=submit]:has-text("Проверить")')
+    expect(page.locator('h1')).to_contain_text('План импорта')
+    expect(page.locator('.plan-table')).to_contain_text('новый раздел')
+    shot(page, '43-admin-import-preview')
+    page.click('button:has-text("Начать импорт")')
+    expect(page).to_have_url(re.compile(r'/admin/import/jobs/'))
+    expect(page.locator('[data-job-status]')).to_contain_text('Завершён', timeout=60000)
+    counters = {el.get_attribute('data-counter'): el.inner_text() for el in page.locator('[data-counter]').all()}
+    assert counters['sectionsNew'] == '6' and counters['docsNew'] == '7' and counters['errors'] == '0', counters
+    shot(page, '44-admin-import-job')
+    page.click('[data-job-open]')
+    expect(page.locator('h1')).to_contain_text('Архив ОТК')
+    expect(page.locator('.section-card')).to_have_count(3)
+    print('import ok', counters)
     # CSV
     with page.expect_download() as dl:
         page.goto(BASE + '/admin/documents')
@@ -240,7 +292,7 @@ with sync_playwright() as p:
     logout(page)
 
     # 5. Пользователь с временным паролем → принудительная смена
-    login(page, 'testuser', 'Temp12345')
+    login(page, TEST_USER, 'Temp12345')
     expect(page).to_have_url(BASE + '/profile/password')
     shot(page, '41-forced-password', full=False)
     page.fill('#change_password_currentPassword', 'Temp12345')

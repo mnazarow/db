@@ -432,3 +432,68 @@ banner() {
     printf ' %s — %s\n' "${APP_TITLE}" "$1"
     printf '%s%s\n' "==============================================================" "${C_RESET}"
 }
+
+# Команда управления /usr/local/bin/docportal (создаётся при установке и обновляется при обновлении).
+install_cli_wrapper() {
+    cat > "/usr/local/bin/${APP_ID}" <<EOF
+#!/usr/bin/env bash
+# Управление порталом «${APP_TITLE}»: ${APP_ID} <команда> [параметры]
+set -euo pipefail
+CONF="${CONF_FILE}"
+[[ -r "\${CONF}" ]] || { echo "Портал не установлен (нет \${CONF})." >&2; exit 1; }
+. "\${CONF}"
+if [[ "\${INSTALL_MODE}" == "docker" ]]; then DEPLOY="\${APP_DIR}/deploy"; else DEPLOY="\${APP_DIR}/current/deploy"; fi
+cmd="\${1:-help}"; shift || true
+case "\${cmd}" in
+    update|backup|restore|uninstall|status|doctor)
+        [[ "\${cmd}" == "status" ]] && cmd="doctor"
+        exec "\${DEPLOY}/\${cmd}.sh" "\$@" ;;
+    console)
+        if [[ "\${INSTALL_MODE}" == "docker" ]]; then
+            cd "\${APP_DIR}/docker" && exec docker compose exec app php bin/console "\$@"
+        else
+            exec runuser -u "\${SERVICE_USER}" -- php "\${APP_DIR}/current/bin/console" "\$@"
+        fi ;;
+    import)
+        # import [КАТАЛОГ] [параметры app:import:directory]: папки → разделы, файлы → документы.
+        SRC=""; if [[ \$# -gt 0 && "\${1}" != -* ]]; then SRC="\${1}"; shift; fi
+        if [[ "\${INSTALL_MODE}" == "docker" ]]; then
+            cd "\${APP_DIR}/docker"
+            if [[ -z "\${SRC}" ]]; then exec docker compose exec app php bin/console app:import:directory "\$@"; fi
+            [[ -d "\${SRC}" ]] || { echo "Каталог не найден: \${SRC}" >&2; exit 1; }
+            NAME=\$(basename "\${SRC}")
+            # Каталог копируется в том импорта контейнера, импортируется оттуда и удаляется после успеха.
+            docker compose cp "\${SRC}" "app:/var/www/html/var/import/\${NAME}" >/dev/null || exit 1
+            docker compose exec app php bin/console app:import:directory "/var/www/html/var/import/\${NAME}" --root-as-section "\$@" || exit \$?
+            exec docker compose exec app rm -rf "/var/www/html/var/import/\${NAME}"
+        fi
+        if [[ -z "\${SRC}" ]]; then exec runuser -u "\${SERVICE_USER}" -- php "\${APP_DIR}/current/bin/console" app:import:directory "\$@"; fi
+        [[ -d "\${SRC}" ]] || { echo "Каталог не найден: \${SRC}" >&2; exit 1; }
+        SRC=\$(cd "\${SRC}" && pwd)
+        # Пользователь службы должен читать каталог: при необходимости скопируйте его в \${APP_DIR}/shared/import.
+        exec runuser -u "\${SERVICE_USER}" -- php "\${APP_DIR}/current/bin/console" app:import:directory "\${SRC}" --root-as-section "\$@" ;;
+    logs)
+        if [[ "\${INSTALL_MODE}" == "docker" ]]; then cd "\${APP_DIR}/docker" && exec docker compose logs -f --tail=200 "\$@";
+        else
+            LOGF=\$(ls -t "\${APP_DIR}"/shared/log/prod*.log 2>/dev/null | head -n1)
+            [[ -n "\${LOGF}" ]] || { echo "Журнал приложения пока пуст (\${APP_DIR}/shared/log)." >&2; exit 0; }
+            exec tail -n 200 -f "\${LOGF}" "\$@"
+        fi ;;
+    help|--help|-h|*)
+        cat <<HELP
+Использование: ${APP_ID} <команда>
+  status              Состояние портала и диагностика
+  update [--source DIR|--archive FILE]   Обновление до новой версии
+  backup              Резервная копия (база данных + файлы)
+  restore ARCHIVE     Восстановление из резервной копии
+  console <команда>   Консоль Symfony (например: console app:user:create ivanov --admin, console app:documents:expiry, console app:ldap:test)
+  import [КАТАЛОГ]    Импорт документов из каталога: папки → разделы, файлы → документы
+                      (без каталога — импорт каталога IMPORT_DIR; параметры: --section=ID --dry-run --draft --delete-source …)
+  logs                Журнал приложения
+  uninstall           Удаление портала
+HELP
+        ;;
+esac
+EOF
+    chmod 755 "/usr/local/bin/${APP_ID}"
+}

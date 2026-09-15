@@ -1,0 +1,116 @@
+{% extends 'admin/_layout.html.twig' %}
+
+{% block title %}Импорт из каталога{% endblock %}
+{% block admin_title %}Импорт из каталога{% endblock %}
+
+{% block admin_body %}
+{% if not dir_exists %}
+    <div class="alert alert--danger">Каталог импорта <code>{{ import_dir }}</code> не существует, и создать его не удалось. Создайте каталог на сервере с правами на запись для пользователя веб-сервера или укажите другой путь в параметре <code>IMPORT_DIR</code>.</div>
+{% elseif not dir_writable %}
+    <div class="alert alert--warning">Каталог импорта <code>{{ import_dir }}</code> доступен только для чтения: импорт возможен, но удаление исходных файлов после переноса работать не будет.</div>
+{% endif %}
+
+<div class="grid grid--two">
+    <div class="card card--form">
+        <form method="post" action="{{ path('admin_import_preview') }}" class="form" data-import-form>
+            <input type="hidden" name="_token" value="{{ csrf_token('import') }}">
+
+            <div class="form-row">
+                <label class="form-label" for="import-folder">Что импортировать</label>
+                <select class="form-control" id="import-folder" name="folder">
+                    <option value="" {{ values.folder == '' ? 'selected' }}>Весь каталог импорта{% if root_files.files > 0 %} (в корне {{ root_files.files }} файл(ов), {{ root_files.bytes|filesize }}){% endif %}</option>
+                    {% for f in folders %}
+                        <option value="{{ f.name }}" {{ values.folder == f.name ? 'selected' }}>{{ f.name }} — папок: {{ f.dirs }}, файлов: {{ f.files }}, {{ f.bytes|filesize }}</option>
+                    {% endfor %}
+                </select>
+                <div class="form-help">Каталог импорта на сервере: <code>{{ import_dir }}</code>. Скопируйте в него папку с документами (SFTP, SMB, scp), затем выберите её здесь.{% if folders|length == 0 %} <b>Сейчас в каталоге нет подпапок.</b>{% endif %}</div>
+            </div>
+
+            <div class="form-row">
+                <label class="form-label" for="import-section">Целевой раздел</label>
+                <select class="form-control" id="import-section" name="section">
+                    <option value="0" {{ values.section == 0 ? 'selected' }}>(верхний уровень)</option>
+                    {% for s in tree %}
+                        <option value="{{ s.id }}" {{ values.section == s.id ? 'selected' }}>{% if s.depth > 0 %}{% for i in 1..s.depth %}— {% endfor %}{% endif %}{{ s.name }}</option>
+                    {% endfor %}
+                </select>
+                <div class="form-help">Раздел, внутрь которого попадёт дерево папок. Папки первого уровня станут его подразделами, файлы из корня выбранного каталога — его документами.</div>
+            </div>
+
+            <div class="form-row form-row--check">
+                <label class="form-check" for="import-root-as-section">
+                    <input type="checkbox" id="import-root-as-section" name="root_as_section" value="1" {{ values.root_as_section ? 'checked' }}>
+                    <span>Создать раздел с именем выбранной папки и импортировать всё внутрь него</span>
+                </label>
+                <div class="form-help">Например, папка «Архив ОТК» → раздел «Архив ОТК» с подразделами по её подпапкам. Без этого флажка подпапки становятся разделами прямо в целевом разделе.</div>
+            </div>
+
+            <div class="form-grid">
+                <div class="form-row">
+                    <span class="form-label">Статус документов</span>
+                    <div class="choice-list choice-list--inline">
+                        <label class="form-check form-check--radio"><input type="radio" name="status" value="published" {{ values.status == 'published' ? 'checked' }}><span>Опубликовать сразу</span></label>
+                        <label class="form-check form-check--radio"><input type="radio" name="status" value="draft" {{ values.status == 'draft' ? 'checked' }}><span>Черновики</span></label>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="import-validity">Срок актуальности, месяцев</label>
+                    <input class="form-control" type="number" id="import-validity" name="validity" min="0" max="240" value="{{ values.validity }}">
+                    <div class="form-help">0 — бессрочно. По умолчанию — {{ default_validity > 0 ? default_validity ~ ' мес. (DEFAULT_VALIDITY_MONTHS)' : 'бессрочно' }}.</div>
+                </div>
+            </div>
+
+            <div class="form-row form-row--check">
+                <label class="form-check" for="import-update"><input type="checkbox" id="import-update" name="update" value="1" {{ values.update ? 'checked' }}><span>Для изменившихся файлов, которые уже есть в разделе, загружать новую версию</span></label>
+                <div class="form-help">Совпадение определяется по имени файла в разделе; неизменившиеся файлы пропускаются, поэтому импорт можно повторять.</div>
+            </div>
+            <div class="form-row form-row--check">
+                <label class="form-check" for="import-delete-source"><input type="checkbox" id="import-delete-source" name="delete_source" value="1" {{ values.delete_source ? 'checked' }}><span>Удалять исходные файлы после успешного импорта (перенос)</span></label>
+                <div class="form-help">Опустевшие папки тоже удаляются. Пропущенные файлы остаются на месте.</div>
+            </div>
+            <div class="form-row form-row--check">
+                <label class="form-check" for="import-any-extension"><input type="checkbox" id="import-any-extension" name="any_extension" value="1" {{ values.any_extension ? 'checked' }}><span>Импортировать файлы с любыми расширениями</span></label>
+                <div class="form-help">Иначе — только: {{ extensions|join(', ') }}. Лимит размера файла — {{ max_mb }} МБ.</div>
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" class="btn btn--pill" {{ not dir_exists ? 'disabled' }}>Проверить и показать план</button>
+                <a class="btn btn--ghost" href="{{ path('admin_sections') }}">К разделам</a>
+            </div>
+        </form>
+    </div>
+
+    <div class="stack">
+        <div class="card card--info">
+            <h2 class="h-section">Как это работает</h2>
+            <p>Дерево папок становится деревом разделов любой вложенности: папка → раздел, подпапка → подраздел. Каждый файл становится документом-файлом, название — имя файла без расширения (подчёркивания заменяются пробелами), исходное имя сохраняется в версии.</p>
+            <p>Если положить в папку файл <code>README.txt</code>, <code>README.md</code> или <code>описание.txt</code>, его текст станет описанием раздела. Скрытые и служебные файлы (<code>.*</code>, <code>~$*</code>, <code>Thumbs.db</code>, <code>desktop.ini</code>) пропускаются, символические ссылки не разворачиваются.</p>
+            <p>Существующие разделы с тем же названием переиспользуются, а не дублируются. Перед выполнением показывается план — что будет создано, обновлено и пропущено. Большие каталоги импортируются порциями прямо в браузере; для очень больших объёмов удобнее консольная команда <code>docportal console app:import:directory ПУТЬ</code>.</p>
+        </div>
+        {% if recent_jobs|length > 0 %}
+        <div class="card">
+            <h2 class="h-section">Последние импорты</h2>
+            <div class="table-scroll">
+                <table class="admin-table">
+                    <thead><tr><th>Когда</th><th>Каталог</th><th class="col-num">Элементов</th><th>Состояние</th></tr></thead>
+                    <tbody>
+                    {% for j in recent_jobs %}
+                        <tr>
+                            <td><a href="{{ path('admin_import_job', {id: j.id}) }}">{{ j.createdAt|date('d.m.Y H:i') }}</a><div class="hints">{{ j.actorName }}</div></td>
+                            <td>{{ j.plan.label }}</td>
+                            <td class="col-num">{{ j.state.position }} / {{ j.total }}</td>
+                            <td>
+                                {% if j.error %}<span class="badge badge--overdue"><span class="badge__dot"></span>Ошибка</span>
+                                {% elseif j.finished %}<span class="badge badge--done"><span class="badge__dot"></span>Завершён</span>
+                                {% else %}<span class="badge badge--progress"><span class="badge__dot"></span>Не завершён</span>{% endif %}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

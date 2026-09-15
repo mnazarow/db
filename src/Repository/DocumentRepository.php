@@ -318,4 +318,21 @@ final class DocumentRepository extends ServiceEntityRepository
     {
         return $this->createQueryBuilder('d')->leftJoin('d.versions', 'v')->addSelect('v')->getQuery()->getResult();
     }
+
+    /**
+     * Документ-файл раздела, текущая версия которого имеет заданное имя файла (без учёта регистра).
+     * Архивные документы не учитываются — повторный импорт файла с тем же именем создаст новый документ.
+     */
+    public function findFileByName(Section $section, string $originalName): ?Document
+    {
+        return $this->createQueryBuilder('d')
+            ->join('d.currentVersion', 'cv')->addSelect('cv')
+            ->andWhere('d.section = :s')->setParameter('s', $section)
+            ->andWhere('d.type = :type')->setParameter('type', Document::TYPE_FILE)
+            ->andWhere('d.status <> :archived')->setParameter('archived', Document::STATUS_ARCHIVED)
+            ->andWhere('LOWER(cv.originalName) = :name')->setParameter('name', mb_strtolower($originalName))
+            ->orderBy('d.updatedAt', 'DESC')->addOrderBy('d.id', 'DESC')
+            ->setMaxResults(1)
+            ->getQuery()->getOneOrNullResult();
+    }
 }

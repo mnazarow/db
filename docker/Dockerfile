@@ -32,7 +32,7 @@ RUN set -eux; \
     if [ ! -d vendor ]; then \
         COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader --no-interaction --no-progress --prefer-dist; \
     fi; \
-    mkdir -p var/cache var/log var/storage; \
+    mkdir -p var/cache var/log var/storage var/import; \
     chown -R www-data:www-data var; \
     chmod +x bin/console docker/entrypoint.sh
 

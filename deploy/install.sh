@@ -7,7 +7,7 @@
 #    sudo ./deploy/install.sh --domain docs.example.ru --ssl-email admin@example.ru
 #    sudo ./deploy/install.sh --domain docs.example.ru --ldap-host dc1.example.local --ldap-base-dn "DC=example,DC=local" --ldap-upn-suffix example.local
 #    sudo ./deploy/install.sh --mode docker --port 8080      # установка в Docker
-#    sudo ./deploy/install.sh --archive docportal-1.0.0.tar.gz --yes
+#    sudo ./deploy/install.sh --archive docportal-1.1.0.tar.gz --yes
 #
 #  Полный список параметров: ./deploy/install.sh --help
 # =============================================================================
@@ -519,10 +519,11 @@ composer_install() {
 link_shared() {
     # link_shared RELEASE_DIR — подключает общие каталоги (загрузки, журналы, .env.local)
     local rel=$1
-    mkdir -p "${APP_DIR}/shared/storage" "${APP_DIR}/shared/log" "${rel}/var"
-    rm -rf "${rel}/var/storage" "${rel}/var/log"
+    mkdir -p "${APP_DIR}/shared/storage" "${APP_DIR}/shared/log" "${APP_DIR}/shared/import" "${rel}/var"
+    rm -rf "${rel}/var/storage" "${rel}/var/log" "${rel}/var/import"
     ln -sfn "${APP_DIR}/shared/storage" "${rel}/var/storage"
     ln -sfn "${APP_DIR}/shared/log" "${rel}/var/log"
+    ln -sfn "${APP_DIR}/shared/import" "${rel}/var/import"
     ln -sfn "${APP_DIR}/shared/.env.local" "${rel}/.env.local"
 }
 
@@ -548,6 +549,8 @@ APP_DEFAULT_URI=${url}
 APP_TIMEZONE=${TIMEZONE}
 DATABASE_URL="mysql://${DB_USER}:${pw_url}@${DB_HOST}:${DB_PORT}/${DB_NAME}?serverVersion=${DB_SERVER_VERSION}&charset=utf8mb4"
 STORAGE_DIR=${APP_DIR}/shared/storage
+# Каталог импорта: положите сюда папки с документами и запустите импорт в панели администратора.
+IMPORT_DIR=${APP_DIR}/shared/import
 UPLOAD_MAX_MB=100
 TRUSTED_PROXIES=
 MAILER_DSN=${MAIL_DSN:-null://null}
@@ -578,6 +581,8 @@ set_permissions() {
     chmod 751 "${rel}"
     chmod -R o+rX "${rel}/public"
     chmod 750 "${APP_DIR}/shared/storage" "${APP_DIR}/shared/log"
+    # Каталог импорта: группа службы может записывать, новые файлы наследуют группу (setgid).
+    chmod 2770 "${APP_DIR}/shared/import"
     chmod +x "${rel}/bin/console" "${rel}"/deploy/*.sh 2>/dev/null || true
     if command -v getenforce >/dev/null 2>&1 && [[ "$(getenforce 2>/dev/null)" == "Enforcing" ]]; then
         info "SELinux в режиме Enforcing — настройка контекстов"
@@ -732,49 +737,6 @@ configure_firewall() {
     fi
 }
 
-install_cli_wrapper() {
-    cat > "/usr/local/bin/${APP_ID}" <<EOF
-#!/usr/bin/env bash
-# Управление порталом «${APP_TITLE}»: ${APP_ID} <команда> [параметры]
-set -euo pipefail
-CONF="${CONF_FILE}"
-[[ -r "\${CONF}" ]] || { echo "Портал не установлен (нет \${CONF})." >&2; exit 1; }
-. "\${CONF}"
-if [[ "\${INSTALL_MODE}" == "docker" ]]; then DEPLOY="\${APP_DIR}/deploy"; else DEPLOY="\${APP_DIR}/current/deploy"; fi
-cmd="\${1:-help}"; shift || true
-case "\${cmd}" in
-    update|backup|restore|uninstall|status|doctor)
-        [[ "\${cmd}" == "status" ]] && cmd="doctor"
-        exec "\${DEPLOY}/\${cmd}.sh" "\$@" ;;
-    console)
-        if [[ "\${INSTALL_MODE}" == "docker" ]]; then
-            cd "\${APP_DIR}/docker" && exec docker compose exec app php bin/console "\$@"
-        else
-            exec runuser -u "\${SERVICE_USER}" -- php "\${APP_DIR}/current/bin/console" "\$@"
-        fi ;;
-    logs)
-        if [[ "\${INSTALL_MODE}" == "docker" ]]; then cd "\${APP_DIR}/docker" && exec docker compose logs -f --tail=200 "\$@";
-        else
-            LOGF=\$(ls -t "\${APP_DIR}"/shared/log/prod*.log 2>/dev/null | head -n1)
-            [[ -n "\${LOGF}" ]] || { echo "Журнал приложения пока пуст (\${APP_DIR}/shared/log)." >&2; exit 0; }
-            exec tail -n 200 -f "\${LOGF}" "\$@"
-        fi ;;
-    help|--help|-h|*)
-        cat <<HELP
-Использование: ${APP_ID} <команда>
-  status              Состояние портала и диагностика
-  update [--source DIR|--archive FILE]   Обновление до новой версии
-  backup              Резервная копия (база данных + файлы)
-  restore ARCHIVE     Восстановление из резервной копии
-  console <команда>   Консоль Symfony (например: console app:user:create ivanov --admin, console app:documents:expiry, console app:ldap:test)
-  logs                Журнал приложения
-  uninstall           Удаление портала
-HELP
-        ;;
-esac
-EOF
-    chmod 755 "/usr/local/bin/${APP_ID}"
-}
 
 install_backup_cron() {
     if [[ "${BACKUP_CRON}" != "1" ]]; then
@@ -943,6 +905,8 @@ install_docker() {
 COMPOSE_PROJECT_NAME=${APP_ID}
 HTTP_PORT=${HTTP_PORT}
 TZ=${TIMEZONE}
+# Каталог импорта документов: том Docker «import» или путь на сервере (например ${APP_DIR}/import).
+IMPORT_HOST_DIR=${APP_DIR}/import
 
 MYSQL_IMAGE=mysql:8.0
 NGINX_IMAGE=nginx:1.27-alpine
@@ -978,6 +942,8 @@ ADMIN_PASSWORD=${ADMIN_PASSWORD}
 EOF
     umask 022
     chmod 600 "${APP_DIR}/docker/.env"
+    # Каталог импорта на сервере (подключается в контейнеры как /var/www/html/var/import; uid 82 = www-data в alpine).
+    mkdir -p "${APP_DIR}/import" && chown 82:82 "${APP_DIR}/import" && chmod 2775 "${APP_DIR}/import"
     DB_HOST="db"; DB_LOCAL="0"; DB_SERVICE="docker"; SERVICE_USER="www-data"; PHP_VERSION="8.4"; PHP_FPM_SERVICE="docker"; PHP_FPM_SOCK=""; DB_SERVER_VERSION="8.0"
 
     step "Сборка образа и запуск контейнеров (может занять несколько минут)"

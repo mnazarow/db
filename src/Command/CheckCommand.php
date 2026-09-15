@@ -25,6 +25,7 @@ final class CheckCommand extends Command
         private readonly UserRepository $users,
         private readonly LdapSettings $ldap,
         private readonly string $projectDir,
+        private readonly string $importDir,
     ) {
         parent::__construct();
     }
@@ -100,6 +101,19 @@ final class CheckCommand extends Command
             $ok = false;
         } else {
             $io->writeln(\sprintf('Хранилище документов %s: <info>ок</info>', $storage));
+        }
+        if (!is_dir($this->importDir) && !@mkdir($this->importDir, 0770, true)) {
+            $io->warning(\sprintf('Каталог импорта %s не существует и не может быть создан (импорт из каталога будет недоступен).', $this->importDir));
+        } elseif (!is_writable($this->importDir)) {
+            $io->writeln(\sprintf('Каталог импорта %s: <comment>только чтение</comment> (перенос файлов с удалением исходников работать не будет)', $this->importDir));
+        } else {
+            $pending = 0;
+            foreach (@scandir($this->importDir, \SCANDIR_SORT_NONE) ?: [] as $entry) {
+                if ('.' !== $entry && '..' !== $entry && !str_starts_with($entry, '.')) {
+                    ++$pending;
+                }
+            }
+            $io->writeln(\sprintf('Каталог импорта %s: <info>ок</info>%s', $this->importDir, $pending > 0 ? \sprintf(' (ожидает элементов: %d — панель администратора → Импорт)', $pending) : ''));
         }
 
         $io->section('Пользователи');

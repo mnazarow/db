@@ -24,13 +24,14 @@
 | Создание, публикация, архив, восстановление версий, удаление документов; подразделы | модераторам своих разделов |
 | Статистика по документу: просмотры, скачивания, читатели, график активности, журнал | модераторам / администраторам |
 | Раздел администратора: дерево разделов, модераторы, пользователи, реестр документов, вся статистика с выгрузкой CSV, журнал событий, настройки | администраторам |
+| Импорт из каталога на диске сервера: дерево папок → дерево разделов, файлы → документы; предпросмотр плана, повторный импорт добавляет версии изменившихся файлов | администраторам |
 | Вход через Active Directory / LDAP с автосозданием учётных записей, группы AD для доступа и прав администратора | — |
 | Скрипты установки/обновления/резервного копирования, Docker Compose, консольные команды | администратору сервера |
 
 ## Установка на чистый сервер одной командой
 
 ```bash
-tar -xzf docportal-1.0.0.tar.gz && cd docportal
+tar -xzf docportal-1.1.0.tar.gz && cd docportal
 sudo ./deploy/install.sh                                   # nginx + PHP-FPM + MariaDB на этом сервере
 sudo ./deploy/install.sh --domain docs.example.ru --ssl-email it@example.ru \
      --ldap-host dc1.example.local --ldap-base-dn "DC=example,DC=local" --ldap-upn-suffix example.local
@@ -51,6 +52,8 @@ docportal restore /var/backups/docportal/<архив>.tar.gz
 docportal console app:user:create ivanov --name "Иванов И.И." --generate
 docportal console app:ldap:test ivanov       # проверка входа через домен
 docportal console app:documents:expiry       # проверка сроков и рассылка уведомлений (по cron ежедневно)
+docportal import /mnt/share/Документы --dry-run   # импорт из каталога: папки → разделы, файлы → документы
+                                             # (без --dry-run — выполнить; в панели администратора: «Импорт»)
 docportal uninstall                   # удаление (с --purge — вместе с базой данных)
 ```
 
@@ -66,7 +69,8 @@ php bin/console app:demo:load        # демонстрационные разд
 ```
 
 Автотесты: `php vendor/bin/phpunit` (нужна база `docportal_test`, см. `.env.test`).
-Сквозная проверка через браузер и скриншоты: `python3 tests/e2e_screens.py http://127.0.0.1:8080 docs/images`.
+Сквозная проверка через браузер и скриншоты: `python3 tests/e2e_screens.py http://127.0.0.1:8080 docs/images var/import`
+(третий аргумент — каталог импорта проверяемого сервера).
 
 ## Структура проекта
 
@@ -74,7 +78,7 @@ php bin/console app:demo:load        # демонстрационные разд
 |---|---|
 | `src/Entity/` | модель: пользователи, разделы (дерево), модераторы, документы, версии, события |
 | `src/Controller/` | страницы: вход, разделы, документы, поиск, профиль; `Admin/` — панель администратора |
-| `src/Service/` | документы и версии (`DocumentManager`, `FileStorage`), разделы (`SectionManager`), актуальность (`Validity`, `ExpiryNotifier`), статистика (`StatsService`), пользователи (`UserManager`) |
+| `src/Service/` | документы и версии (`DocumentManager`, `FileStorage`), разделы (`SectionManager`), актуальность (`Validity`, `ExpiryNotifier`), статистика (`StatsService`), пользователи (`UserManager`), импорт из каталога (`Import/`) |
 | `src/Security/` | аутентификатор (локальные + LDAP), правила доступа (`Access`), voter, клиент LDAP |
 | `src/Command/` | консольные команды `app:*` (пользователи, проверка, сроки, LDAP, демо-данные) |
 | `templates/`, `public/css`, `public/js`, `public/vendor/quill` | интерфейс (Twig, CSS, JS без сборки, редактор страниц) |

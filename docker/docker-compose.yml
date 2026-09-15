@@ -45,9 +45,12 @@ services:
     environment:
       DATABASE_URL: "mysql://${MYSQL_USER:-docportal}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE:-docportal}?serverVersion=8.0&charset=utf8mb4"
       STORAGE_DIR: /var/www/html/var/storage
+      IMPORT_DIR: /var/www/html/var/import
     volumes:
       - storage:/var/www/html/var/storage
       - logs:/var/www/html/var/log
+      # Каталог импорта: том Docker (по умолчанию) или каталог на сервере — см. IMPORT_HOST_DIR в docker/.env.
+      - ${IMPORT_HOST_DIR:-import}:/var/www/html/var/import
     depends_on:
       db:
         condition: service_healthy
@@ -64,11 +67,13 @@ services:
     environment:
       DATABASE_URL: "mysql://${MYSQL_USER:-docportal}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE:-docportal}?serverVersion=8.0&charset=utf8mb4"
       STORAGE_DIR: /var/www/html/var/storage
+      IMPORT_DIR: /var/www/html/var/import
       EXPIRY_CRON: ${EXPIRY_CRON:-0 8 * * *}
     command: ["cron"]
     volumes:
       - storage:/var/www/html/var/storage
       - logs:/var/www/html/var/log
+      - ${IMPORT_HOST_DIR:-import}:/var/www/html/var/import
     depends_on:
       app:
         condition: service_started
@@ -95,3 +100,4 @@ volumes:
   db-data:
   storage:
   logs:
+  import:

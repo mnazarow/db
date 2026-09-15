@@ -59,8 +59,9 @@ if [[ "${1:-php-fpm}" != "php-fpm" ]]; then
 fi
 
 # --- 1. Права на каталоги -----------------------------------------------------------
-mkdir -p var/cache var/log var/storage
+mkdir -p var/cache var/log var/storage var/import
 chown -R www-data:www-data var/cache var/log var/storage 2>/dev/null || true
+chown www-data:www-data var/import 2>/dev/null || true
 
 # --- 2. Ожидание базы данных ----------------------------------------------------------
 wait_for_db

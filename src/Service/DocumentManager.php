@@ -48,29 +48,59 @@ final class DocumentManager
             if ([] !== $errors) {
                 throw new \InvalidArgumentException(implode(' ', $errors));
             }
+            $fill = fn (DocumentVersion $version) => $this->storage->store($file, $version);
         } else {
             $pageContent = $this->sanitize($pageContent);
             if ('' === trim(strip_tags($pageContent))) {
                 throw new \InvalidArgumentException('Текст страницы пустой.');
             }
+            $fill = static fn (DocumentVersion $version) => $version->setContent($pageContent)->setSize(\strlen($pageContent))->setMimeType('text/html');
         }
 
+        return $this->createWith($document, $fill, $changeNote, $actor, $publish, $ip, null);
+    }
+
+    /**
+     * Создаёт документ-файл из файла, уже лежащего на диске сервера (импорт из каталога).
+     * $originalName — имя, под которым файл будет показан пользователям; $moveSource — перенести файл, а не копировать.
+     *
+     * @param array<string, mixed>|null $details дополнительные сведения для события создания (например, источник импорта)
+     *
+     * @throws \InvalidArgumentException при некорректном файле
+     */
+    public function createFromPath(Document $document, string $path, string $originalName, ?string $changeNote, User $actor, bool $publish, bool $moveSource = false, bool $anyExtension = false, ?array $details = null): Document
+    {
+        if (!$document->isFile()) {
+            throw new \InvalidArgumentException('Из файла на диске можно создать только документ-файл.');
+        }
+        $errors = $this->storage->validatePath($path, $originalName, $anyExtension);
+        if ([] !== $errors) {
+            throw new \InvalidArgumentException(implode(' ', $errors));
+        }
+
+        return $this->createWith($document, fn (DocumentVersion $version) => $this->storage->storeFromPath($path, $originalName, $version, $moveSource), $changeNote, $actor, $publish, null, $details);
+    }
+
+    /**
+     * Общая часть создания документа: первая версия, событие создания и (при необходимости) публикация.
+     *
+     * @param callable(DocumentVersion): mixed $fillVersion заполняет содержимое версии (файл или текст)
+     * @param array<string, mixed>|null        $details
+     */
+    private function createWith(Document $document, callable $fillVersion, ?string $changeNote, User $actor, bool $publish, ?string $ip, ?array $details): Document
+    {
         $document->setOwner($actor)->setStatus(Document::STATUS_DRAFT);
         $this->em->persist($document);
         $this->em->flush(); // нужен id для каталога хранилища
 
         $version = new DocumentVersion($document, 1);
         $version->setKind($document->getType())->setCreatedBy($actor)->setChangeNote($changeNote ?? 'Первая версия');
-        if ($document->isFile()) {
-            $this->storage->store($file, $version);
-        } else {
-            $version->setContent($pageContent)->setSize(\strlen((string) $pageContent))->setMimeType('text/html');
-        }
+        $fillVersion($version);
         $this->em->persist($version);
         $this->em->flush();
 
         $document->setCurrentVersion($version);
-        $this->em->persist(new DocumentEvent($document, DocumentEvent::CREATE, $actor, $version, $ip));
+        $this->em->persist(new DocumentEvent($document, DocumentEvent::CREATE, $actor, $version, $ip, $details));
         if ($publish) {
             $document->setStatus(Document::STATUS_PUBLISHED)->setPublishedAt(new \DateTimeImmutable());
             $this->em->persist(new DocumentEvent($document, DocumentEvent::PUBLISH, $actor, $version, $ip));
@@ -114,9 +144,34 @@ final class DocumentManager
         if ([] !== $errors) {
             throw new \InvalidArgumentException(implode(' ', $errors));
         }
+
+        return $this->addFileVersionWith($document, fn (DocumentVersion $version) => $this->storage->store($file, $version), $changeNote, $actor, $ip);
+    }
+
+    /**
+     * Загружает новую версию из файла на диске сервера (импорт из каталога).
+     *
+     * @throws \InvalidArgumentException при некорректном файле
+     */
+    public function addFileVersionFromPath(Document $document, string $path, string $originalName, ?string $changeNote, User $actor, bool $moveSource = false, bool $anyExtension = false): DocumentVersion
+    {
+        if (!$document->isFile()) {
+            throw new \InvalidArgumentException('Для страницы нельзя загрузить файл.');
+        }
+        $errors = $this->storage->validatePath($path, $originalName, $anyExtension);
+        if ([] !== $errors) {
+            throw new \InvalidArgumentException(implode(' ', $errors));
+        }
+
+        return $this->addFileVersionWith($document, fn (DocumentVersion $version) => $this->storage->storeFromPath($path, $originalName, $version, $moveSource), $changeNote, $actor, null);
+    }
+
+    /** @param callable(DocumentVersion): mixed $fillVersion */
+    private function addFileVersionWith(Document $document, callable $fillVersion, ?string $changeNote, User $actor, ?string $ip): DocumentVersion
+    {
         $version = new DocumentVersion($document, $document->getNextVersionNumber());
         $version->setKind(Document::TYPE_FILE)->setCreatedBy($actor)->setChangeNote($changeNote);
-        $this->storage->store($file, $version);
+        $fillVersion($version);
         $this->em->persist($version);
         $this->em->flush();
         $document->setCurrentVersion($version)->setUpdatedAt(new \DateTimeImmutable());

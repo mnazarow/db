@@ -159,11 +159,17 @@ if [[ "${INSTALL_MODE}" == "native" ]]; then
             (cd "${NEW_RELEASE}" && COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader --no-interaction --no-progress >>"${LOG_FILE}" 2>&1) || die "composer install завершился с ошибкой."
         fi
     fi
-    mkdir -p "${NEW_RELEASE}/var/cache" "${APP_DIR}/shared/storage" "${APP_DIR}/shared/log"
-    rm -rf "${NEW_RELEASE}/var/storage" "${NEW_RELEASE}/var/log"
+    mkdir -p "${NEW_RELEASE}/var/cache" "${APP_DIR}/shared/storage" "${APP_DIR}/shared/log" "${APP_DIR}/shared/import"
+    rm -rf "${NEW_RELEASE}/var/storage" "${NEW_RELEASE}/var/log" "${NEW_RELEASE}/var/import"
     ln -sfn "${APP_DIR}/shared/storage" "${NEW_RELEASE}/var/storage"
     ln -sfn "${APP_DIR}/shared/log" "${NEW_RELEASE}/var/log"
+    ln -sfn "${APP_DIR}/shared/import" "${NEW_RELEASE}/var/import"
     ln -sfn "${APP_DIR}/shared/.env.local" "${NEW_RELEASE}/.env.local"
+    # Каталог импорта появился в 1.1.0: у старых установок добавляем параметр и права.
+    if ! grep -q '^IMPORT_DIR=' "${APP_DIR}/shared/.env.local" 2>/dev/null; then
+        printf '\n# Каталог импорта: положите сюда папки с документами и запустите импорт в панели администратора.\nIMPORT_DIR=%s/shared/import\n' "${APP_DIR}" >> "${APP_DIR}/shared/.env.local"
+    fi
+    chown "${SERVICE_USER}:${SERVICE_USER}" "${APP_DIR}/shared/import" && chmod 2770 "${APP_DIR}/shared/import"
     chown -R root:"${SERVICE_USER}" "${NEW_RELEASE}"
     chown -R "${SERVICE_USER}:${SERVICE_USER}" "${NEW_RELEASE}/var"
     chmod -R u+rwX,g+rX,o-rwx "${NEW_RELEASE}" 2>/dev/null || true
@@ -185,6 +191,7 @@ if [[ "${INSTALL_MODE}" == "native" ]]; then
     svc reload "${PHP_FPM_SERVICE}" || svc restart "${PHP_FPM_SERVICE}" || die "Не удалось перезапустить ${PHP_FPM_SERVICE}."
     nginx -t >>"${LOG_FILE}" 2>&1 && svc reload nginx || true
     health || die "Новая версия не отвечает."
+    install_cli_wrapper && info "Команда управления ${APP_ID} обновлена."
 
     # Удаление старых релизов
     mapfile -t old < <(ls -1dt "${APP_DIR}"/releases/*/ 2>/dev/null | tail -n +$((KEEP_RELEASES + 2)))
@@ -201,9 +208,15 @@ else
         "${SOURCE_DIR}/" "${APP_DIR}/" >>"${LOG_FILE}" 2>&1 || die "Не удалось скопировать файлы новой версии."
     chmod +x "${APP_DIR}"/deploy/*.sh "${APP_DIR}/docker/entrypoint.sh" "${APP_DIR}/bin/console" 2>/dev/null || true
     docker compose build --pull >>"${LOG_FILE}" 2>&1 || die "Сборка образа новой версии не удалась."
+    # Каталог импорта документов появился в 1.1.0: подключается в контейнеры как /var/www/html/var/import.
+    if ! grep -q '^IMPORT_HOST_DIR=' "${APP_DIR}/docker/.env" 2>/dev/null; then
+        printf '\n# Каталог импорта документов: путь на сервере или имя тома Docker.\nIMPORT_HOST_DIR=%s/import\n' "${APP_DIR}" >> "${APP_DIR}/docker/.env"
+    fi
+    mkdir -p "${APP_DIR}/import" && chown 82:82 "${APP_DIR}/import" 2>/dev/null && chmod 2775 "${APP_DIR}/import" || true
     MIGRATED="1"
     docker compose up -d >>"${LOG_FILE}" 2>&1 || die "Не удалось запустить обновлённые контейнеры."
     health || die "Новая версия не отвечает."
+    install_cli_wrapper && info "Команда управления ${APP_ID} обновлена."
     rm -rf "${APP_DIR}.prev"
     docker image prune -f >>"${LOG_FILE}" 2>&1 || true
 fi

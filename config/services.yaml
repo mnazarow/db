@@ -11,6 +11,10 @@ parameters:
     app.upload_max_mb: '%env(int:UPLOAD_MAX_MB)%'
     app.allowed_extensions: '%env(ALLOWED_EXTENSIONS)%'
 
+    # Каталог импорта документов с диска сервера (папки → разделы, файлы → документы).
+    app.import_dir: '%env(resolve:IMPORT_DIR)%'
+    env(IMPORT_DIR): '%kernel.project_dir%/var/import'
+
     # Актуальность: за сколько дней до срока документ считается истекающим; срок по умолчанию для новых документов.
     app.expiry_soon_days: '%env(int:EXPIRY_SOON_DAYS)%'
     app.default_validity_months: '%env(int:DEFAULT_VALIDITY_MONTHS)%'
@@ -49,6 +53,7 @@ services:
         autoconfigure: true
         bind:
             string $storageDir: '%app.storage_dir%'
+            string $importDir: '%app.import_dir%'
             int $uploadMaxMb: '%app.upload_max_mb%'
             string $allowedExtensions: '%app.allowed_extensions%'
             int $expirySoonDays: '%app.expiry_soon_days%'
