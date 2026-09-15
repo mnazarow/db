@@ -754,7 +754,11 @@ case "\${cmd}" in
         fi ;;
     logs)
         if [[ "\${INSTALL_MODE}" == "docker" ]]; then cd "\${APP_DIR}/docker" && exec docker compose logs -f --tail=200 "\$@";
-        else exec tail -n 200 -f "\${APP_DIR}/shared/log/prod.log" "\$@"; fi ;;
+        else
+            LOGF=\$(ls -t "\${APP_DIR}"/shared/log/prod*.log 2>/dev/null | head -n1)
+            [[ -n "\${LOGF}" ]] || { echo "Журнал приложения пока пуст (\${APP_DIR}/shared/log)." >&2; exit 0; }
+            exec tail -n 200 -f "\${LOGF}" "\$@"
+        fi ;;
     help|--help|-h|*)
         cat <<HELP
 Использование: ${APP_ID} <команда>

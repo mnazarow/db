@@ -10,7 +10,7 @@
 <text x="68" y="200" font-size="12.5" fill="#0F4382" text-anchor="start" font-weight="700" xml:space="preserve">▸ shared/</text>
 <text x="96" y="226" font-size="12.5" fill="#1D1E1E" text-anchor="start" font-weight="normal" xml:space="preserve">  .env.local   настройки (секрет, база данных, почта, LDAP)</text>
 <text x="96" y="252" font-size="12.5" fill="#1D1E1E" text-anchor="start" font-weight="normal" xml:space="preserve">  storage/   файлы всех версий документов (по каталогу на документ)</text>
-<text x="96" y="278" font-size="12.5" fill="#1D1E1E" text-anchor="start" font-weight="normal" xml:space="preserve">  log/   prod.log, audit.log, expiry-cron.log</text>
+<text x="96" y="278" font-size="12.5" fill="#1D1E1E" text-anchor="start" font-weight="normal" xml:space="preserve">  log/   prod-&lt;дата&gt;.log, audit-&lt;дата&gt;.log, expiry-cron.log</text>
 <text x="40" y="304" font-size="12.5" fill="#1D1E1E" text-anchor="start" font-weight="normal" xml:space="preserve">  /etc/docportal/install.conf   параметры установки (для update/backup/uninstall)</text>
 <text x="40" y="330" font-size="12.5" fill="#1D1E1E" text-anchor="start" font-weight="normal" xml:space="preserve">  /etc/docportal/admin-credentials.txt   первый пароль администратора (удалить!)</text>
 <text x="40" y="356" font-size="12.5" fill="#1D1E1E" text-anchor="start" font-weight="normal" xml:space="preserve">  /etc/nginx/sites-available/docportal.conf   виртуальный хост</text>

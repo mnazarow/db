@@ -101,7 +101,7 @@ def architecture():
     s.box(525, 344, 150, 70, 'Статистика', ['события: просмотры,', 'скачивания, версии'], size=11, title_size=13, fill=PALE, stroke=LIGHT)
     s.box(690, 344, 135, 70, 'Twig + CSS', ['стиль vodokomfort.ru,', 'редактор Quill'], size=11, title_size=13, fill=PALE, stroke=LIGHT)
     s.text(590, 450, 'Doctrine ORM, миграции, консольные команды app:*', size=11, color=MUTED, anchor='middle')
-    s.text(590, 470, 'Журналы: var/log/prod.log (ошибки), var/log/audit.log (действия пользователей)', size=11, color=MUTED, anchor='middle')
+    s.text(590, 470, 'Журналы: var/log/prod-<дата>.log (ошибки), var/log/audit-<дата>.log (действия пользователей)', size=11, color=MUTED, anchor='middle')
 
     s.group_bg(900, 60, 236, 470, 'Хранилища и службы')
     s.box(922, 100, 192, 84, 'MySQL 8 / MariaDB', ['user, section, document,', 'document_version,', 'document_event'])
@@ -248,7 +248,7 @@ def native_layout():
         ('/opt/docportal/', 0, True),
         ('current  →  releases/1.0.0-20260915…/   (символическая ссылка на рабочий релиз)', 1, False),
         ('releases/', 1, True), ('1.0.0-20260915120000/   код версии: bin/, config/, public/, src/, templates/, vendor/', 2, False), ('0.9.0-…/   предыдущий релиз (для отката, хранится 3 последних)', 2, False),
-        ('shared/', 1, True), ('.env.local   настройки (секрет, база данных, почта, LDAP)', 2, False), ('storage/   файлы всех версий документов (по каталогу на документ)', 2, False), ('log/   prod.log, audit.log, expiry-cron.log', 2, False),
+        ('shared/', 1, True), ('.env.local   настройки (секрет, база данных, почта, LDAP)', 2, False), ('storage/   файлы всех версий документов (по каталогу на документ)', 2, False), ('log/   prod-<дата>.log, audit-<дата>.log, expiry-cron.log', 2, False),
         ('/etc/docportal/install.conf   параметры установки (для update/backup/uninstall)', 0, False),
         ('/etc/docportal/admin-credentials.txt   первый пароль администратора (удалить!)', 0, False),
         ('/etc/nginx/sites-available/docportal.conf   виртуальный хост', 0, False),

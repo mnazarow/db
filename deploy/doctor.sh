@@ -74,8 +74,8 @@ if [[ -d "${BACKUP_DIR}" ]]; then
 fi
 
 if [[ "${INSTALL_MODE}" == "native" ]]; then
-    logf="${APP_DIR}/shared/log/prod.log"
-    if [[ -f "${logf}" ]]; then
+    logf=$(ls -t "${APP_DIR}"/shared/log/prod*.log 2>/dev/null | head -n1)
+    if [[ -n "${logf}" && -f "${logf}" ]]; then
         errs=$(grep -c 'CRITICAL\|ERROR' "${logf}" 2>/dev/null || echo 0)
         info "Ошибок в ${logf}: ${errs}. Последние записи:"
         tail -n 5 "${logf}" | cut -c1-200 | sed 's/^/   /'
