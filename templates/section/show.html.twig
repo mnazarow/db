@@ -1,0 +1,114 @@
+{% extends 'base.html.twig' %}
+{% import '_macros.html.twig' as m %}
+
+{% block title %}{{ section.name }}{% endblock %}
+{% block body_class %}page-section{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        {{ m.breadcrumbs(section) }}
+        <div class="hero__row">
+            <div>
+                <h1 class="h-display">{{ section.name }}</h1>
+                {% if section.description %}<p class="hero__meta">{{ section.description|nl2br }}</p>{% endif %}
+            </div>
+            {% if can_manage %}
+            <div class="hero__actions">
+                <a class="btn btn--pill" href="{{ path('app_document_new', {section: section.id}) }}">Добавить документ</a>
+                <a class="btn btn--ghost" href="{{ path('app_section_new', {id: section.id}) }}">Новый подраздел</a>
+                <a class="btn btn--ghost" href="{{ path('app_section_edit', {id: section.id}) }}">Изменить раздел</a>
+                {% if is_granted('ROLE_ADMIN') %}<a class="btn btn--ghost" href="{{ path('admin_section_moderators', {id: section.id}) }}">Модераторы</a>{% endif %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+
+    {% if children|length > 0 %}
+        <h2 class="h-section">Подразделы</h2>
+        <div class="section-grid section-grid--compact">
+            {% for s in children %}
+                {% set c = counts[s.id] %}
+                <a class="section-card section-card--compact" href="{{ path('app_section_show', {id: s.id}) }}">
+                    <div class="section-card__icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
+                    <div class="section-card__body">
+                        <div class="section-card__title">{{ s.name }}</div>
+                        <div class="section-card__meta">{{ c.published|plural(['документ', 'документа', 'документов']) }}{% if c.children > 0 %} · {{ c.children|plural(['подраздел', 'подраздела', 'подразделов']) }}{% endif %}</div>
+                    </div>
+                </a>
+            {% endfor %}
+        </div>
+    {% endif %}
+
+    {% if can_manage and expiring|length > 0 %}
+        <div class="alert alert--warning">
+            <b>Требуют внимания:</b>
+            {% for d in expiring %}<a href="{{ path('app_document_show', {id: d.id}) }}">{{ d.title }}</a> ({{ d|validity_text }}){{ not loop.last ? '; ' }}{% endfor %}
+        </div>
+    {% endif %}
+
+    <div class="card table-card">
+        <div class="card__head card__head--padded">
+            <h2 class="h-section">Документы</h2>
+            <div class="toolbar__row toolbar__row--compact">
+                {% if can_manage %}
+                    <div class="chips">
+                        {% set base = {id: section.id, sort: sort} %}
+                        <a class="chip" aria-pressed="{{ filter == 'all' ? 'true' : 'false' }}" href="{{ path('app_section_show', base|merge({status: 'all'})) }}">Все <span class="chip__count">{{ by_status.draft + by_status.published + by_status.archived }}</span></a>
+                        <a class="chip chip--done" aria-pressed="{{ filter == 'published' ? 'true' : 'false' }}" href="{{ path('app_section_show', base|merge({status: 'published'})) }}"><span class="chip__dot"></span>Опубликованные <span class="chip__count">{{ by_status.published }}</span></a>
+                        <a class="chip chip--shifted" aria-pressed="{{ filter == 'draft' ? 'true' : 'false' }}" href="{{ path('app_section_show', base|merge({status: 'draft'})) }}"><span class="chip__dot"></span>Черновики <span class="chip__count">{{ by_status.draft }}</span></a>
+                        <a class="chip chip--none" aria-pressed="{{ filter == 'archived' ? 'true' : 'false' }}" href="{{ path('app_section_show', base|merge({status: 'archived'})) }}"><span class="chip__dot"></span>Архив <span class="chip__count">{{ by_status.archived }}</span></a>
+                    </div>
+                {% endif %}
+                <form method="get" class="inline-form sort-form">
+                    <input type="hidden" name="status" value="{{ filter }}">
+                    <label class="form-label form-label--inline" for="sort">Сортировка</label>
+                    <select class="form-control form-control--sm form-control--inline" id="sort" name="sort" data-autosubmit>
+                        <option value="title" {{ sort == 'title' ? 'selected' }}>по названию</option>
+                        <option value="code" {{ sort == 'code' ? 'selected' }}>по обозначению</option>
+                        <option value="updated" {{ sort == 'updated' ? 'selected' }}>по дате обновления</option>
+                        <option value="valid" {{ sort == 'valid' ? 'selected' }}>по сроку актуальности</option>
+                        <option value="views" {{ sort == 'views' ? 'selected' }}>по популярности</option>
+                    </select>
+                </form>
+            </div>
+        </div>
+        {{ m.document_table(documents, {show_status: can_manage, empty: can_manage ? 'В этом разделе ещё нет документов. Нажмите «Добавить документ».' : 'В этом разделе пока нет опубликованных документов.'}) }}
+    </div>
+
+    {% if can_manage %}
+        <div class="grid grid--two">
+            <div class="card card--info">
+                <h2 class="h-section">Модераторы раздела</h2>
+                {% set responsible = [] %}
+                {% for s in section.breadcrumbs %}{% for mod in s.moderators %}{% set responsible = responsible|merge([{user: mod.user, section: s}]) %}{% endfor %}{% endfor %}
+                {% if responsible|length == 0 %}
+                    <p class="text-muted">Модераторы не назначены — документами управляют только администраторы.</p>
+                {% else %}
+                    <ul class="bullets bullets--small">
+                        {% for r in responsible %}
+                            <li><b>{{ r.user.displayName }}</b>{% if r.section.id != section.id %} <span class="text-muted">(через раздел «{{ r.section.name }}»)</span>{% endif %}{% if r.user.email %} — {{ r.user.email }}{% endif %}</li>
+                        {% endfor %}
+                    </ul>
+                {% endif %}
+                {% if is_granted('ROLE_ADMIN') %}<a class="link-action" href="{{ path('admin_section_moderators', {id: section.id}) }}">Назначить модераторов</a>{% endif %}
+            </div>
+            <div class="card">
+                <h2 class="h-section">Действия с разделом</h2>
+                <p class="text-muted">Раздел можно удалить только когда в нём нет документов и подразделов. Перенести документы в другой раздел можно в карточке каждого документа («Изменить»).</p>
+                <div class="form-actions">
+                    <a class="btn btn--ghost btn--small" href="{{ path('app_section_edit', {id: section.id}) }}">Изменить название и описание</a>
+                    <form method="post" action="{{ path('app_section_delete', {id: section.id}) }}" class="inline-form" data-confirm="Удалить раздел «{{ section.name }}»?">
+                        <input type="hidden" name="_token" value="{{ csrf_token('section_' ~ section.id) }}">
+                        <button type="submit" class="btn btn--danger btn--small" {{ children|length > 0 or (by_status.draft + by_status.published + by_status.archived) > 0 ? 'disabled' }}>Удалить раздел</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    {% endif %}
+</section>
+{% endblock %}

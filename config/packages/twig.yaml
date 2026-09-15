@@ -1,0 +1,15 @@
+twig:
+    file_name_pattern: '*.twig'
+    default_path: '%kernel.project_dir%/templates'
+    form_themes: ['form/theme.html.twig']
+    strict_variables: '%kernel.debug%'
+    globals:
+        app_name: '%env(APP_NAME)%'
+        app_company: '%env(APP_COMPANY)%'
+        app_version: '%app.version%'
+        expiry_soon_days: '%app.expiry_soon_days%'
+        ldap_enabled: '%app.ldap.enabled%'
+
+when@test:
+    twig:
+        strict_variables: true

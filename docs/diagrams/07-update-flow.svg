@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="430" viewBox="0 0 1200 430" font-family="Roboto, Arial, Helvetica, sans-serif" font-size="14">
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0F4382"/></marker><marker id="arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#D00024"/></marker><marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#1F8F4E"/></marker><marker id="arrow-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#6E7480"/></marker></defs>
+<rect width="1200" height="430" fill="#FFFFFF"/>
+<text x="24" y="34" font-family="'DIN Condensed', 'Arial Narrow', Arial, sans-serif" font-size="24" font-weight="600" fill="#0F4382" letter-spacing="0.5">ОБНОВЛЕНИЕ ОДНОЙ КОМАНДОЙ И АВТОМАТИЧЕСКИЙ ОТКАТ</text>
+<rect x="30" y="80" width="160" height="90" rx="14" fill="#FFFFFF" stroke="#0F4382" stroke-width="1.5"/>
+<text x="110.0" y="104" text-anchor="middle" font-weight="700" font-size="14" fill="#0F4382">Резервная копия</text>
+<text x="110.0" y="124" text-anchor="middle" font-size="13" fill="#1D1E1E">БД + файлы +</text>
+<text x="110.0" y="142" text-anchor="middle" font-size="13" fill="#1D1E1E">настройки</text>
+<line x1="190" y1="125" x2="208" y2="125" stroke="#0F4382" stroke-width="1.8" marker-end="url(#arrow)"/>
+<rect x="208" y="80" width="160" height="90" rx="14" fill="#FFFFFF" stroke="#0F4382" stroke-width="1.5"/>
+<text x="288.0" y="104" text-anchor="middle" font-weight="700" font-size="14" fill="#0F4382">Новый релиз</text>
+<text x="288.0" y="124" text-anchor="middle" font-size="13" fill="#1D1E1E">копирование файлов</text>
+<text x="288.0" y="142" text-anchor="middle" font-size="13" fill="#1D1E1E">в releases/&lt;версия&gt;</text>
+<line x1="368" y1="125" x2="386" y2="125" stroke="#0F4382" stroke-width="1.8" marker-end="url(#arrow)"/>
+<rect x="386" y="80" width="160" height="90" rx="14" fill="#FFFFFF" stroke="#0F4382" stroke-width="1.5"/>
+<text x="466.0" y="104" text-anchor="middle" font-weight="700" font-size="14" fill="#0F4382">Зависимости</text>
+<text x="466.0" y="124" text-anchor="middle" font-size="13" fill="#1D1E1E">vendor/ из поставки</text>
+<text x="466.0" y="142" text-anchor="middle" font-size="13" fill="#1D1E1E">или из прошлого релиза</text>
+<line x1="546" y1="125" x2="564" y2="125" stroke="#0F4382" stroke-width="1.8" marker-end="url(#arrow)"/>
+<rect x="564" y="80" width="160" height="90" rx="14" fill="#FFFFFF" stroke="#0F4382" stroke-width="1.5"/>
+<text x="644.0" y="104" text-anchor="middle" font-weight="700" font-size="14" fill="#0F4382">Кэш и миграции</text>
+<text x="644.0" y="124" text-anchor="middle" font-size="13" fill="#1D1E1E">cache:warmup,</text>
+<text x="644.0" y="142" text-anchor="middle" font-size="13" fill="#1D1E1E">migrations:migrate</text>
+<line x1="724" y1="125" x2="742" y2="125" stroke="#0F4382" stroke-width="1.8" marker-end="url(#arrow)"/>
+<rect x="742" y="80" width="160" height="90" rx="14" fill="#FFFFFF" stroke="#0F4382" stroke-width="1.5"/>
+<text x="822.0" y="104" text-anchor="middle" font-weight="700" font-size="14" fill="#0F4382">Переключение</text>
+<text x="822.0" y="124" text-anchor="middle" font-size="13" fill="#1D1E1E">current → новый,</text>
+<text x="822.0" y="142" text-anchor="middle" font-size="13" fill="#1D1E1E">reload PHP-FPM/nginx</text>
+<line x1="902" y1="125" x2="920" y2="125" stroke="#0F4382" stroke-width="1.8" marker-end="url(#arrow)"/>
+<rect x="920" y="80" width="160" height="90" rx="14" fill="#E7EFF6" stroke="#0F4382" stroke-width="1.5"/>
+<text x="1000.0" y="104" text-anchor="middle" font-weight="700" font-size="14" fill="#0F4382">Проверка</text>
+<text x="1000.0" y="124" text-anchor="middle" font-size="13" fill="#1D1E1E">GET /health,</text>
+<text x="1000.0" y="142" text-anchor="middle" font-size="13" fill="#1D1E1E">app:check</text>
+<line x1="1080" y1="125" x2="1108" y2="125" stroke="#1F8F4E" stroke-width="1.8" marker-end="url(#arrow-green)"/>
+<rect x="1110" y="112" width="60" height="26" rx="13" fill="#E6F5EC" stroke="#1F8F4E"/>
+<circle cx="1124" cy="125" r="4" fill="#1F8F4E"/>
+<text x="1136" y="129" font-size="12" fill="#1D1E1E">OK</text>
+<text x="1140" y="164" font-size="11" fill="#6E7480" text-anchor="middle" font-weight="normal" xml:space="preserve">старые релизы</text>
+<text x="1140" y="178" font-size="11" fill="#6E7480" text-anchor="middle" font-weight="normal" xml:space="preserve">удаляются (--keep 3)</text>
+<rect x="30" y="210" width="1140" height="190" rx="18" fill="#F4F8FB" stroke="#DFDEDE"/>
+<text x="46" y="232" font-size="12" font-weight="700" fill="#79A7C6" letter-spacing="1.5">ПРИ ЛЮБОЙ ОШИБКЕ НА ШАГАХ 2–6</text>
+<rect x="60" y="250" width="220" height="110" rx="14" fill="#FFFFFF" stroke="#D00024" stroke-width="1.5"/>
+<text x="170.0" y="274" text-anchor="middle" font-weight="700" font-size="14" fill="#D00024">Откат кода</text>
+<text x="170.0" y="294" text-anchor="middle" font-size="13" fill="#1D1E1E">ссылка current</text>
+<text x="170.0" y="312" text-anchor="middle" font-size="13" fill="#1D1E1E">возвращается на</text>
+<text x="170.0" y="330" text-anchor="middle" font-size="13" fill="#1D1E1E">предыдущий релиз</text>
+<rect x="320" y="250" width="220" height="110" rx="14" fill="#FFFFFF" stroke="#D00024" stroke-width="1.5"/>
+<text x="430.0" y="274" text-anchor="middle" font-weight="700" font-size="14" fill="#D00024">Откат базы</text>
+<text x="430.0" y="294" text-anchor="middle" font-size="13" fill="#1D1E1E">если миграции уже</text>
+<text x="430.0" y="312" text-anchor="middle" font-size="13" fill="#1D1E1E">применялись — импорт</text>
+<text x="430.0" y="330" text-anchor="middle" font-size="13" fill="#1D1E1E">дампа из резервной копии</text>
+<rect x="580" y="250" width="220" height="110" rx="14" fill="#FFFFFF" stroke="#D00024" stroke-width="1.5"/>
+<text x="690.0" y="274" text-anchor="middle" font-weight="700" font-size="14" fill="#D00024">Очистка</text>
+<text x="690.0" y="294" text-anchor="middle" font-size="13" fill="#1D1E1E">каталог неудавшегося</text>
+<text x="690.0" y="312" text-anchor="middle" font-size="13" fill="#1D1E1E">релиза удаляется,</text>
+<text x="690.0" y="330" text-anchor="middle" font-size="13" fill="#1D1E1E">журнал сохраняется</text>
+<rect x="840" y="250" width="300" height="110" rx="14" fill="#E7EFF6" stroke="#D00024" stroke-width="1.5"/>
+<text x="990.0" y="274" text-anchor="middle" font-weight="700" font-size="14" fill="#D00024">Результат</text>
+<text x="990.0" y="294" text-anchor="middle" font-size="13" fill="#1D1E1E">портал работает на прежней версии;</text>
+<text x="990.0" y="312" text-anchor="middle" font-size="13" fill="#1D1E1E">причина ошибки — в журнале</text>
+<text x="990.0" y="330" text-anchor="middle" font-size="13" fill="#1D1E1E">/var/log/docportal/update-*.log</text>
+<line x1="280" y1="305" x2="320" y2="305" stroke="#D00024" stroke-width="1.8" marker-end="url(#arrow-red)"/>
+<line x1="540" y1="305" x2="580" y2="305" stroke="#D00024" stroke-width="1.8" marker-end="url(#arrow-red)"/>
+<line x1="800" y1="305" x2="840" y2="305" stroke="#D00024" stroke-width="1.8" marker-end="url(#arrow-red)"/>
+</svg>

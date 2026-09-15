@@ -1,0 +1,195 @@
+{% extends 'base.html.twig' %}
+{% import '_macros.html.twig' as m %}
+
+{% block title %}{{ document.title }}{% endblock %}
+{% block body_class %}page-document{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        {{ m.breadcrumbs(document.section, document.title) }}
+        <div class="hero__row">
+            <div class="doc-head">
+                <div class="doc-head__icon">{{ m.file_icon(document) }}</div>
+                <div>
+                    <div class="doc-head__badges">
+                        {{ m.status_badge(document) }}
+                        {{ m.validity_badge(document, true) }}
+                        {% if document.code %}<span class="badge badge--code">{{ document.code }}</span>{% endif %}
+                    </div>
+                    <h1 class="h-display doc-head__title">{{ document.title }}</h1>
+                    <p class="hero__meta">
+                        {{ document.type|type_label }}{% if current %} · версия {{ current.number }} от {{ current.createdAt|date('d.m.Y') }}{% if current.file and current.size %} · {{ current.size|filesize }}{% endif %}{% endif %}
+                        {% if document.owner %} · ответственный: {{ document.owner.displayName }}{% endif %}
+                    </p>
+                </div>
+            </div>
+            <div class="hero__actions">
+                {% if current %}
+                    {% if document.file %}
+                        <a class="btn btn--pill" href="{{ path('app_document_download', {id: document.id}) }}">Скачать{% if current.extension %} {{ current.extension|upper }}{% endif %}</a>
+                        {% if inline and file_exists %}<a class="btn btn--ghost" href="{{ path('app_document_download', {id: document.id, inline: 1}) }}" target="_blank" rel="noopener">Открыть в браузере</a>{% endif %}
+                    {% else %}
+                        <a class="btn btn--ghost" href="{{ path('app_document_download', {id: document.id}) }}">Скачать как HTML</a>
+                    {% endif %}
+                {% endif %}
+                {% if can_manage %}
+                    <a class="btn btn--ghost" href="{{ path('app_document_edit', {id: document.id}) }}">{{ document.file ? 'Изменить / новая версия' : 'Редактировать' }}</a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+
+    {% if document.draft %}
+        <div class="alert alert--info">Это черновик: его видят только модераторы раздела и администраторы. {% if can_manage %}Опубликуйте документ, чтобы он стал доступен всем сотрудникам.{% endif %}</div>
+    {% elseif document.archived %}
+        <div class="alert alert--warning">Документ в архиве: он снят с публикации и сохранён для истории.</div>
+    {% endif %}
+    {% set vstate = document|validity_state %}
+    {% if vstate == 'expired' %}
+        <div class="alert alert--danger">Срок актуальности документа истёк ({{ document.validUntil|date('d.m.Y') }}). Уточните у ответственного, действует ли документ.</div>
+    {% elseif vstate == 'soon' %}
+        <div class="alert alert--warning">Срок актуальности {{ document|validity_text }}.</div>
+    {% endif %}
+    {% if not file_exists %}
+        <div class="alert alert--danger">Файл текущей версии не найден в хранилище. Сообщите администратору.</div>
+    {% endif %}
+
+    <div class="grid grid--doc">
+        <div class="doc-main">
+            {% if document.description %}
+                <div class="card">
+                    <h2 class="h-section">Описание</h2>
+                    <p class="doc-description">{{ document.description|nl2br }}</p>
+                </div>
+            {% endif %}
+
+            {% if current and document.page %}
+                <div class="card">
+                    <h2 class="h-section">Содержание</h2>
+                    <div class="page-content">{{ current.content|raw }}</div>
+                </div>
+            {% elseif current and inline and file_exists %}
+                <div class="card card--preview">
+                    <div class="card__head"><h2 class="h-section">Предпросмотр</h2><a class="link-action" href="{{ path('app_document_download', {id: document.id, inline: 1}) }}" target="_blank" rel="noopener">Открыть на весь экран</a></div>
+                    {% if current.extension in ['png', 'jpg', 'jpeg', 'gif', 'svg'] %}
+                        <img class="preview-image" src="{{ path('app_document_download', {id: document.id, inline: 1}) }}" alt="{{ document.title }}">
+                    {% else %}
+                        <iframe class="preview-frame__iframe" src="{{ path('app_document_download', {id: document.id, inline: 1}) }}" title="Предпросмотр: {{ document.title }}" loading="lazy"></iframe>
+                    {% endif %}
+                </div>
+            {% endif %}
+
+            <div class="card table-card">
+                <div class="card__head card__head--padded">
+                    <h2 class="h-section">Версии <span class="tag">{{ versions|length }}</span></h2>
+                    {% if versions|length > 1 and document.page %}
+                        {% set vs = versions|slice(0, 2) %}
+                        <a class="link-action" href="{{ path('app_document_compare', {id: document.id, a: vs[1].number, b: vs[0].number}) }}">Сравнить две последние</a>
+                    {% endif %}
+                </div>
+                <div class="table-scroll">
+                    <table class="admin-table versions-table">
+                        <thead><tr><th>Версия</th><th>Дата</th><th>Автор</th><th>Что изменилось</th><th>{{ document.file ? 'Файл' : 'Размер' }}</th><th class="col-num">Скач.</th><th class="col-actions"></th></tr></thead>
+                        <tbody>
+                        {% for v in versions %}
+                            <tr class="{{ v.current ? 'is-published' }}">
+                                <td><b>v{{ v.number }}</b>{% if v.current %} <span class="tag">текущая</span>{% endif %}</td>
+                                <td class="col-nowrap">{{ v.createdAt|date('d.m.Y H:i') }}</td>
+                                <td>{{ v.createdBy ? v.createdBy.displayName : '—' }}</td>
+                                <td class="col-comment">{{ v.changeNote ?: '—' }}</td>
+                                <td>{% if v.file %}{{ v.originalName }}<div class="hints">{{ v.size ? v.size|filesize : '' }}</div>{% else %}{{ v.size ? v.size|filesize : '—' }}{% endif %}</td>
+                                <td class="col-num">{{ v.downloadCount }}</td>
+                                <td class="col-actions">
+                                    <div class="actions">
+                                        {% if v.file %}
+                                            <a class="btn btn--ghost btn--small" href="{{ path('app_document_version_download', {id: document.id, number: v.number}) }}">Скачать</a>
+                                        {% else %}
+                                            <a class="btn btn--ghost btn--small" href="{{ path('app_document_version', {id: document.id, number: v.number}) }}">Открыть</a>
+                                            {% if not v.current and current %}<a class="btn btn--ghost btn--small" href="{{ path('app_document_compare', {id: document.id, a: v.number, b: current.number}) }}">Сравнить с текущей</a>{% endif %}
+                                        {% endif %}
+                                        {% if can_manage and not v.current %}
+                                            <form method="post" action="{{ path('app_document_restore', {id: document.id, number: v.number}) }}" class="inline-form" data-confirm="Сделать версию {{ v.number }} текущей? Она будет скопирована как новая версия.">
+                                                <input type="hidden" name="_token" value="{{ csrf_token('document_' ~ document.id) }}">
+                                                <button type="submit" class="btn btn--ghost btn--small">Восстановить</button>
+                                            </form>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <aside class="doc-side">
+            <div class="card">
+                <h2 class="h-section">Карточка</h2>
+                <dl class="meta meta--stack">
+                    <div><dt>Раздел</dt><dd><a href="{{ path('app_section_show', {id: document.section.id}) }}">{{ document.section.fullName }}</a></dd></div>
+                    {% if document.code %}<div><dt>Обозначение</dt><dd>{{ document.code }}</dd></div>{% endif %}
+                    <div><dt>Актуальность</dt><dd>{{ document|validity_text|capitalize }}</dd></div>
+                    <div><dt>Создан</dt><dd>{{ document.createdAt|date('d.m.Y') }}{% if document.owner %} · {{ document.owner.displayName }}{% endif %}</dd></div>
+                    {% if document.publishedAt %}<div><dt>Опубликован</dt><dd>{{ document.publishedAt|date('d.m.Y H:i') }}</dd></div>{% endif %}
+                    <div><dt>Обновлён</dt><dd>{{ document.updatedAt|date('d.m.Y H:i') }}</dd></div>
+                    {% if document.tags|length > 0 %}
+                        <div><dt>Теги</dt><dd class="tags">{% for t in document.tags %}<a class="tag tag--link" href="{{ path('app_search', {q: t}) }}">{{ t }}</a>{% endfor %}</dd></div>
+                    {% endif %}
+                    <div><dt>Статистика</dt><dd>{{ document.viewCount|plural(['просмотр', 'просмотра', 'просмотров']) }}, {{ document.downloadCount|plural(['скачивание', 'скачивания', 'скачиваний']) }}{% if can_manage %} — <a href="{{ path('app_document_stats', {id: document.id}) }}">подробнее</a>{% endif %}</dd></div>
+                </dl>
+            </div>
+
+            {% if can_manage %}
+                <div class="card card--actions">
+                    <h2 class="h-section">Управление</h2>
+                    <div class="stack">
+                        {% if not document.published %}
+                            <form method="post" action="{{ path('app_document_publish', {id: document.id}) }}" class="inline-form">
+                                <input type="hidden" name="_token" value="{{ csrf_token('document_' ~ document.id) }}">
+                                <button type="submit" class="btn btn--pill btn--block">Опубликовать</button>
+                            </form>
+                        {% else %}
+                            <form method="post" action="{{ path('app_document_unpublish', {id: document.id}) }}" class="inline-form" data-confirm="Снять документ с публикации? Он станет черновиком и пропадёт из списков для сотрудников.">
+                                <input type="hidden" name="_token" value="{{ csrf_token('document_' ~ document.id) }}">
+                                <button type="submit" class="btn btn--ghost btn--block">Снять с публикации</button>
+                            </form>
+                        {% endif %}
+                        {% if not document.archived %}
+                            <form method="post" action="{{ path('app_document_archive', {id: document.id}) }}" class="inline-form" data-confirm="Перенести документ в архив?">
+                                <input type="hidden" name="_token" value="{{ csrf_token('document_' ~ document.id) }}">
+                                <button type="submit" class="btn btn--ghost btn--block">В архив</button>
+                            </form>
+                        {% endif %}
+                        <a class="btn btn--ghost btn--block" href="{{ path('app_document_stats', {id: document.id}) }}">Статистика документа</a>
+                        <form method="post" action="{{ path('app_document_delete', {id: document.id}) }}" class="inline-form" data-confirm="Удалить документ «{{ document.title }}» со всеми {{ versions|length }} версиями? Действие необратимо.">
+                            <input type="hidden" name="_token" value="{{ csrf_token('document_' ~ document.id) }}">
+                            <button type="submit" class="btn btn--danger btn--block">Удалить документ</button>
+                        </form>
+                    </div>
+                </div>
+
+                {% if recent_events|length > 0 %}
+                    <div class="card">
+                        <h2 class="h-section">Последние события</h2>
+                        <ul class="timeline">
+                            {% for e in recent_events %}
+                                <li class="timeline__item timeline__item--{{ e.type }}">
+                                    <span class="timeline__when">{{ e.createdAt|date('d.m.Y H:i') }}</span>
+                                    <span class="timeline__what">{{ e.type|event_label }}{% if e.version %} v{{ e.version.number }}{% endif %}</span>
+                                    <span class="timeline__who">{{ e.actorName ?: 'система' }}</span>
+                                </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                {% endif %}
+            {% endif %}
+        </aside>
+    </div>
+</section>
+{% endblock %}

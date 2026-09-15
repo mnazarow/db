@@ -1,0 +1,65 @@
+{% extends 'admin/_layout.html.twig' %}
+
+{% block title %}{{ is_new ? 'Новый пользователь' : 'Пользователь ' ~ user.username }}{% endblock %}
+{% block admin_title %}{{ is_new ? 'Новый пользователь' : user.username }}{% endblock %}
+
+{% block admin_body %}
+<div class="grid grid--two">
+    <div class="card card--form">
+        {% if is_new and ldap_enabled %}
+            <form method="post" action="{{ path('admin_user_ldap_lookup') }}" class="ldap-lookup">
+                <input type="hidden" name="_token" value="{{ csrf_token('ldap_lookup') }}">
+                <label class="form-label" for="ldap_username">Найти в домене</label>
+                <div class="toolbar__row">
+                    <input class="form-control form-control--inline" type="text" id="ldap_username" name="username" placeholder="логин в домене" autocomplete="off">
+                    <button type="submit" class="btn btn--ghost btn--small">Найти</button>
+                </div>
+                <div class="form-help">Заполнит имя и e-mail из Active Directory (нужна служебная учётная запись LDAP_BIND_DN).</div>
+            </form>
+            <hr class="divider">
+        {% endif %}
+        {{ form_start(form, {attr: {novalidate: 'novalidate', class: 'form', autocomplete: 'off', 'data-user-form': '1'}}) }}
+            {{ form_errors(form) }}
+            {% set ql = app.request.query %}
+            {{ form_row(form.username, ql.get('ldap_username') ? {value: ql.get('ldap_username')} : {}) }}
+            {{ form_row(form.displayName, ql.get('ldap_name') ? {value: ql.get('ldap_name')} : {}) }}
+            {{ form_row(form.email, ql.get('ldap_email') ? {value: ql.get('ldap_email')} : {}) }}
+            {{ form_row(form.department, ql.get('ldap_dept') ? {value: ql.get('ldap_dept')} : {}) }}
+            {% if form.authSource is defined %}
+                <div class="form-row">
+                    <div class="form-label">{{ form_label(form.authSource) }}</div>
+                    {{ form_widget(form.authSource, {attr: {'data-auth-source': '1'}}) }}
+                </div>
+            {% endif %}
+            {{ form_row(form.role) }}
+            {{ form_row(form.active) }}
+            <div data-local-only>
+                {{ form_row(form.plainPassword) }}
+                {{ form_row(form.mustChangePassword) }}
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn--pill">{{ is_new ? 'Создать' : 'Сохранить' }}</button>
+                <a class="btn btn--ghost" href="{{ path('admin_users') }}">Отмена</a>
+            </div>
+        {{ form_end(form) }}
+    </div>
+    <div class="card card--info">
+        <h2 class="h-section">Роли и права</h2>
+        <p><b>Пользователь</b> — читает и скачивает опубликованные документы во всех разделах, пользуется поиском.</p>
+        <p><b>Модератор</b> — пользователь, назначенный на раздел («Разделы» → «Модераторы»): создаёт и публикует документы, загружает версии, управляет подразделами. Права действуют на все вложенные подразделы.</p>
+        <p><b>Администратор</b> — всё перечисленное во всех разделах плюс панель администратора: пользователи, модераторы, статистика, настройки.</p>
+        {% if not is_new and moderated is defined %}
+            <h3 class="h-small">Модерирует разделы</h3>
+            {% if moderated|length == 0 %}<p class="text-muted">Назначений нет.</p>{% else %}
+                <ul class="bullets bullets--small">{% for mod in moderated %}<li><a href="{{ path('admin_section_moderators', {id: mod.section.id}) }}">{{ mod.section.fullName }}</a></li>{% endfor %}</ul>
+            {% endif %}
+        {% endif %}
+        <h3 class="h-small">Рекомендации</h3>
+        <ul class="bullets bullets--small">
+            <li>Для локальных учётных записей выдавайте временный пароль и включайте «Потребовать смену пароля».</li>
+            <li>Вместо удаления сотрудника блокируйте учётную запись — история версий и событий сохранит его имя.</li>
+            <li>Нельзя заблокировать или удалить последнего активного администратора и собственную учётную запись.</li>
+        </ul>
+    </div>
+</div>
+{% endblock %}

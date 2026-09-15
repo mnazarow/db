@@ -1,0 +1,69 @@
+{
+    "active": true,
+    "name": "Object Relational Mapper",
+    "shortName": "ORM",
+    "slug": "orm",
+    "docsSlug": "doctrine-orm",
+    "versions": [
+        {
+            "name": "4.0",
+            "branchName": "4.0.x",
+            "slug": "latest",
+            "upcoming": true
+        },
+        {
+            "name": "3.7",
+            "branchName": "3.7.x",
+            "slug": "3.7",
+            "upcoming": true
+        },
+        {
+            "name": "3.6",
+            "branchName": "3.6.x",
+            "slug": "3.6",
+            "current": true
+        },
+        {
+            "name": "2.21",
+            "branchName": "2.21.x",
+            "slug": "2.21",
+            "upcoming": true
+        },
+        {
+            "name": "2.20",
+            "branchName": "2.20.x",
+            "slug": "2.20",
+            "maintained": true
+        },
+        {
+            "name": "2.19",
+            "slug": "2.19",
+            "maintained": false
+        },
+        {
+            "name": "2.18",
+            "slug": "2.18",
+            "maintained": false
+        },
+        {
+            "name": "2.17",
+            "slug": "2.17",
+            "maintained": false
+        },
+        {
+            "name": "2.16",
+            "slug": "2.16",
+            "maintained": false
+        },
+        {
+            "name": "2.15",
+            "slug": "2.15",
+            "maintained": false
+        },
+        {
+            "name": "2.14",
+            "slug": "2.14",
+            "maintained": false
+        }
+    ]
+}

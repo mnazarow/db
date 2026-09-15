@@ -1,0 +1,61 @@
+{% extends 'admin/_layout.html.twig' %}
+
+{% block title %}Разделы{% endblock %}
+{% block admin_title %}Разделы и модераторы{% endblock %}
+{% block admin_actions %}
+    <a class="btn btn--pill" href="{{ path('admin_section_new') }}">Новый раздел</a>
+    <a class="btn btn--ghost" href="{{ path('admin_moderators') }}">Все модераторы</a>
+{% endblock %}
+
+{% block admin_body %}
+<div class="card table-card">
+    {% if tree|length == 0 %}
+        <div class="table-card__empty">Разделов пока нет. Создайте первый раздел.</div>
+    {% else %}
+    <div class="table-scroll">
+        <table class="admin-table tree-table">
+            <thead><tr><th>Раздел</th><th class="col-num">Документов</th><th class="col-num">В подразделах</th><th>Модераторы</th><th class="col-actions">Действия</th></tr></thead>
+            <tbody>
+            {% for s in tree %}
+                {% set own = per_section[s.id]|default({}) %}
+                {% set own_total = (own.published|default(0)) + (own.draft|default(0)) + (own.archived|default(0)) %}
+                <tr id="section-{{ s.id }}">
+                    <td>
+                        <div class="tree-cell" style="--depth: {{ s.depth }}">
+                            <span class="tree-cell__line" aria-hidden="true"></span>
+                            <a class="tree-cell__name" href="{{ path('app_section_show', {id: s.id}) }}">{{ s.name }}</a>
+                            {% if s.description %}<div class="hints">{{ s.description|length > 90 ? s.description|slice(0, 90) ~ '…' : s.description }}</div>{% endif %}
+                        </div>
+                    </td>
+                    <td class="col-num">{{ own_total }}{% if own.draft|default(0) > 0 %}<div class="hints">черн. {{ own.draft }}</div>{% endif %}</td>
+                    <td class="col-num">{{ counts[s.id].total }}</td>
+                    <td>
+                        {% if s.moderators|length == 0 %}<span class="text-muted">—</span>{% else %}
+                            {% for mod in s.moderators %}<span class="chip chip--static chip--small">{{ mod.user.displayName }}</span>{% endfor %}
+                        {% endif %}
+                    </td>
+                    <td class="col-actions">
+                        <div class="actions">
+                            <form method="post" action="{{ path('admin_section_move', {id: s.id, direction: 'up'}) }}" class="inline-form"><input type="hidden" name="_token" value="{{ csrf_token('section_' ~ s.id) }}"><button class="btn btn--ghost btn--small btn--icon" type="submit" title="Выше">▲</button></form>
+                            <form method="post" action="{{ path('admin_section_move', {id: s.id, direction: 'down'}) }}" class="inline-form"><input type="hidden" name="_token" value="{{ csrf_token('section_' ~ s.id) }}"><button class="btn btn--ghost btn--small btn--icon" type="submit" title="Ниже">▼</button></form>
+                            <a class="btn btn--ghost btn--small" href="{{ path('admin_section_new', {parent: s.id}) }}">+ Подраздел</a>
+                            <a class="btn btn--ghost btn--small" href="{{ path('admin_section_moderators', {id: s.id}) }}">Модераторы</a>
+                            <a class="btn btn--ghost btn--small" href="{{ path('admin_section_edit', {id: s.id}) }}">Изменить</a>
+                            <form method="post" action="{{ path('admin_section_delete', {id: s.id}) }}" class="inline-form" data-confirm="Удалить раздел «{{ s.name }}»?">
+                                <input type="hidden" name="_token" value="{{ csrf_token('section_' ~ s.id) }}">
+                                <button type="submit" class="btn btn--danger btn--small" {{ counts[s.id].total > 0 or counts[s.id].children > 0 ? 'disabled title="Сначала перенесите документы и подразделы"' }}>Удалить</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+</div>
+<div class="card card--info">
+    <p><b>Модераторы</b> назначаются на раздел и автоматически получают права на все вложенные подразделы: создавать документы, загружать версии, публиковать, архивировать и удалять их, создавать подразделы. Один пользователь может модерировать несколько разделов.</p>
+    <p>Удалить можно только пустой раздел. Порядок разделов в списках задаётся стрелками ▲ ▼.</p>
+</div>
+{% endblock %}

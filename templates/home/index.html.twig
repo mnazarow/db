@@ -1,0 +1,106 @@
+{% extends 'base.html.twig' %}
+{% import '_macros.html.twig' as m %}
+
+{% block title %}Разделы документации{% endblock %}
+{% block body_class %}page-home{% endblock %}
+
+{% block body %}
+<section class="hero">
+    <div class="container">
+        <div class="eyebrow">{{ app_company }}</div>
+        <div class="hero__row">
+            <div>
+                <h1 class="h-display">{{ app_name }}</h1>
+                <p class="hero__meta">Опубликовано документов: {{ total_published }}. Выберите раздел или воспользуйтесь поиском.</p>
+            </div>
+            <div class="hero__actions">
+                {% if is_moderator %}
+                    <a class="btn btn--pill" href="{{ path('app_document_new') }}">Добавить документ</a>
+                {% endif %}
+                {% if is_granted('ROLE_ADMIN') %}
+                    <a class="btn btn--ghost" href="{{ path('app_section_new_root') }}">Новый раздел</a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+
+    {% if is_moderator and (expiring|length > 0 or drafts|length > 0) %}
+        <div class="grid grid--two attention">
+            <div class="card card--attention">
+                <div class="card__head">
+                    <h2 class="h-section">Требуют внимания</h2>
+                    {% if is_granted('ROLE_ADMIN') %}<a class="link-action" href="{{ path('admin_statistics') }}">Вся статистика</a>{% endif %}
+                </div>
+                {% if expiring|length > 0 %}
+                    <h3 class="h-small">Срок актуальности истекает или истёк</h3>
+                    <ul class="mini-list">
+                        {% for d in expiring %}
+                            <li><a href="{{ path('app_document_show', {id: d.id}) }}">{{ d.title }}</a> <span class="text-muted">— {{ d|validity_text }}</span></li>
+                        {% endfor %}
+                    </ul>
+                {% else %}
+                    <p class="text-muted">Просроченных и истекающих документов в ваших разделах нет.</p>
+                {% endif %}
+            </div>
+            <div class="card">
+                <h2 class="h-section">Черновики</h2>
+                {% if drafts|length > 0 %}
+                    <ul class="mini-list">
+                        {% for d in drafts %}
+                            <li><a href="{{ path('app_document_show', {id: d.id}) }}">{{ d.title }}</a> <span class="text-muted">— {{ d.section.name }}, {{ d.updatedAt|date('d.m.Y') }}</span></li>
+                        {% endfor %}
+                    </ul>
+                {% else %}
+                    <p class="text-muted">Неопубликованных документов нет.</p>
+                {% endif %}
+            </div>
+        </div>
+    {% endif %}
+
+    <h2 class="h-section">Разделы</h2>
+    {% if roots|length == 0 %}
+        <div class="card empty-state empty-state--compact">
+            <p>Разделов пока нет.{% if is_granted('ROLE_ADMIN') %} Создайте первый раздел — например, «Регламенты» или «Инструкции».{% endif %}</p>
+            {% if is_granted('ROLE_ADMIN') %}<a class="btn btn--pill" href="{{ path('app_section_new_root') }}">Создать раздел</a>{% endif %}
+        </div>
+    {% else %}
+        <div class="section-grid">
+            {% for s in roots %}
+                {% set c = counts[s.id] %}
+                <a class="section-card" href="{{ path('app_section_show', {id: s.id}) }}">
+                    <div class="section-card__icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+                    </div>
+                    <div class="section-card__body">
+                        <div class="section-card__title">{{ s.name }}</div>
+                        {% if s.description %}<div class="section-card__desc">{{ s.description|length > 120 ? s.description|slice(0, 120) ~ '…' : s.description }}</div>{% endif %}
+                        <div class="section-card__meta">
+                            {{ c.published|plural(['документ', 'документа', 'документов']) }}
+                            {% if c.children > 0 %} · {{ c.children|plural(['подраздел', 'подраздела', 'подразделов']) }}{% endif %}
+                        </div>
+                        {% if s.children|length > 0 %}
+                            <div class="section-card__children">
+                                {% for ch in s.children|slice(0, 5) %}<span class="chip chip--static">{{ ch.name }}</span>{% endfor %}
+                                {% if s.children|length > 5 %}<span class="chip chip--static">ещё {{ s.children|length - 5 }}</span>{% endif %}
+                            </div>
+                        {% endif %}
+                    </div>
+                </a>
+            {% endfor %}
+        </div>
+    {% endif %}
+
+    {% if recent|length > 0 %}
+        <div class="card table-card recent">
+            <div class="card__head card__head--padded">
+                <h2 class="h-section">Недавно обновлённые</h2>
+            </div>
+            {{ m.document_table(recent, {show_section: true}) }}
+        </div>
+    {% endif %}
+</section>
+{% endblock %}

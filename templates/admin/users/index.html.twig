@@ -1,0 +1,63 @@
+{% extends 'admin/_layout.html.twig' %}
+
+{% block title %}Пользователи{% endblock %}
+{% block admin_title %}Пользователи{% endblock %}
+{% block admin_actions %}
+    <a class="btn btn--pill" href="{{ path('admin_user_new') }}">Добавить пользователя</a>
+{% endblock %}
+
+{% block admin_body %}
+<div class="card toolbar">
+    <form method="get" class="toolbar__row">
+        <label class="search">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input class="search__input" type="search" name="q" value="{{ q }}" placeholder="Логин, имя или e-mail">
+        </label>
+        <button class="btn btn--ghost btn--small" type="submit">Найти</button>
+        <span class="toolbar__summary">Всего: {{ users|length }}</span>
+    </form>
+</div>
+<div class="card table-card">
+    <div class="table-scroll">
+        <table class="admin-table admin-table--users">
+            <thead>
+                <tr><th>Логин</th><th>Имя</th><th>Источник</th><th>Роль</th><th>Модерирует</th><th>Состояние</th><th>Последний вход</th><th class="col-actions">Действия</th></tr>
+            </thead>
+            <tbody>
+            {% for user in users %}
+                <tr class="{{ not user.active ? 'is-inactive' }}">
+                    <td><b>{{ user.username }}</b>{% if user.id == app.user.id %} <span class="tag">это вы</span>{% endif %}</td>
+                    <td>{{ user.displayName }}{% if user.email %}<div class="hints">{{ user.email }}</div>{% endif %}{% if user.department %}<div class="hints">{{ user.department }}</div>{% endif %}</td>
+                    <td>{% if user.ldap %}<span class="badge badge--progress"><span class="badge__dot"></span>Домен</span>{% else %}Локальная{% endif %}</td>
+                    <td>{% if user.admin %}<span class="badge badge--admin"><span class="badge__dot"></span>Администратор</span>{% else %}Пользователь{% endif %}</td>
+                    <td>{% for s in moderated[user.id]|default([]) %}<span class="chip chip--static chip--small">{{ s.name }}</span> {% else %}<span class="text-muted">—</span>{% endfor %}</td>
+                    <td>
+                        {% if user.active %}<span class="badge badge--done"><span class="badge__dot"></span>Активен</span>{% else %}<span class="badge badge--overdue"><span class="badge__dot"></span>Заблокирован</span>{% endif %}
+                        {% if user.mustChangePassword %}<div class="hints">требуется смена пароля</div>{% endif %}
+                    </td>
+                    <td class="col-nowrap">{{ user.lastLoginAt ? user.lastLoginAt|date('d.m.Y H:i') : '—' }}</td>
+                    <td class="col-actions">
+                        <div class="actions">
+                            <a class="btn btn--ghost btn--small" href="{{ path('admin_user_edit', {id: user.id}) }}">Изменить</a>
+                            {% if user.id != app.user.id %}
+                                <form method="post" action="{{ path('admin_user_toggle', {id: user.id}) }}" class="inline-form" data-confirm="{{ user.active ? 'Заблокировать пользователя «' ~ user.username ~ '»? Он не сможет войти.' : 'Разблокировать пользователя «' ~ user.username ~ '»?' }}">
+                                    <input type="hidden" name="_token" value="{{ csrf_token('user_' ~ user.id) }}">
+                                    <button type="submit" class="btn btn--ghost btn--small">{{ user.active ? 'Заблокировать' : 'Разблокировать' }}</button>
+                                </form>
+                                <form method="post" action="{{ path('admin_user_delete', {id: user.id}) }}" class="inline-form" data-confirm="Удалить пользователя «{{ user.username }}»? Его назначения модератором будут сняты; документы и история сохранятся.">
+                                    <input type="hidden" name="_token" value="{{ csrf_token('user_' ~ user.id) }}">
+                                    <button type="submit" class="btn btn--danger btn--small">Удалить</button>
+                                </form>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% if ldap_enabled %}
+<div class="card card--info"><p>Вход через домен включён: сотрудники входят под доменной учётной записью, и портал создаёт их учётные записи автоматически при первом входе. Чтобы назначить сотрудника модератором до его первого входа, добавьте доменную учётную запись вручную.</p></div>
+{% endif %}
+{% endblock %}

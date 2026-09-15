@@ -1,0 +1,33 @@
+{% extends 'base.html.twig' %}
+
+{% block body_class %}page-admin{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        <div class="eyebrow">Панель администратора</div>
+        <div class="hero__row">
+            <h1 class="h-display">{% block admin_title %}{% endblock %}</h1>
+            <div class="hero__actions">{% block admin_actions %}{% endblock %}</div>
+        </div>
+    </div>
+</section>
+
+<div class="container">
+    <nav class="subnav" aria-label="Разделы панели администратора">
+        {% set route = app.request.attributes.get('_route') ?? '' %}
+        <a class="subnav__link {{ route == 'admin_dashboard' ? 'is-active' }}" href="{{ path('admin_dashboard') }}">Обзор</a>
+        <a class="subnav__link {{ route starts with 'admin_section' or route == 'admin_moderators' ? 'is-active' }}" href="{{ path('admin_sections') }}">Разделы и модераторы</a>
+        <a class="subnav__link {{ route starts with 'admin_documents' ? 'is-active' }}" href="{{ path('admin_documents') }}">Документы</a>
+        <a class="subnav__link {{ route starts with 'admin_user' ? 'is-active' }}" href="{{ path('admin_users') }}">Пользователи</a>
+        <a class="subnav__link {{ route starts with 'admin_statistics' ? 'is-active' }}" href="{{ path('admin_statistics') }}">Статистика</a>
+        <a class="subnav__link {{ route starts with 'admin_events' ? 'is-active' }}" href="{{ path('admin_events') }}">Журнал</a>
+        <a class="subnav__link {{ route starts with 'admin_settings' ? 'is-active' }}" href="{{ path('admin_settings') }}">Настройки</a>
+    </nav>
+</div>
+
+<section class="container section section--admin">
+    {% include '_flashes.html.twig' %}
+    {% block admin_body %}{% endblock %}
+</section>
+{% endblock %}

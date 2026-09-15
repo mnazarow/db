@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow">
+    <title>{% block title %}{{ app_name }}{% endblock %} — {{ app_company }}</title>
+    <link rel="icon" href="{{ asset('img/favicon.svg') }}" type="image/svg+xml">
+    <link rel="icon" href="{{ asset('favicon-32x32.png') }}" sizes="32x32" type="image/png">
+    <link rel="apple-touch-icon" href="{{ asset('apple-touch-icon.png') }}" sizes="180x180">
+    <link rel="preload" href="{{ asset('fonts/DINCondensed-Light.woff2') }}" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="{{ asset('fonts/DINCondensed-Regular.woff2') }}" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="{{ asset('fonts/roboto-cyrillic-400-normal.woff2') }}" as="font" type="font/woff2" crossorigin>
+    <link rel="stylesheet" href="{{ asset('css/app.css') }}">
+    {% block stylesheets %}{% endblock %}
+</head>
+<body class="{% block body_class %}{% endblock %}">
+<a class="skip-link" href="#content">К содержимому</a>
+
+<header class="site-header">
+    <div class="container site-header__inner">
+        <a class="brand brand--wordmark" href="{{ path('app_home') }}" aria-label="{{ app_company }} — {{ app_name }}">
+            {# Штатный логотип vodokomfort.ru уже содержит надпись «ВОДОКОМФОРТ»; на узких экранах — компактный знак #}
+            <picture>
+                <source media="(max-width: 640px)" srcset="{{ asset('img/logo-mark.svg') }}">
+                <img class="brand__mark" src="{{ asset('img/logo.svg') }}" alt="{{ app_company }}" height="44">
+            </picture>
+            <span class="brand__text">
+                <span class="brand__company">{{ app_company }}</span>
+                <span class="brand__app">{{ app_name }}</span>
+            </span>
+        </a>
+
+        {% if app.user %}
+            {% set route = app.request.attributes.get('_route') ?? '' %}
+            <nav class="site-nav" aria-label="Основная навигация">
+                <a class="site-nav__link {{ route in ['app_home', 'app_section_show'] or route starts with 'app_document' ? 'is-active' }}" href="{{ path('app_home') }}">Документы</a>
+                {% if is_granted('MODERATOR') %}
+                    <a class="site-nav__link {{ route == 'app_document_new' ? 'is-active' }}" href="{{ path('app_document_new') }}">Добавить документ</a>
+                {% endif %}
+                {% if is_granted('ROLE_ADMIN') %}
+                    <a class="site-nav__link {{ route starts with 'admin_' ? 'is-active' }}" href="{{ path('admin_dashboard') }}">Панель администратора</a>
+                {% endif %}
+            </nav>
+
+            <form class="header-search" action="{{ path('app_search') }}" method="get" role="search">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                <input class="header-search__input" type="search" name="q" value="{{ app.request.query.get('q') }}" placeholder="Поиск…" aria-label="Поиск документов" autocomplete="off">
+            </form>
+
+            <div class="site-header__user">
+                {% if app.user.local %}
+                    <a class="user-chip" href="{{ path('app_password_change') }}" title="Сменить пароль">
+                {% else %}
+                    <span class="user-chip" title="Доменная учётная запись">
+                {% endif %}
+                    <span class="user-chip__avatar" aria-hidden="true">{{ app.user.initials }}</span>
+                    <span class="user-chip__name">{{ app.user.displayName }}</span>
+                    <span class="user-chip__role">{{ is_granted('ROLE_ADMIN') ? 'администратор' : (is_granted('MODERATOR') ? 'модератор' : 'пользователь') }}</span>
+                {% if app.user.local %}</a>{% else %}</span>{% endif %}
+                <form method="post" action="{{ path('app_logout') }}" class="inline-form">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token('logout') }}">
+                    <button type="submit" class="btn btn--pill btn--small">Выйти</button>
+                </form>
+            </div>
+
+            <button class="nav-toggle" type="button" aria-label="Открыть меню" aria-expanded="false" data-nav-toggle>
+                <span></span><span></span><span></span>
+            </button>
+        {% endif %}
+    </div>
+</header>
+
+<main id="content" class="site-main">
+    {% block body %}{% endblock %}
+</main>
+
+<footer class="site-footer">
+    <div class="container site-footer__inner">
+        <div class="site-footer__brand site-footer__brand--wordmark">
+            <img class="site-footer__logo" src="{{ asset('img/logo.svg') }}" alt="{{ app_company }}" height="36">
+            <div>
+                <div class="site-footer__title">{{ app_company }}</div>
+                <div class="site-footer__subtitle">{{ app_name }}</div>
+            </div>
+        </div>
+        <div class="site-footer__links">
+            {% if app.user %}
+                <a href="{{ path('app_home') }}">Разделы и документы</a>
+                <a href="{{ path('app_search') }}">Поиск</a>
+                {% if app.user.local %}<a href="{{ path('app_password_change') }}">Сменить пароль</a>{% endif %}
+                {% if is_granted('ROLE_ADMIN') %}<a href="{{ path('admin_dashboard') }}">Панель администратора</a>{% endif %}
+            {% else %}
+                <a href="{{ path('app_login') }}">Вход</a>
+            {% endif %}
+        </div>
+        <div class="site-footer__meta">
+            <div>© {{ app_company }}, {{ 'now'|date('Y') }}</div>
+            <div>Информация предназначена для внутреннего использования. Версия портала {{ app_version }}</div>
+        </div>
+    </div>
+</footer>
+
+<script src="{{ asset('js/app.js') }}" defer></script>
+{% block javascripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,19 @@
+###> symfony/framework-bundle ###
+/.env.local
+/.env.local.php
+/.env.*.local
+/config/secrets/prod/prod.decrypt.private.php
+/public/bundles/
+/var/
+!/var/storage/.gitkeep
+# Каталог vendor/ НАМЕРЕННО не исключён: дистрибутив переносится на серверы вместе с зависимостями,
+# чтобы установка не требовала Composer и доступа к packagist.org/github.com.
+# Если ведёте разработку в git и хотите исключить его — раскомментируйте строку ниже.
+# /vendor/
+###< symfony/framework-bundle ###
+
+/backups/
+/docker/mysql-data/
+*.log
+.DS_Store
+Thumbs.db

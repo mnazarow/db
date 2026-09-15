@@ -1,0 +1,26 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}Ошибка {{ status_code }}{% endblock %}
+
+{% block body %}
+<section class="container section">
+    <div class="card empty-state">
+        <div class="error-code">{{ status_code }}</div>
+        <h1 class="h-section">
+            {%- if status_code == 404 -%}Страница не найдена
+            {%- elseif status_code == 403 -%}Доступ запрещён
+            {%- elseif status_code == 413 -%}Слишком большой запрос
+            {%- else -%}Что-то пошло не так
+            {%- endif -%}
+        </h1>
+        <p>
+            {%- if status_code == 404 -%}Проверьте адрес или вернитесь на главную страницу. Возможно, документ или раздел был удалён.
+            {%- elseif status_code == 403 -%}У вашей учётной записи нет прав для этого действия. Если вам нужен доступ к разделу, обратитесь к его модератору или администратору портала.
+            {%- elseif status_code == 413 -%}Файл превышает лимит размера, установленный на сервере.
+            {%- else -%}Произошла внутренняя ошибка. Попробуйте повторить действие позже; если ошибка повторяется — сообщите администратору.
+            {%- endif -%}
+        </p>
+        <a class="btn btn--pill" href="{{ path('app_home') }}">На главную</a>
+    </div>
+</section>
+{% endblock %}

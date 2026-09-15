@@ -1,0 +1,56 @@
+security:
+    password_hashers:
+        Symfony\Component\Security\Core\User\PasswordAuthenticatedUserInterface: 'auto'
+
+    providers:
+        app_user_provider:
+            entity:
+                class: App\Entity\User
+                property: username
+
+    role_hierarchy:
+        ROLE_ADMIN: [ROLE_USER]
+
+    firewalls:
+        dev:
+            pattern: ^/(_(profiler|wdt)|css|img|js|fonts|vendor)/
+            security: false
+        main:
+            lazy: true
+            provider: app_user_provider
+            user_checker: App\Security\UserChecker
+            # Единый аутентификатор: локальные учётные записи + Active Directory / LDAP.
+            custom_authenticators:
+                - App\Security\PortalAuthenticator
+            entry_point: App\Security\PortalAuthenticator
+            logout:
+                path: app_logout
+                target: app_login
+                invalidate_session: true
+                enable_csrf: true
+                csrf_parameter: _csrf_token
+                csrf_token_id: logout
+            remember_me:
+                secret: '%kernel.secret%'
+                lifetime: '%env(int:REMEMBER_ME_LIFETIME)%'
+                path: /
+                secure: auto
+                samesite: lax
+                remember_me_parameter: _remember_me
+            login_throttling:
+                limiter: app.login_rate_limiter
+
+    access_control:
+        - { path: ^/login$, roles: PUBLIC_ACCESS }
+        - { path: ^/health$, roles: PUBLIC_ACCESS }
+        - { path: ^/admin, roles: ROLE_ADMIN }
+        - { path: ^/, roles: ROLE_USER }
+
+when@test:
+    security:
+        password_hashers:
+            Symfony\Component\Security\Core\User\PasswordAuthenticatedUserInterface:
+                algorithm: auto
+                cost: 4
+                time_cost: 3
+                memory_cost: 10

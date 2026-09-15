@@ -1,0 +1,72 @@
+{% extends 'base.html.twig' %}
+{% import '_macros.html.twig' as m %}
+
+{% block title %}Сравнение версий {{ a.number }} и {{ b.number }} — {{ document.title }}{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        {{ m.breadcrumbs(document.section, document.title ~ ' — сравнение версий') }}
+        <div class="hero__row">
+            <div>
+                <h1 class="h-display">Версия {{ a.number }} → версия {{ b.number }}</h1>
+                <p class="hero__meta">{{ document.title }}. Слева/красным — удалённые строки, зелёным — добавленные.</p>
+            </div>
+            <div class="hero__actions">
+                <a class="btn btn--ghost" href="{{ path('app_document_show', {id: document.id}) }}">К документу</a>
+                {% if document.versions|length > 2 %}
+                    <form method="get" class="inline-form compare-form" data-compare-form data-url-template="{{ path('app_document_compare', {id: document.id, a: 0, b: 0}) }}">
+                        <select class="form-control form-control--sm form-control--inline" name="a" aria-label="Версия А">{% for v in document.versions %}<option value="{{ v.number }}" {{ v.number == a.number ? 'selected' }}>v{{ v.number }}</option>{% endfor %}</select>
+                        <span class="text-muted">→</span>
+                        <select class="form-control form-control--sm form-control--inline" name="b" aria-label="Версия Б">{% for v in document.versions %}<option value="{{ v.number }}" {{ v.number == b.number ? 'selected' }}>v{{ v.number }}</option>{% endfor %}</select>
+                        <button type="submit" class="btn btn--ghost btn--small">Сравнить</button>
+                    </form>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</section>
+<section class="container section">
+    {% if a.file or b.file %}
+        <div class="card">
+            <h2 class="h-section">Файловые версии</h2>
+            {% if same_file %}
+                <div class="alert alert--success">Файлы версий {{ a.number }} и {{ b.number }} идентичны (совпадает контрольная сумма SHA-256).</div>
+            {% else %}
+                <div class="alert alert--info">Содержимое файлов портал не сравнивает построчно — сравните их атрибуты и скачайте обе версии.</div>
+            {% endif %}
+            <div class="table-scroll">
+                <table class="admin-table">
+                    <thead><tr><th></th><th>Версия {{ a.number }}</th><th>Версия {{ b.number }}</th></tr></thead>
+                    <tbody>
+                        <tr><td>Имя файла</td><td>{{ a.originalName }}</td><td>{{ b.originalName }}</td></tr>
+                        <tr><td>Размер</td><td>{{ a.size ? a.size|filesize : '—' }}</td><td>{{ b.size ? b.size|filesize : '—' }}</td></tr>
+                        <tr><td>Тип</td><td>{{ a.mimeType }}</td><td>{{ b.mimeType }}</td></tr>
+                        <tr><td>SHA-256</td><td class="code-small">{{ a.checksum }}</td><td class="code-small">{{ b.checksum }}</td></tr>
+                        <tr><td>Дата</td><td>{{ a.createdAt|date('d.m.Y H:i') }}</td><td>{{ b.createdAt|date('d.m.Y H:i') }}</td></tr>
+                        <tr><td>Автор</td><td>{{ a.createdBy ? a.createdBy.displayName : '—' }}</td><td>{{ b.createdBy ? b.createdBy.displayName : '—' }}</td></tr>
+                        <tr><td>Комментарий</td><td>{{ a.changeNote }}</td><td>{{ b.changeNote }}</td></tr>
+                        <tr><td></td><td><a class="btn btn--ghost btn--small" href="{{ path('app_document_version_download', {id: document.id, number: a.number}) }}">Скачать v{{ a.number }}</a></td><td><a class="btn btn--ghost btn--small" href="{{ path('app_document_version_download', {id: document.id, number: b.number}) }}">Скачать v{{ b.number }}</a></td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    {% else %}
+        <div class="card">
+            <div class="card__head">
+                <h2 class="h-section">Изменения текста</h2>
+                <span class="text-muted">добавлено строк: <b class="text-ok">{{ summary.added }}</b>, удалено: <b class="text-danger">{{ summary.removed }}</b></span>
+            </div>
+            {% if summary.added == 0 and summary.removed == 0 %}
+                <div class="alert alert--success">Текст версий совпадает (различия могут быть только в форматировании).</div>
+            {% else %}
+                <div class="diff">
+                    {% for line in lines %}
+                        <div class="diff__line diff__line--{{ line.type }}"><span class="diff__mark">{{ line.type == 'add' ? '+' : (line.type == 'del' ? '−' : ' ') }}</span><span class="diff__text">{{ line.text|default(' ') }}</span></div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        </div>
+    {% endif %}
+</section>
+{% endblock %}

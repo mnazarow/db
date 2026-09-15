@@ -1,0 +1,86 @@
+{% extends 'admin/_layout.html.twig' %}
+{% import '_macros.html.twig' as m %}
+
+{% block title %}Статистика{% endblock %}
+{% block admin_title %}Статистика по документам{% endblock %}
+{% block admin_actions %}
+    <div class="chips">
+        {% for value, label in periods %}<a class="chip" aria-pressed="{{ period == value ? 'true' : 'false' }}" href="{{ path('admin_statistics', {period: value}) }}">{{ label }}</a>{% endfor %}
+    </div>
+{% endblock %}
+
+{% block admin_body %}
+<div class="grid grid--stats">
+    <div class="card"><div class="stat__label">Документов</div><div class="stat__value">{{ overview.documents_total }}</div><div class="stat__hint">файлов {{ overview.documents_by_type.file }}, страниц {{ overview.documents_by_type.page }}</div></div>
+    <div class="card"><div class="stat__label">Опубликовано</div><div class="stat__value">{{ overview.documents_by_status.published }}</div><div class="stat__hint">черновиков {{ overview.documents_by_status.draft }}, в архиве {{ overview.documents_by_status.archived }}</div></div>
+    <div class="card"><div class="stat__label">Актуальность</div><div class="stat__value {{ overview.validity.expired > 0 ? 'text-danger' }}">{{ overview.validity.expired }}</div><div class="stat__hint">просрочено · истекает {{ overview.validity.soon }} · актуальны {{ overview.validity.valid }} · бессрочных {{ overview.validity.none }}</div></div>
+    <div class="card"><div class="stat__label">Просмотры / скачивания за 30 дн.</div><div class="stat__value">{{ overview.views_30d }}<span class="stat__value--muted"> / {{ overview.downloads_30d }}</span></div><div class="stat__hint">всего событий: {{ overview.events_by_type|reduce((c, v) => c + v, 0) }}</div></div>
+    <div class="card"><div class="stat__label">Версии и хранилище</div><div class="stat__value">{{ overview.versions }}</div><div class="stat__hint">{{ overview.storage_bytes|filesize }} в файлах, новых версий за 30 дн.: {{ overview.new_versions_30d }}</div></div>
+</div>
+
+<div class="grid grid--two">
+    <div class="card"><h2 class="h-section">По дням</h2>{{ m.bar_chart(chart_days, {width: 620}) }}</div>
+    <div class="card"><h2 class="h-section">По месяцам (12 мес.)</h2>{{ m.bar_chart(chart_months, {width: 620}) }}</div>
+</div>
+
+<div class="card table-card">
+    <div class="card__head card__head--padded"><h2 class="h-section">По разделам</h2><a class="link-action" href="{{ path('admin_statistics_sections_csv', {period: period}) }}">CSV</a></div>
+    <div class="table-scroll"><table class="admin-table tree-table">
+        <thead><tr><th>Раздел</th><th class="col-num">Документов<div class="hints">с подразделами</div></th><th class="col-num">Опубл.</th><th class="col-num">Черн.</th><th class="col-num">Архив</th><th class="col-num">Просм.<div class="hints">{{ periods[period] }}</div></th><th class="col-num">Скач.</th><th class="col-num">Просроч.</th><th class="col-num">Истекает</th><th class="col-num">Модер.</th></tr></thead>
+        <tbody>
+        {% for r in per_section %}
+            <tr>
+                <td><div class="tree-cell" style="--depth: {{ r.section.depth }}"><span class="tree-cell__line" aria-hidden="true"></span><a class="tree-cell__name" href="{{ path('app_section_show', {id: r.section.id}) }}">{{ r.section.name }}</a></div></td>
+                <td class="col-num">{{ r.subtree.published + r.subtree.draft + r.subtree.archived }}</td>
+                <td class="col-num">{{ r.subtree.published }}</td>
+                <td class="col-num">{{ r.subtree.draft }}</td>
+                <td class="col-num">{{ r.subtree.archived }}</td>
+                <td class="col-num">{{ r.views }}</td>
+                <td class="col-num">{{ r.downloads }}</td>
+                <td class="col-num {{ r.expired > 0 ? 'text-danger' }}">{{ r.expired }}</td>
+                <td class="col-num {{ r.soon > 0 ? 'text-warning' }}">{{ r.soon }}</td>
+                <td class="col-num">{{ r.moderators }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table></div>
+</div>
+
+<div class="grid grid--two">
+    <div class="card table-card">
+        <div class="card__head card__head--padded"><h2 class="h-section">Самые востребованные</h2><a class="link-action" href="{{ path('admin_statistics_documents_csv', {period: period}) }}">CSV</a></div>
+        {% if top|length == 0 %}<div class="table-card__empty">За период просмотров не было.</div>{% else %}
+        <div class="table-scroll"><table class="admin-table">
+            <thead><tr><th>#</th><th>Документ</th><th class="col-num">Просм.</th><th class="col-num">Скач.</th></tr></thead>
+            <tbody>{% for row in top %}<tr><td class="col-num">{{ loop.index }}</td><td><a href="{{ path('app_document_show', {id: row.document.id}) }}">{{ row.document.title }}</a><div class="hints">{{ row.document.section.fullName }}</div></td><td class="col-num">{{ row.views }}</td><td class="col-num">{{ row.downloads }}</td></tr>{% endfor %}</tbody>
+        </table></div>{% endif %}
+    </div>
+    <div class="card table-card">
+        <div class="card__head card__head--padded"><h2 class="h-section">Активность пользователей</h2><a class="link-action" href="{{ path('admin_statistics_users_csv', {period: period}) }}">CSV</a></div>
+        {% if users|length == 0 %}<div class="table-card__empty">За период активности не было.</div>{% else %}
+        <div class="table-scroll"><table class="admin-table">
+            <thead><tr><th>Пользователь</th><th class="col-num">Просм.</th><th class="col-num">Скач.</th><th class="col-num">Изменений</th><th>Последняя активность</th></tr></thead>
+            <tbody>{% for u in users %}<tr><td>{{ u.name }}<div class="hints">{{ u.username }}</div></td><td class="col-num">{{ u.views }}</td><td class="col-num">{{ u.downloads }}</td><td class="col-num">{{ u.changes }}</td><td class="col-nowrap">{{ u.last|date('d.m.Y H:i') }}</td></tr>{% endfor %}</tbody>
+        </table></div>{% endif %}
+    </div>
+</div>
+
+<div class="grid grid--two">
+    <div class="card table-card">
+        <div class="card__head card__head--padded"><h2 class="h-section">Контроль актуальности</h2><a class="link-action" href="{{ path('admin_documents', {validity: 'expired'}) }}">Реестр</a></div>
+        {% if expiring|length == 0 %}<div class="table-card__empty">Просроченных и истекающих документов нет.</div>{% else %}
+        <div class="table-scroll"><table class="admin-table">
+            <thead><tr><th>Документ</th><th>Ответственный</th><th>Срок</th></tr></thead>
+            <tbody>{% for d in expiring %}<tr><td><a href="{{ path('app_document_show', {id: d.id}) }}">{{ d.title }}</a><div class="hints">{{ d.section.fullName }}</div></td><td>{{ d.owner ? d.owner.displayName : '—' }}</td><td class="col-nowrap">{{ m.validity_badge(d, true) }}<div class="hints">{{ d|validity_text }}</div></td></tr>{% endfor %}</tbody>
+        </table></div>{% endif %}
+    </div>
+    <div class="card table-card">
+        <div class="card__head card__head--padded"><h2 class="h-section">Давно не открывали</h2><span class="text-muted">более 180 дней</span></div>
+        {% if stale|length == 0 %}<div class="table-card__empty">Таких документов нет.</div>{% else %}
+        <div class="table-scroll"><table class="admin-table">
+            <thead><tr><th>Документ</th><th>Последний просмотр</th><th class="col-num">Всего просм.</th></tr></thead>
+            <tbody>{% for d in stale %}<tr><td><a href="{{ path('app_document_show', {id: d.id}) }}">{{ d.title }}</a><div class="hints">{{ d.section.fullName }}</div></td><td class="col-nowrap">{{ d.lastViewedAt ? d.lastViewedAt|date('d.m.Y') : 'никогда' }}</td><td class="col-num">{{ d.viewCount }}</td></tr>{% endfor %}</tbody>
+        </table></div>{% endif %}
+    </div>
+</div>
+{% endblock %}

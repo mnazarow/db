@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1160" height="560" viewBox="0 0 1160 560" font-family="Roboto, Arial, Helvetica, sans-serif" font-size="14">
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0F4382"/></marker><marker id="arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#D00024"/></marker><marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#1F8F4E"/></marker><marker id="arrow-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#6E7480"/></marker></defs>
+<rect width="1160" height="560" fill="#FFFFFF"/>
+<text x="24" y="34" font-family="'DIN Condensed', 'Arial Narrow', Arial, sans-serif" font-size="24" font-weight="600" fill="#0F4382" letter-spacing="0.5">ВХОД: ЛОКАЛЬНЫЕ И ДОМЕННЫЕ УЧЁТНЫЕ ЗАПИСИ</text>
+<rect x="40" y="90" width="200" height="60" rx="22" fill="#E7EFF6" stroke="#0F4382" stroke-width="1.5"/>
+<text x="140.0" y="114" text-anchor="middle" font-weight="700" font-size="14" fill="#0F4382">Форма входа</text>
+<text x="140.0" y="134" text-anchor="middle" font-size="13" fill="#1D1E1E">логин + пароль</text>
+<line x1="240" y1="120" x2="300" y2="120" stroke="#0F4382" stroke-width="1.8" marker-end="url(#arrow)"/>
+<polygon points="400,80.0 500.0,120 400,160.0 300.0,120" fill="#E7EFF6" stroke="#0F4382" stroke-width="1.5"/>
+<text x="400" y="116" text-anchor="middle" font-size="12" fill="#1D1E1E">Есть локальная</text>
+<text x="400" y="132" text-anchor="middle" font-size="12" fill="#1D1E1E">учётная запись?</text>
+<line x1="500" y1="120" x2="620" y2="120" stroke="#1F8F4E" stroke-width="1.8" marker-end="url(#arrow-green)"/>
+<text x="560.0" y="114.0" text-anchor="middle" font-size="12" fill="#1F8F4E">да</text>
+<rect x="620" y="80" width="230" height="80" rx="14" fill="#FFFFFF" stroke="#0F4382" stroke-width="1.5"/>
+<text x="735.0" y="104" text-anchor="middle" font-weight="700" font-size="14" fill="#0F4382">Проверка пароля</text>
+<text x="735.0" y="124" text-anchor="middle" font-size="13" fill="#1D1E1E">по хэшу в базе портала</text>
+<text x="735.0" y="142" text-anchor="middle" font-size="13" fill="#1D1E1E">(bcrypt/argon2)</text>
+<line x1="400" y1="160" x2="400" y2="230" stroke="#0F4382" stroke-width="1.8" marker-end="url(#arrow)"/>
+<text x="400.0" y="193.0" text-anchor="middle" font-size="12" fill="#0F4382">нет</text>
+<polygon points="400,240.0 500.0,280 400,320.0 300.0,280" fill="#E7EFF6" stroke="#0F4382" stroke-width="1.5"/>
+<text x="400" y="284" text-anchor="middle" font-size="12" fill="#1D1E1E">LDAP_ENABLED=1?</text>
+<line x1="400" y1="320" x2="400" y2="400" stroke="#D00024" stroke-width="1.8" marker-end="url(#arrow-red)"/>
+<text x="400.0" y="358.0" text-anchor="middle" font-size="12" fill="#D00024">нет</text>
+<rect x="320" y="405" width="170" height="26" rx="13" fill="#FCE9EC" stroke="#D00024"/>
+<circle cx="334" cy="418" r="4" fill="#D00024"/>
+<text x="346" y="422" font-size="12" fill="#1D1E1E">Отказ во входе</text>
+<line x1="500" y1="280" x2="620" y2="280" stroke="#1F8F4E" stroke-width="1.8" marker-end="url(#arrow-green)"/>
+<text x="560.0" y="274.0" text-anchor="middle" font-size="12" fill="#1F8F4E">да</text>
+<rect x="620" y="230" width="230" height="100" rx="14" fill="#FFFFFF" stroke="#0F4382" stroke-width="1.5"/>
+<text x="735.0" y="254" text-anchor="middle" font-weight="700" font-size="14" fill="#0F4382">Active Directory</text>
+<text x="735.0" y="274" text-anchor="middle" font-size="13" fill="#1D1E1E">bind служебной учётной</text>
+<text x="735.0" y="292" text-anchor="middle" font-size="13" fill="#1D1E1E">записью + поиск, либо</text>
+<text x="735.0" y="310" text-anchor="middle" font-size="13" fill="#1D1E1E">bind как логин@домен</text>
+<line x1="850" y1="280" x2="900" y2="280" stroke="#0F4382" stroke-width="1.8" marker-end="url(#arrow)"/>
+<rect x="900" y="230" width="230" height="100" rx="14" fill="#E7EFF6" stroke="#0F4382" stroke-width="1.5"/>
+<text x="1015.0" y="254" text-anchor="middle" font-weight="700" font-size="14" fill="#0F4382">Учётная запись в портале</text>
+<text x="1015.0" y="274" text-anchor="middle" font-size="13" fill="#1D1E1E">создаётся при первом входе,</text>
+<text x="1015.0" y="292" text-anchor="middle" font-size="13" fill="#1D1E1E">обновляются имя, почта,</text>
+<text x="1015.0" y="310" text-anchor="middle" font-size="13" fill="#1D1E1E">подразделение, права админа</text>
+<line x1="850" y1="120" x2="900" y2="120" stroke="#0F4382" stroke-width="1.8" marker-end="url(#arrow)"/>
+<rect x="900" y="80" width="230" height="80" rx="14" fill="#E7EFF6" stroke="#0F4382" stroke-width="1.5"/>
+<text x="1015.0" y="104" text-anchor="middle" font-weight="700" font-size="14" fill="#0F4382">Сессия</text>
+<text x="1015.0" y="124" text-anchor="middle" font-size="13" fill="#1D1E1E">роли, «запомнить меня»,</text>
+<text x="1015.0" y="142" text-anchor="middle" font-size="13" fill="#1D1E1E">журнал входов</text>
+<line x1="1015" y1="230" x2="1015" y2="160" stroke="#6E7480" stroke-width="1.8" marker-end="url(#arrow-muted)"/>
+<text x="40" y="480" font-size="12" fill="#6E7480" text-anchor="start" font-weight="normal" xml:space="preserve">Защита от перебора: LOGIN_MAX_ATTEMPTS попыток на пару «логин + IP» и LOGIN_MAX_ATTEMPTS_GLOBAL на IP за LOGIN_ATTEMPT_INTERVAL.</text>
+<text x="40" y="500" font-size="12" fill="#6E7480" text-anchor="start" font-weight="normal" xml:space="preserve">Группы AD: LDAP_USER_GROUP — кому разрешён вход, LDAP_ADMIN_GROUP — кому выдаются права администратора (учитываются вложенные группы).</text>
+<text x="40" y="520" font-size="12" fill="#6E7480" text-anchor="start" font-weight="normal" xml:space="preserve">Пароли доменных учётных записей в портале не хранятся; их смена выполняется средствами домена.</text>
+</svg>

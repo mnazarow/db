@@ -1,0 +1,25 @@
+{% extends 'admin/_layout.html.twig' %}
+
+{% block title %}{{ is_new ? 'Новый раздел' : 'Раздел ' ~ section.name }}{% endblock %}
+{% block admin_title %}{{ is_new ? 'Новый раздел' : section.name }}{% endblock %}
+
+{% block admin_body %}
+<div class="grid grid--two">
+    <div class="card card--form">
+        {{ form_start(form, {attr: {novalidate: 'novalidate', class: 'form'}}) }}
+            {{ form_row(form.name) }}
+            {{ form_row(form.parent) }}
+            {{ form_row(form.description) }}
+            <div class="form-actions">
+                <button type="submit" class="btn btn--pill">{{ is_new ? 'Создать' : 'Сохранить' }}</button>
+                <a class="btn btn--ghost" href="{{ path('admin_sections') }}">Отмена</a>
+            </div>
+        {{ form_end(form) }}
+    </div>
+    <div class="card card--info">
+        <h2 class="h-section">Вложенность</h2>
+        <p>Раздел может располагаться на верхнем уровне или внутри любого другого раздела (до {{ constant('App\\Entity\\Section::MAX_DEPTH') }} уровней). При переносе раздела все его подразделы и документы переезжают вместе с ним, права модераторов пересчитываются автоматически.</p>
+        <p>Нельзя перенести раздел внутрь самого себя или своего подраздела.</p>
+    </div>
+</div>
+{% endblock %}

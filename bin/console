@@ -1,0 +1,46 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+use App\Kernel;
+use Symfony\Bundle\FrameworkBundle\Console\Application;
+use Symfony\Component\Console\Input\ArgvInput;
+use Symfony\Component\Dotenv\Dotenv;
+use Symfony\Component\ErrorHandler\Debug;
+
+if (!is_file(dirname(__DIR__).'/vendor/autoload.php')) {
+    fwrite(STDERR, "Каталог vendor/ не найден. Выполните: composer install\n");
+    exit(1);
+}
+
+require dirname(__DIR__).'/vendor/autoload.php';
+
+$input = new ArgvInput();
+
+if (null !== $env = $input->getParameterOption(['--env', '-e'], null, true)) {
+    putenv('APP_ENV='.$_SERVER['APP_ENV'] = $_ENV['APP_ENV'] = $env);
+}
+
+if ($input->hasParameterOption('--no-debug', true)) {
+    putenv('APP_DEBUG='.$_SERVER['APP_DEBUG'] = $_ENV['APP_DEBUG'] = '0');
+}
+
+(new Dotenv())->bootEnv(dirname(__DIR__).'/.env');
+
+if (!@date_default_timezone_set((string) ($_SERVER['APP_TIMEZONE'] ?? 'Europe/Moscow'))) {
+    date_default_timezone_set('UTC');
+}
+
+$debug = (bool) ($_SERVER['APP_DEBUG'] ?? false);
+
+if ($debug) {
+    umask(0000);
+    if (class_exists(Debug::class)) {
+        Debug::enable();
+    }
+}
+
+$kernel = new Kernel($_SERVER['APP_ENV'] ?? 'prod', $debug);
+$application = new Application($kernel);
+$application->run($input);

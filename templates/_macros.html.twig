@@ -1,0 +1,119 @@
+{# Повторно используемые фрагменты: значки актуальности и статуса, значок формата файла, хлебные крошки, таблица документов, SVG-график. #}
+
+{% macro validity_badge(document, with_text = false) %}
+    {%- set state = document|validity_state -%}
+    {%- set cls = {expired: 'overdue', soon: 'soon', valid: 'done', none: 'none'}[state] -%}
+    <span class="badge badge--{{ cls }}" title="{{ document|validity_text }}"><span class="badge__dot"></span>{{ state|validity_label }}{% if with_text and document.validUntil %} · {{ document.validUntil|date('d.m.Y') }}{% endif %}</span>
+{%- endmacro %}
+
+{% macro status_badge(document) %}
+    {%- set cls = {draft: 'shifted', published: 'done', archived: 'none'}[document.status] -%}
+    <span class="badge badge--{{ cls }}"><span class="badge__dot"></span>{{ document.status|status_label }}</span>
+{%- endmacro %}
+
+{% macro file_icon(document) %}
+    {%- set current = document.currentVersion -%}
+    {%- if document.page -%}
+        <span class="ficon ficon--page" title="Страница">стр</span>
+    {%- else -%}
+        {%- set ext = current ? current.extension : '' -%}
+        <span class="ficon ficon--{{ ext|ext_icon }}" title="{{ ext|upper }}">{{ ext|upper|slice(0, 4) ?: 'файл' }}</span>
+    {%- endif -%}
+{%- endmacro %}
+
+{% macro breadcrumbs(section, current = null) %}
+    <nav class="breadcrumbs" aria-label="Путь">
+        <a href="{{ path('app_home') }}">Разделы</a>
+        {% for s in section.breadcrumbs %}
+            <span class="breadcrumbs__sep" aria-hidden="true">/</span>
+            {% if current is null and loop.last %}<span class="breadcrumbs__current">{{ s.name }}</span>{% else %}<a href="{{ path('app_section_show', {id: s.id}) }}">{{ s.name }}</a>{% endif %}
+        {% endfor %}
+        {% if current is not null %}
+            <span class="breadcrumbs__sep" aria-hidden="true">/</span>
+            <span class="breadcrumbs__current">{{ current }}</span>
+        {% endif %}
+    </nav>
+{% endmacro %}
+
+{% macro document_table(documents, options = {}) %}
+    {% import _self as m %}
+    {% set show_section = options.show_section|default(false) %}
+    {% set show_status = options.show_status|default(false) %}
+    {% set empty_text = options.empty|default('Документов пока нет.') %}
+    {% if documents|length == 0 %}
+        <div class="table-card__empty">{{ empty_text }}</div>
+    {% else %}
+    <div class="table-scroll">
+        <table class="doc-table">
+            <thead>
+                <tr>
+                    <th class="col-icon"></th>
+                    <th>Документ</th>
+                    {% if show_section %}<th>Раздел</th>{% endif %}
+                    {% if show_status %}<th>Статус</th>{% endif %}
+                    <th>Версия</th>
+                    <th>Актуальность</th>
+                    <th>Обновлён</th>
+                    <th class="col-num" title="Просмотры">👁</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for d in documents %}
+                <tr class="{{ d.status != 'published' ? 'is-muted' }}">
+                    <td class="col-icon">{{ m.file_icon(d) }}</td>
+                    <td>
+                        <a class="doc-table__title" href="{{ path('app_document_show', {id: d.id}) }}">{{ d.title }}</a>
+                        {% if d.code %}<span class="doc-table__code">{{ d.code }}</span>{% endif %}
+                        {% if d.description %}<div class="hints">{{ d.description|length > 140 ? d.description|slice(0, 140) ~ '…' : d.description }}</div>{% endif %}
+                    </td>
+                    {% if show_section %}<td class="col-section"><a href="{{ path('app_section_show', {id: d.section.id}) }}">{{ d.section.fullName }}</a></td>{% endif %}
+                    {% if show_status %}<td>{{ m.status_badge(d) }}</td>{% endif %}
+                    <td class="col-nowrap">{% if d.currentVersion %}v{{ d.currentVersion.number }}{% if d.currentVersion.size and d.file %}<div class="hints">{{ d.currentVersion.size|filesize }}</div>{% endif %}{% else %}—{% endif %}</td>
+                    <td class="col-nowrap">{{ m.validity_badge(d, true) }}</td>
+                    <td class="col-nowrap">{{ d.updatedAt|date('d.m.Y') }}<div class="hints">{{ d.owner ? d.owner.displayName : '' }}</div></td>
+                    <td class="col-num">{{ d.viewCount }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+{% endmacro %}
+
+{% macro bar_chart(chart, options = {}) %}
+    {# Простой SVG-график: столбцы просмотров и скачиваний по периодам. chart = {labels, view, download, max} #}
+    {% set w = options.width|default(920) %}
+    {% set h = options.height|default(220) %}
+    {% set n = chart.labels|length %}
+    {% set pad_l = 36 %}{% set pad_b = 28 %}{% set pad_t = 12 %}
+    {% set plot_w = w - pad_l - 8 %}{% set plot_h = h - pad_b - pad_t %}
+    {% set slot = n > 0 ? plot_w / n : plot_w %}
+    {% set bw = max(2, (slot * 0.36)|round(0, 'floor')) %}
+    {% set maxv = max(1, chart.max) %}
+    <div class="chart">
+        <svg viewBox="0 0 {{ w }} {{ h }}" class="chart__svg" role="img" aria-label="{{ options.label|default('Просмотры и скачивания') }}">
+            {% for i in 0..4 %}
+                {% set y = pad_t + plot_h - plot_h * i / 4 %}
+                <line x1="{{ pad_l }}" y1="{{ y }}" x2="{{ w - 8 }}" y2="{{ y }}" class="chart__grid"/>
+                <text x="{{ pad_l - 6 }}" y="{{ y + 4 }}" class="chart__axis" text-anchor="end">{{ (maxv * i / 4)|round }}</text>
+            {% endfor %}
+            {% for i, label in chart.labels %}
+                {% set x0 = pad_l + i * slot + slot / 2 %}
+                {% set hv = plot_h * chart.view[i] / maxv %}
+                {% set hd = plot_h * chart.download[i] / maxv %}
+                <rect x="{{ x0 - bw - 1 }}" y="{{ pad_t + plot_h - hv }}" width="{{ bw }}" height="{{ hv }}" class="chart__bar chart__bar--view"><title>{{ label }}: просмотров {{ chart.view[i] }}</title></rect>
+                <rect x="{{ x0 + 1 }}" y="{{ pad_t + plot_h - hd }}" width="{{ bw }}" height="{{ hd }}" class="chart__bar chart__bar--download"><title>{{ label }}: скачиваний {{ chart.download[i] }}</title></rect>
+                {% if n <= 16 or i % ((n / 12)|round(0, 'ceil')) == 0 %}
+                    <text x="{{ x0 }}" y="{{ h - 8 }}" class="chart__axis" text-anchor="middle">{{ label }}</text>
+                {% endif %}
+            {% endfor %}
+        </svg>
+        <div class="chart__legend"><span><i class="legend-dot legend-dot--view"></i>Просмотры</span><span><i class="legend-dot legend-dot--download"></i>Скачивания</span></div>
+    </div>
+{% endmacro %}
+
+{% macro section_option_tree(tree, selected = null) %}
+    {% for s in tree %}
+        <option value="{{ s.id }}" {{ selected is not null and selected.id == s.id ? 'selected' }}>{% for i in 1..s.depth %}{% if s.depth > 0 %}— {% endif %}{% endfor %}{{ s.name }}</option>
+    {% endfor %}
+{% endmacro %}

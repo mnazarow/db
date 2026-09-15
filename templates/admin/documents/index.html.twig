@@ -1,0 +1,45 @@
+{% extends 'admin/_layout.html.twig' %}
+{% import '_macros.html.twig' as m %}
+
+{% block title %}Реестр документов{% endblock %}
+{% block admin_title %}Реестр документов{% endblock %}
+{% block admin_actions %}
+    <a class="btn btn--pill" href="{{ path('app_document_new') }}">Добавить документ</a>
+    <a class="btn btn--ghost" href="{{ path('admin_documents_export', app.request.query.all) }}">Выгрузить CSV</a>
+{% endblock %}
+
+{% block admin_body %}
+<div class="card toolbar">
+    <form method="get" class="filters" data-filters>
+        <label class="search">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input class="search__input" type="search" name="q" value="{{ filters.q }}" placeholder="Название или обозначение">
+        </label>
+        <select class="form-control form-control--inline" name="section" aria-label="Раздел"><option value="">Все разделы</option>{{ m.section_option_tree(tree, filters.section) }}</select>
+        <select class="form-control form-control--inline" name="status" aria-label="Статус">
+            <option value="">Любой статус</option>
+            {% for value, label in {published: 'Опубликован', draft: 'Черновик', archived: 'В архиве'} %}<option value="{{ value }}" {{ filters.status == value ? 'selected' }}>{{ label }}</option>{% endfor %}
+        </select>
+        <select class="form-control form-control--inline" name="type" aria-label="Вид">
+            <option value="">Любой вид</option><option value="file" {{ filters.type == 'file' ? 'selected' }}>Файлы</option><option value="page" {{ filters.type == 'page' ? 'selected' }}>Страницы</option>
+        </select>
+        <select class="form-control form-control--inline" name="validity" aria-label="Актуальность">
+            <option value="">Любая актуальность</option>
+            {% for value, label in {expired: 'Просрочены', soon: 'Истекают', valid: 'Актуальны', none: 'Бессрочные'} %}<option value="{{ value }}" {{ filters.validity == value ? 'selected' }}>{{ label }}</option>{% endfor %}
+        </select>
+        <select class="form-control form-control--inline" name="owner" aria-label="Ответственный">
+            <option value="">Любой ответственный</option>
+            {% for u in owners %}<option value="{{ u.id }}" {{ filters.owner and filters.owner.id == u.id ? 'selected' }}>{{ u.displayName }}</option>{% endfor %}
+        </select>
+        <select class="form-control form-control--inline" name="sort" aria-label="Сортировка">
+            {% for value, label in {updated: 'по обновлению', title: 'по названию', code: 'по обозначению', valid: 'по сроку', views: 'по популярности'} %}<option value="{{ value }}" {{ sort == value ? 'selected' }}>{{ label }}</option>{% endfor %}
+        </select>
+        <button class="btn btn--ghost btn--small" type="submit">Показать</button>
+        <a class="btn btn--ghost btn--small" href="{{ path('admin_documents') }}">Сбросить</a>
+    </form>
+</div>
+<div class="card table-card">
+    <div class="card__head card__head--padded"><h2 class="h-section">Найдено: {{ documents|length }}</h2></div>
+    {{ m.document_table(documents, {show_section: true, show_status: true, empty: 'Документов с такими условиями нет.'}) }}
+</div>
+{% endblock %}

@@ -1,0 +1,50 @@
+{
+    "active": true,
+    "name": "Collections",
+    "slug": "collections",
+    "docsSlug": "doctrine-collections",
+    "versions": [
+        {
+            "name": "3.0",
+            "branchName": "3.0.x",
+            "slug": "latest",
+            "upcoming": true
+        },
+        {
+            "name": "2.5",
+            "branchName": "2.5.x",
+            "slug": "2.5",
+            "current": true
+        },
+        {
+            "name": "2.4",
+            "slug": "2.4",
+            "maintained": false
+        },
+        {
+            "name": "2.3",
+            "slug": "2.3",
+            "maintained": false
+        },
+        {
+            "name": "2.2",
+            "slug": "2.2",
+            "maintained": false
+        },
+        {
+            "name": "2.1",
+            "slug": "2.1",
+            "maintained": false
+        },
+        {
+            "name": "1.8",
+            "slug": "1.8",
+            "maintained": false
+        },
+        {
+            "name": "1.6",
+            "slug": "1.6",
+            "maintained": false
+        }
+    ]
+}

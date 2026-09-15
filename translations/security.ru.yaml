@@ -1,0 +1,13 @@
+# Сообщения компонента безопасности (форма входа).
+'Invalid credentials.': 'Неверный логин или пароль.'
+'Username could not be found.': 'Неверный логин или пароль.'
+'Bad credentials.': 'Неверный логин или пароль.'
+'Invalid CSRF token.': 'Форма устарела. Обновите страницу и повторите вход.'
+'Too many failed login attempts, please try again in %minutes% minute.': 'Слишком много неудачных попыток входа. Повторите через %minutes% мин.'
+'Too many failed login attempts, please try again in %minutes% minutes.': 'Слишком много неудачных попыток входа. Повторите через %minutes% мин.'
+'Account has expired.': 'Срок действия учётной записи истёк.'
+'Credentials have expired.': 'Срок действия пароля истёк.'
+'Account is disabled.': 'Учётная запись отключена.'
+'Account is locked.': 'Учётная запись заблокирована.'
+'An authentication exception occurred.': 'Ошибка проверки подлинности. Попробуйте ещё раз.'
+'Authentication request could not be processed due to a system problem.': 'Не удалось выполнить вход из-за системной ошибки. Обратитесь к администратору.'

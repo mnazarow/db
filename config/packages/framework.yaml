@@ -1,0 +1,111 @@
+framework:
+    secret: '%env(APP_SECRET)%'
+    default_locale: ru
+    http_method_override: false
+    handle_all_throwables: true
+    trusted_proxies: '%env(default::TRUSTED_PROXIES)%'
+    trusted_headers: ['x-forwarded-for', 'x-forwarded-proto', 'x-forwarded-host', 'x-forwarded-port']
+
+    session:
+        handler_id: null
+        cookie_secure: auto
+        cookie_samesite: lax
+        cookie_lifetime: 0
+        gc_maxlifetime: '%env(int:SESSION_LIFETIME)%'
+        storage_factory_id: session.storage.factory.native
+
+    php_errors:
+        log: true
+
+    form:
+        csrf_protection: true
+
+    csrf_protection: true
+
+    validation:
+        email_validation_mode: html5
+
+    # Ограничение попыток входа (защита от перебора паролей).
+    # login_local — по паре «логин + IP», login_global — по IP.
+    rate_limiter:
+        login_local:
+            policy: fixed_window
+            limit: '%env(int:LOGIN_MAX_ATTEMPTS)%'
+            interval: '%env(LOGIN_ATTEMPT_INTERVAL)%'
+            cache_pool: app.login_limiter_pool
+        login_global:
+            policy: fixed_window
+            limit: '%env(int:LOGIN_MAX_ATTEMPTS_GLOBAL)%'
+            interval: '%env(LOGIN_ATTEMPT_INTERVAL)%'
+            cache_pool: app.login_limiter_pool
+
+    cache:
+        app: cache.adapter.filesystem
+        system: cache.adapter.system
+
+    assets:
+        version: '%app.version%'
+        version_format: '%%s?v=%%s'
+
+    mailer:
+        dsn: '%env(MAILER_DSN)%'
+
+    # Очистка HTML страниц, написанных в редакторе: разрешён только безопасный набор тегов.
+    html_sanitizer:
+        sanitizers:
+            document_page:
+                allow_safe_elements: true
+                allow_relative_links: true
+                allow_relative_medias: true
+                allowed_link_schemes: ['http', 'https', 'mailto', 'tel']
+                allowed_media_schemes: ['http', 'https', 'data']
+                force_https_urls: false
+                max_input_length: 4000000
+                allow_elements:
+                    img: ['src', 'alt', 'width', 'height', 'title']
+                    a: ['href', 'title', 'target', 'rel']
+                    table: ['class']
+                    thead: []
+                    tbody: []
+                    tr: []
+                    td: ['colspan', 'rowspan']
+                    th: ['colspan', 'rowspan']
+                    span: ['class', 'style']
+                    p: ['class', 'style']
+                    pre: ['class']
+                    code: []
+                    blockquote: []
+                    h1: []
+                    h2: []
+                    h3: []
+                    h4: []
+                    ul: []
+                    ol: []
+                    li: ['class', 'data-list']
+                    sub: []
+                    sup: []
+                    br: []
+                    hr: []
+                    strong: []
+                    em: []
+                    u: []
+                    s: []
+                    div: ['class']
+                drop_attributes:
+                    onclick: '*'
+                    onerror: '*'
+                    onload: '*'
+                force_attributes:
+                    a:
+                        rel: 'noopener noreferrer'
+
+when@dev:
+    framework:
+        router:
+            strict_requirements: true
+
+when@test:
+    framework:
+        test: true
+        session:
+            storage_factory_id: session.storage.factory.mock_file

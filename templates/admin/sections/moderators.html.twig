@@ -1,0 +1,57 @@
+{% extends 'admin/_layout.html.twig' %}
+
+{% block title %}Модераторы раздела {{ section.name }}{% endblock %}
+{% block admin_title %}Модераторы: {{ section.name }}{% endblock %}
+{% block admin_actions %}<a class="btn btn--ghost" href="{{ path('app_section_show', {id: section.id}) }}">Открыть раздел</a>{% endblock %}
+
+{% block admin_body %}
+<p class="text-muted">Раздел: <b>{{ section.fullName }}</b>. Права модератора распространяются на все подразделы.</p>
+<div class="grid grid--two">
+    <div class="card table-card">
+        <div class="card__head card__head--padded"><h2 class="h-section">Назначены на этот раздел</h2></div>
+        {% if assignments|length == 0 %}<div class="table-card__empty">Модераторы не назначены.</div>{% else %}
+        <div class="table-scroll"><table class="admin-table">
+            <thead><tr><th>Пользователь</th><th>Назначен</th><th class="col-actions"></th></tr></thead>
+            <tbody>
+            {% for a in assignments %}
+                <tr>
+                    <td><b>{{ a.user.displayName }}</b><div class="hints">{{ a.user.username }}{% if a.user.email %} · {{ a.user.email }}{% endif %}{% if not a.user.active %} · <span class="text-danger">заблокирован</span>{% endif %}</div></td>
+                    <td class="col-nowrap">{{ a.assignedAt|date('d.m.Y') }}{% if a.assignedBy %}<div class="hints">{{ a.assignedBy.displayName }}</div>{% endif %}</td>
+                    <td class="col-actions">
+                        <form method="post" action="{{ path('admin_section_moderator_remove', {id: section.id, moderatorId: a.id}) }}" class="inline-form" data-confirm="Снять {{ a.user.displayName }} с модерации раздела «{{ section.name }}»?">
+                            <input type="hidden" name="_token" value="{{ csrf_token('section_' ~ section.id) }}">
+                            <button type="submit" class="btn btn--danger btn--small">Снять</button>
+                        </form>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table></div>{% endif %}
+        {% if inherited|length > 0 %}
+            <div class="card__head card__head--padded"><h3 class="h-small">Унаследованы от родительских разделов</h3></div>
+            <ul class="bullets bullets--small card__padded">
+                {% for i in inherited %}<li><b>{{ i.moderator.user.displayName }}</b> — через раздел «<a href="{{ path('admin_section_moderators', {id: i.section.id}) }}">{{ i.section.name }}</a>»</li>{% endfor %}
+            </ul>
+        {% endif %}
+    </div>
+    <div class="card card--form">
+        <h2 class="h-section">Назначить модератора</h2>
+        {% if candidates|length == 0 %}
+            <p class="text-muted">Все активные пользователи уже назначены. <a href="{{ path('admin_user_new') }}">Добавить пользователя</a>.</p>
+        {% else %}
+        <form method="post" action="{{ path('admin_section_moderators', {id: section.id}) }}" class="form">
+            <input type="hidden" name="_token" value="{{ csrf_token('section_' ~ section.id) }}">
+            <div class="form-row">
+                <label class="form-label" for="user_id">Пользователь</label>
+                <select class="form-control" id="user_id" name="user_id" required>
+                    <option value="">Выберите…</option>
+                    {% for u in candidates %}<option value="{{ u.id }}">{{ u.displayName }} ({{ u.username }}{{ u.admin ? ', администратор' }})</option>{% endfor %}
+                </select>
+                <div class="form-help">Администраторы и так имеют все права — назначать их модераторами не нужно. Доменных пользователей, которые ещё не входили в портал, сначала добавьте в разделе «Пользователи».</div>
+            </div>
+            <div class="form-actions"><button type="submit" class="btn btn--pill">Назначить</button></div>
+        </form>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,101 @@
+{% extends 'base.html.twig' %}
+{% import '_macros.html.twig' as m %}
+
+{% block title %}{{ is_new ? 'Новый документ' : 'Изменение: ' ~ document.title }}{% endblock %}
+{% block body_class %}page-document-form{% endblock %}
+
+{% block stylesheets %}
+    <link rel="stylesheet" href="{{ asset('vendor/quill/quill.snow.css') }}">
+{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        {% if not is_new %}{{ m.breadcrumbs(document.section, document.title) }}{% endif %}
+        <h1 class="h-display">{{ is_new ? 'Новый документ' : 'Изменение документа' }}</h1>
+        {% if not is_new %}<p class="hero__meta">{{ document.title }} · текущая версия {{ document.currentVersion ? document.currentVersion.number : '—' }}</p>{% endif %}
+    </div>
+</section>
+
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+    {{ form_start(form, {attr: {novalidate: 'novalidate', class: 'form doc-form', enctype: 'multipart/form-data', 'data-doc-form': '1', 'data-type': document.type}}) }}
+    <div class="grid grid--doc-form">
+        <div class="doc-form__main">
+            <div class="card">
+                <h2 class="h-section">Карточка документа</h2>
+                {{ form_row(form.title) }}
+                <div class="form-grid">
+                    {{ form_row(form.code) }}
+                    {{ form_row(form.section) }}
+                </div>
+                {{ form_row(form.description) }}
+                <div class="form-grid">
+                    {{ form_row(form.tagsString) }}
+                    {{ form_row(form.validUntil) }}
+                </div>
+            </div>
+
+            <div class="card">
+                <h2 class="h-section">{{ is_new ? 'Содержимое' : (document.file ? 'Новая версия файла' : 'Текст страницы') }}</h2>
+                {% if is_new %}
+                    <div class="form-row">
+                        <div class="form-label">{{ form_label(form.type) }}</div>
+                        {{ form_widget(form.type, {attr: {'data-type-choice': '1'}}) }}
+                    </div>
+                {% endif %}
+
+                <div data-type-panel="file" {{ document.page ? 'hidden' }}>
+                    {% if not is_new and document.currentVersion %}
+                        <p class="text-muted">Текущий файл: <b>{{ document.currentVersion.originalName }}</b> ({{ document.currentVersion.size|filesize }}, версия {{ document.currentVersion.number }}). Загрузите новый файл, чтобы создать версию {{ document.nextVersionNumber }}; если файл не выбран, изменится только карточка.</p>
+                    {% endif %}
+                    <div class="dropzone" data-dropzone>
+                        <svg class="dropzone__icon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M24 30V12m0 0-7 7m7-7 7 7"/><path d="M10 30v6a2 2 0 0 0 2 2h24a2 2 0 0 0 2-2v-6"/></svg>
+                        <div class="dropzone__text">Перетащите файл сюда или выберите на компьютере</div>
+                        {{ form_widget(form.file, {attr: {class: 'dropzone__input', 'data-dropzone-input': '1'}}) }}
+                        <div class="dropzone__name" data-dropzone-name>Файл не выбран</div>
+                        {{ form_errors(form.file) }}
+                    </div>
+                    <p class="form-help">Допустимые форматы: {{ storage.allowedExtensions|join(', ') }}. Максимальный размер — {{ storage.uploadMaxMb }} МБ.</p>
+                </div>
+
+                <div data-type-panel="page" {{ document.file ? 'hidden' }}>
+                    <div class="editor-wrap">
+                        <div id="page-editor" class="page-editor" data-quill></div>
+                    </div>
+                    {{ form_widget(form.content, {value: (not is_new and document.currentVersion) ? document.currentVersion.content : (form.content.vars.value ?? '')}) }}
+                    {{ form_errors(form.content) }}
+                    <p class="form-help">Форматирование: заголовки, списки, таблицы через вставку, ссылки, изображения. Каждое сохранение с изменённым текстом создаёт новую версию.</p>
+                </div>
+
+                {{ form_row(form.changeNote) }}
+                {% if is_new %}{{ form_row(form.publish) }}{% endif %}
+            </div>
+        </div>
+
+        <aside class="doc-form__side">
+            <div class="card card--info">
+                <h2 class="h-section">Подсказки</h2>
+                <ul class="bullets bullets--small">
+                    <li><b>Файл</b> — любой документ из списка форматов; каждая новая загрузка становится новой версией, старые версии сохраняются.</li>
+                    <li><b>Страница</b> — текст пишется прямо здесь; история версий и сравнение работают так же.</li>
+                    <li><b>Актуален до</b> — по этой дате портал подсвечивает истекающие документы и уведомляет ответственных за {{ expiry_soon_days }} дней.</li>
+                    <li><b>Черновик</b> виден только модераторам раздела; после проверки нажмите «Опубликовать».</li>
+                </ul>
+            </div>
+            <div class="card">
+                <div class="form-actions form-actions--stack">
+                    <button type="submit" class="btn btn--pill btn--block" data-submit>{{ is_new ? 'Сохранить документ' : 'Сохранить изменения' }}</button>
+                    <a class="btn btn--ghost btn--block" href="{{ is_new ? (document.section.id ? path('app_section_show', {id: document.section.id}) : path('app_home')) : path('app_document_show', {id: document.id}) }}">Отмена</a>
+                </div>
+            </div>
+        </aside>
+    </div>
+    {{ form_end(form) }}
+</section>
+{% endblock %}
+
+{% block javascripts %}
+    <script src="{{ asset('vendor/quill/quill.js') }}"></script>
+    <script src="{{ asset('js/editor.js') }}" defer></script>
+{% endblock %}

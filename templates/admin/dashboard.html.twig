@@ -1,0 +1,52 @@
+{% extends 'admin/_layout.html.twig' %}
+{% import '_macros.html.twig' as m %}
+
+{% block title %}Панель администратора{% endblock %}
+{% block admin_title %}Обзор{% endblock %}
+{% block admin_actions %}
+    <a class="btn btn--pill" href="{{ path('app_document_new') }}">Добавить документ</a>
+    <a class="btn btn--ghost" href="{{ path('admin_section_new') }}">Новый раздел</a>
+{% endblock %}
+
+{% block admin_body %}
+<div class="grid grid--stats">
+    <div class="card"><div class="stat__label">Документов</div><div class="stat__value">{{ overview.documents_total }}</div><div class="stat__hint">опубликовано {{ overview.documents_by_status.published }}, черновиков {{ overview.documents_by_status.draft }}, в архиве {{ overview.documents_by_status.archived }}</div></div>
+    <div class="card"><div class="stat__label">Просрочено</div><div class="stat__value {{ overview.validity.expired > 0 ? 'text-danger' }}">{{ overview.validity.expired }}</div><div class="stat__hint">истекает в ближайшие {{ expiry_soon_days }} дн.: {{ overview.validity.soon }}</div></div>
+    <div class="card"><div class="stat__label">Просмотры за 30 дней</div><div class="stat__value">{{ overview.views_30d }}</div><div class="stat__hint">скачиваний: {{ overview.downloads_30d }}</div></div>
+    <div class="card"><div class="stat__label">Новых версий за 30 дней</div><div class="stat__value">{{ overview.new_versions_30d }}</div><div class="stat__hint">всего версий: {{ overview.versions }}, файлов на {{ overview.storage_bytes|filesize }}</div></div>
+    <div class="card"><div class="stat__label">Разделы и люди</div><div class="stat__value">{{ overview.sections }}</div><div class="stat__hint">пользователей {{ overview.users }} (домен: {{ overview.users_by_source.ldap }}), назначений модераторов {{ overview.moderators }}</div></div>
+</div>
+
+<div class="card">
+    <div class="card__head"><h2 class="h-section">Активность за 30 дней</h2><a class="link-action" href="{{ path('admin_statistics') }}">Подробная статистика</a></div>
+    {{ m.bar_chart(chart) }}
+</div>
+
+<div class="grid grid--two">
+    <div class="card table-card">
+        <div class="card__head card__head--padded"><h2 class="h-section">Требуют внимания</h2><a class="link-action" href="{{ path('admin_documents', {validity: 'expired'}) }}">Все просроченные</a></div>
+        {% if expiring|length == 0 %}<div class="table-card__empty">Просроченных и истекающих документов нет.</div>{% else %}
+        <div class="table-scroll"><table class="admin-table">
+            <thead><tr><th>Документ</th><th>Раздел</th><th>Срок</th></tr></thead>
+            <tbody>{% for d in expiring %}<tr><td><a href="{{ path('app_document_show', {id: d.id}) }}">{{ d.title }}</a></td><td>{{ d.section.name }}</td><td class="col-nowrap">{{ m.validity_badge(d, true) }}</td></tr>{% endfor %}</tbody>
+        </table></div>{% endif %}
+    </div>
+    <div class="card table-card">
+        <div class="card__head card__head--padded"><h2 class="h-section">Популярные за 30 дней</h2></div>
+        {% if top|length == 0 %}<div class="table-card__empty">Просмотров пока не было.</div>{% else %}
+        <div class="table-scroll"><table class="admin-table">
+            <thead><tr><th>Документ</th><th class="col-num">Просм.</th><th class="col-num">Скач.</th></tr></thead>
+            <tbody>{% for row in top %}<tr><td><a href="{{ path('app_document_show', {id: row.document.id}) }}">{{ row.document.title }}</a><div class="hints">{{ row.document.section.fullName }}</div></td><td class="col-num">{{ row.views }}</td><td class="col-num">{{ row.downloads }}</td></tr>{% endfor %}</tbody>
+        </table></div>{% endif %}
+    </div>
+</div>
+
+<div class="card table-card">
+    <div class="card__head card__head--padded"><h2 class="h-section">Последние изменения</h2><a class="link-action" href="{{ path('admin_events') }}">Журнал событий</a></div>
+    {% if recent_events|length == 0 %}<div class="table-card__empty">Событий пока нет.</div>{% else %}
+    <div class="table-scroll"><table class="admin-table">
+        <thead><tr><th>Когда</th><th>Событие</th><th>Документ</th><th>Кто</th></tr></thead>
+        <tbody>{% for e in recent_events %}<tr><td class="col-nowrap">{{ e.createdAt|date('d.m.Y H:i') }}</td><td>{{ e.type|event_label }}{% if e.version %} <span class="tag">v{{ e.version.number }}</span>{% endif %}</td><td><a href="{{ path('app_document_show', {id: e.document.id}) }}">{{ e.document.title }}</a><div class="hints">{{ e.document.section.fullName }}</div></td><td>{{ e.actorName ?: 'система' }}</td></tr>{% endfor %}</tbody>
+    </table></div>{% endif %}
+</div>
+{% endblock %}

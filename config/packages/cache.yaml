@@ -1,0 +1,6 @@
+framework:
+    cache:
+        prefix_seed: docportal
+        pools:
+            app.login_limiter_pool:
+                adapter: cache.adapter.filesystem

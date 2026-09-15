@@ -1,0 +1,38 @@
+{% extends 'admin/_layout.html.twig' %}
+{% import '_macros.html.twig' as m %}
+
+{% block title %}Журнал событий{% endblock %}
+{% block admin_title %}Журнал событий{% endblock %}
+
+{% block admin_body %}
+<div class="card toolbar">
+    <form method="get" class="filters">
+        <select class="form-control form-control--inline" name="type" aria-label="Тип события"><option value="">Все события</option>{% for value, label in types %}<option value="{{ value }}" {{ filters.type == value ? 'selected' }}>{{ label }}</option>{% endfor %}</select>
+        <select class="form-control form-control--inline" name="user" aria-label="Пользователь"><option value="">Все пользователи</option>{% for u in users %}<option value="{{ u.id }}" {{ filters.user and filters.user.id == u.id ? 'selected' }}>{{ u.displayName }}</option>{% endfor %}</select>
+        <select class="form-control form-control--inline" name="section" aria-label="Раздел"><option value="">Все разделы</option>{{ m.section_option_tree(tree, filters.section) }}</select>
+        {% if filters.document %}<input type="hidden" name="document" value="{{ filters.document.id }}"><span class="chip chip--static">Документ: {{ filters.document.title }}</span>{% endif %}
+        <label class="form-label form-label--inline" for="from">с</label><input class="form-control form-control--inline form-control--date" type="date" id="from" name="from" value="{{ from }}">
+        <label class="form-label form-label--inline" for="to">по</label><input class="form-control form-control--inline form-control--date" type="date" id="to" name="to" value="{{ to }}">
+        <button class="btn btn--ghost btn--small" type="submit">Показать</button>
+        <a class="btn btn--ghost btn--small" href="{{ path('admin_events') }}">Сбросить</a>
+    </form>
+</div>
+<div class="card table-card">
+    <div class="card__head card__head--padded"><h2 class="h-section">Событий: {{ events|length }}{% if events|length >= 300 %} (показаны последние 300){% endif %}</h2></div>
+    {% if events|length == 0 %}<div class="table-card__empty">Событий с такими условиями нет.</div>{% else %}
+    <div class="table-scroll"><table class="admin-table">
+        <thead><tr><th>Когда</th><th>Событие</th><th>Документ</th><th>Кто</th><th>Подробности</th></tr></thead>
+        <tbody>
+        {% for e in events %}
+            <tr>
+                <td class="col-nowrap">{{ e.createdAt|date('d.m.Y H:i:s') }}</td>
+                <td><span class="event event--{{ e.type }}">{{ e.type|event_label }}</span>{% if e.version %} <span class="tag">v{{ e.version.number }}</span>{% endif %}</td>
+                <td><a href="{{ path('app_document_show', {id: e.document.id}) }}">{{ e.document.title }}</a><div class="hints">{{ e.document.section.fullName }}</div></td>
+                <td>{{ e.actorName ?: 'система' }}{% if e.ip %}<div class="hints">{{ e.ip }}</div>{% endif %}</td>
+                <td class="col-comment">{% if e.details %}{% for k, v in e.details %}{{ k }}: {{ v is iterable ? v|join(', ') : v }}{{ not loop.last ? '; ' }}{% endfor %}{% endif %}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table></div>{% endif %}
+</div>
+{% endblock %}

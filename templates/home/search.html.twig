@@ -1,0 +1,40 @@
+{% extends 'base.html.twig' %}
+{% import '_macros.html.twig' as m %}
+
+{% block title %}Поиск{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        <div class="eyebrow">Поиск</div>
+        <h1 class="h-display">{% if q %}«{{ q }}»{% else %}Поиск документов{% endif %}</h1>
+    </div>
+</section>
+<section class="container section">
+    <div class="card toolbar">
+        <form method="get" action="{{ path('app_search') }}" class="toolbar__row">
+            <label class="search">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                <input class="search__input" type="search" name="q" value="{{ q }}" placeholder="Название, номер, теги, текст страницы…" autofocus>
+            </label>
+            <select class="form-control form-control--inline" name="section" aria-label="Раздел">
+                <option value="">Все разделы</option>
+                {{ m.section_option_tree(tree, section) }}
+            </select>
+            <button class="btn btn--pill" type="submit">Найти</button>
+        </form>
+        <p class="form-help">Ищет по названию, обозначению, описанию, тегам, имени файла и тексту страниц. Черновики находят только модераторы своих разделов.</p>
+    </div>
+
+    {% if q|length >= 2 %}
+        <div class="card table-card">
+            <div class="card__head card__head--padded">
+                <h2 class="h-section">Найдено: {{ results|length }}</h2>
+            </div>
+            {{ m.document_table(results, {show_section: true, show_status: is_granted('MODERATOR'), empty: 'Ничего не найдено. Попробуйте другие слова или уберите фильтр по разделу.'}) }}
+        </div>
+    {% elseif q %}
+        <div class="alert alert--info">Введите не менее двух символов.</div>
+    {% endif %}
+</section>
+{% endblock %}

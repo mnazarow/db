@@ -1,0 +1,11 @@
+{# Сообщения (flash) — выводятся под заголовком страницы. #}
+{% set flashes = app.flashes %}
+{% if flashes|length > 0 %}
+    <div class="flashes" role="status">
+        {% for type, messages in flashes %}
+            {% for message in messages %}
+                <div class="alert alert--{{ type }}">{{ message }}</div>
+            {% endfor %}
+        {% endfor %}
+    </div>
+{% endif %}

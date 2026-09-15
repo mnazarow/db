@@ -1,0 +1,68 @@
+{% extends 'admin/_layout.html.twig' %}
+
+{% block title %}Настройки{% endblock %}
+{% block admin_title %}Настройки{% endblock %}
+
+{% block admin_body %}
+<div class="alert alert--info">Значения задаются в файле <code>.env.local</code> на сервере (или в <code>docker/.env</code>); после изменения выполните <code>docportal console cache:clear</code>. Здесь настройки только просматриваются и проверяются.</div>
+<div class="grid grid--two">
+    <div class="card">
+        <div class="card__head"><h2 class="h-section">Active Directory / LDAP</h2>
+            {% if ldap.enabled %}<span class="badge badge--done"><span class="badge__dot"></span>Включён</span>{% else %}<span class="badge badge--none"><span class="badge__dot"></span>Выключен</span>{% endif %}</div>
+        <dl class="meta meta--stack">
+            <div><dt>Расширение PHP ldap</dt><dd>{{ php.ldap_ext ? 'установлено' : 'не установлено' }}</dd></div>
+            <div><dt>Сервер</dt><dd>{{ ldap.host }}:{{ ldap.port }} ({{ ldap.encryption }})</dd></div>
+            <div><dt>База поиска</dt><dd><code>{{ ldap.base_dn }}</code></dd></div>
+            <div><dt>Служебная учётная запись</dt><dd>{{ ldap.bind_dn ?: 'не задана (привязка от имени пользователя, суффикс ' ~ ldap.upn_suffix ~ ')' }}</dd></div>
+            <div><dt>Фильтр</dt><dd><code>{{ ldap.filter }}</code> (атрибут логина: {{ ldap.uid_key }})</dd></div>
+            <div><dt>Атрибуты</dt><dd>имя — {{ ldap.name_attr }}, почта — {{ ldap.mail_attr }}</dd></div>
+            <div><dt>Группа администраторов</dt><dd>{{ ldap.admin_group ?: '—' }}</dd></div>
+            <div><dt>Группа доступа</dt><dd>{{ ldap.user_group ?: 'все пользователи домена' }}</dd></div>
+        </dl>
+        <form method="post" action="{{ path('admin_settings_ldap_test') }}" class="form-actions">
+            <input type="hidden" name="_token" value="{{ csrf_token('settings') }}">
+            <button type="submit" class="btn btn--ghost btn--small">Проверить подключение</button>
+        </form>
+    </div>
+    <div class="card">
+        <div class="card__head"><h2 class="h-section">Почта и уведомления</h2>
+            {% if mail.dsn_set %}<span class="badge badge--done"><span class="badge__dot"></span>Отправка настроена</span>{% else %}<span class="badge badge--soon"><span class="badge__dot"></span>Только журнал</span>{% endif %}</div>
+        <dl class="meta meta--stack">
+            <div><dt>Отправитель</dt><dd>{{ mail.from }}</dd></div>
+            <div><dt>Копия администраторам</dt><dd>{{ mail.notify_admins ? 'да' : 'нет' }}</dd></div>
+            <div><dt>Окно «истекает»</dt><dd>{{ validity.soon_days }} дн. до даты «Актуален до»</dd></div>
+            <div><dt>Срок по умолчанию для новых документов</dt><dd>{{ validity.default_months > 0 ? validity.default_months ~ ' мес.' : 'не задан' }}</dd></div>
+            <div><dt>Часовой пояс</dt><dd>{{ validity.timezone }}</dd></div>
+        </dl>
+        <div class="form-actions">
+            <form method="post" action="{{ path('admin_settings_mail_test') }}" class="inline-form">
+                <input type="hidden" name="_token" value="{{ csrf_token('settings') }}">
+                <button type="submit" class="btn btn--ghost btn--small">Отправить тестовое письмо себе</button>
+            </form>
+            <form method="post" action="{{ path('admin_settings_expiry_run') }}" class="inline-form" data-confirm="Запустить проверку сроков и разослать уведомления сейчас?">
+                <input type="hidden" name="_token" value="{{ csrf_token('settings') }}">
+                <button type="submit" class="btn btn--ghost btn--small">Проверить сроки сейчас</button>
+            </form>
+        </div>
+        <p class="form-help">Ежедневная проверка выполняется командой <code>app:documents:expiry</code> по cron (настраивается скриптом установки).</p>
+    </div>
+</div>
+<div class="grid grid--two">
+    <div class="card">
+        <h2 class="h-section">Хранилище файлов</h2>
+        <dl class="meta meta--stack">
+            <div><dt>Каталог</dt><dd><code>{{ storage.dir }}</code> — {{ storage.writable ? 'доступен для записи' : 'НЕДОСТУПЕН для записи' }}</dd></div>
+            <div><dt>Лимит размера файла</dt><dd>{{ storage.max_mb }} МБ (PHP: upload_max_filesize {{ storage.php_upload_max }}, post_max_size {{ storage.php_post_max }})</dd></div>
+            <div><dt>Разрешённые форматы</dt><dd>{{ storage.extensions|join(', ') }}</dd></div>
+        </dl>
+    </div>
+    <div class="card">
+        <h2 class="h-section">Система</h2>
+        <dl class="meta meta--stack">
+            <div><dt>Версия портала</dt><dd>{{ app_version }}</dd></div>
+            <div><dt>PHP</dt><dd>{{ php.version }}, memory_limit {{ php.memory_limit }}</dd></div>
+            <div><dt>Диагностика</dt><dd><code>docportal status</code> на сервере или <code>php bin/console app:check</code></dd></div>
+        </dl>
+    </div>
+</div>
+{% endblock %}

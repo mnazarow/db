@@ -1,0 +1,22 @@
+{% extends 'admin/_layout.html.twig' %}
+
+{% block title %}Все модераторы{% endblock %}
+{% block admin_title %}Все модераторы{% endblock %}
+{% block admin_actions %}<a class="btn btn--ghost" href="{{ path('admin_sections') }}">К разделам</a>{% endblock %}
+
+{% block admin_body %}
+<div class="card table-card">
+    {% if by_user|length == 0 %}<div class="table-card__empty">Модераторы пока не назначены. Откройте раздел → «Модераторы».</div>{% else %}
+    <div class="table-scroll"><table class="admin-table">
+        <thead><tr><th>Пользователь</th><th>Разделы</th></tr></thead>
+        <tbody>
+        {% for row in by_user %}
+            <tr>
+                <td><b>{{ row.user.displayName }}</b><div class="hints">{{ row.user.username }}{% if row.user.email %} · {{ row.user.email }}{% endif %}</div></td>
+                <td>{% for mod in row.sections %}<a class="chip chip--small" href="{{ path('admin_section_moderators', {id: mod.section.id}) }}">{{ mod.section.fullName }}</a> {% endfor %}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table></div>{% endif %}
+</div>
+{% endblock %}

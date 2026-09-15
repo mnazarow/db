@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="560" viewBox="0 0 1100 560" font-family="Roboto, Arial, Helvetica, sans-serif" font-size="14">
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0F4382"/></marker><marker id="arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#D00024"/></marker><marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#1F8F4E"/></marker><marker id="arrow-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#6E7480"/></marker></defs>
+<rect width="1100" height="560" fill="#FFFFFF"/>
+<text x="24" y="34" font-family="'DIN Condensed', 'Arial Narrow', Arial, sans-serif" font-size="24" font-weight="600" fill="#0F4382" letter-spacing="0.5">РОЛИ И ПРАВА</text>
+<rect x="40" y="70" width="500" height="40" fill="#F4F8FB" stroke="#DFDEDE"/>
+<text x="54" y="96" font-size="13" fill="#0F4382" text-anchor="start" font-weight="700" xml:space="preserve">Возможность</text>
+<rect x="540" y="70" width="180" height="40" fill="#F4F8FB" stroke="#DFDEDE"/>
+<text x="554" y="96" font-size="13" fill="#0F4382" text-anchor="start" font-weight="700" xml:space="preserve">Пользователь</text>
+<rect x="720" y="70" width="180" height="40" fill="#F4F8FB" stroke="#DFDEDE"/>
+<text x="734" y="96" font-size="13" fill="#0F4382" text-anchor="start" font-weight="700" xml:space="preserve">Модератор</text>
+<rect x="900" y="70" width="180" height="40" fill="#F4F8FB" stroke="#DFDEDE"/>
+<text x="914" y="96" font-size="13" fill="#0F4382" text-anchor="start" font-weight="700" xml:space="preserve">Администратор</text>
+<rect x="40" y="110" width="500" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="54" y="131" font-size="12" fill="#1D1E1E" text-anchor="start" font-weight="normal" xml:space="preserve">Вход (локальная или доменная учётная запись), «запомнить меня»</text>
+<rect x="540" y="110" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="630.0" y="132" font-size="14" fill="#1F8F4E" text-anchor="middle" font-weight="700" xml:space="preserve">✔</text>
+<rect x="720" y="110" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="810.0" y="132" font-size="14" fill="#1F8F4E" text-anchor="middle" font-weight="700" xml:space="preserve">✔</text>
+<rect x="900" y="110" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="990.0" y="132" font-size="14" fill="#1F8F4E" text-anchor="middle" font-weight="700" xml:space="preserve">✔</text>
+<rect x="40" y="142" width="500" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="54" y="163" font-size="12" fill="#1D1E1E" text-anchor="start" font-weight="normal" xml:space="preserve">Просмотр разделов и опубликованных документов, поиск, скачивание</text>
+<rect x="540" y="142" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="630.0" y="164" font-size="14" fill="#1F8F4E" text-anchor="middle" font-weight="700" xml:space="preserve">✔</text>
+<rect x="720" y="142" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="810.0" y="164" font-size="14" fill="#1F8F4E" text-anchor="middle" font-weight="700" xml:space="preserve">✔</text>
+<rect x="900" y="142" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="990.0" y="164" font-size="14" fill="#1F8F4E" text-anchor="middle" font-weight="700" xml:space="preserve">✔</text>
+<rect x="40" y="174" width="500" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="54" y="195" font-size="12" fill="#1D1E1E" text-anchor="start" font-weight="normal" xml:space="preserve">История версий: открыть, скачать, сравнить любую версию</text>
+<rect x="540" y="174" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="630.0" y="196" font-size="14" fill="#1F8F4E" text-anchor="middle" font-weight="700" xml:space="preserve">✔</text>
+<rect x="720" y="174" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="810.0" y="196" font-size="14" fill="#1F8F4E" text-anchor="middle" font-weight="700" xml:space="preserve">✔</text>
+<rect x="900" y="174" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="990.0" y="196" font-size="14" fill="#1F8F4E" text-anchor="middle" font-weight="700" xml:space="preserve">✔</text>
+<rect x="40" y="206" width="500" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="54" y="227" font-size="12" fill="#1D1E1E" text-anchor="start" font-weight="normal" xml:space="preserve">Смена собственного пароля (локальные учётные записи)</text>
+<rect x="540" y="206" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="630.0" y="228" font-size="14" fill="#1F8F4E" text-anchor="middle" font-weight="700" xml:space="preserve">✔</text>
+<rect x="720" y="206" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="810.0" y="228" font-size="14" fill="#1F8F4E" text-anchor="middle" font-weight="700" xml:space="preserve">✔</text>
+<rect x="900" y="206" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="990.0" y="228" font-size="14" fill="#1F8F4E" text-anchor="middle" font-weight="700" xml:space="preserve">✔</text>
+<rect x="40" y="238" width="500" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="54" y="259" font-size="12" fill="#1D1E1E" text-anchor="start" font-weight="normal" xml:space="preserve">Просмотр черновиков и архива в своих разделах</text>
+<rect x="540" y="238" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="630.0" y="260" font-size="14" fill="#6E7480" text-anchor="middle" font-weight="700" xml:space="preserve">—</text>
+<rect x="720" y="238" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="810.0" y="260" font-size="14" fill="#1F8F4E" text-anchor="middle" font-weight="700" xml:space="preserve">✔</text>
+<rect x="900" y="238" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="990.0" y="260" font-size="14" fill="#1F8F4E" text-anchor="middle" font-weight="700" xml:space="preserve">✔</text>
+<rect x="40" y="270" width="500" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="54" y="291" font-size="12" fill="#1D1E1E" text-anchor="start" font-weight="normal" xml:space="preserve">Создание документов (файл или страница), загрузка новых версий</text>
+<rect x="540" y="270" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="630.0" y="292" font-size="14" fill="#6E7480" text-anchor="middle" font-weight="700" xml:space="preserve">—</text>
+<rect x="720" y="270" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="810.0" y="291" font-size="11" fill="#D98A00" text-anchor="middle" font-weight="700" xml:space="preserve">свои разделы</text>
+<rect x="900" y="270" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="990.0" y="292" font-size="14" fill="#1F8F4E" text-anchor="middle" font-weight="700" xml:space="preserve">✔</text>
+<rect x="40" y="302" width="500" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="54" y="323" font-size="12" fill="#1D1E1E" text-anchor="start" font-weight="normal" xml:space="preserve">Публикация, снятие с публикации, архив, восстановление версии, удаление</text>
+<rect x="540" y="302" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="630.0" y="324" font-size="14" fill="#6E7480" text-anchor="middle" font-weight="700" xml:space="preserve">—</text>
+<rect x="720" y="302" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="810.0" y="323" font-size="11" fill="#D98A00" text-anchor="middle" font-weight="700" xml:space="preserve">свои разделы</text>
+<rect x="900" y="302" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="990.0" y="324" font-size="14" fill="#1F8F4E" text-anchor="middle" font-weight="700" xml:space="preserve">✔</text>
+<rect x="40" y="334" width="500" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="54" y="355" font-size="12" fill="#1D1E1E" text-anchor="start" font-weight="normal" xml:space="preserve">Создание и изменение подразделов</text>
+<rect x="540" y="334" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="630.0" y="356" font-size="14" fill="#6E7480" text-anchor="middle" font-weight="700" xml:space="preserve">—</text>
+<rect x="720" y="334" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="810.0" y="355" font-size="11" fill="#D98A00" text-anchor="middle" font-weight="700" xml:space="preserve">свои разделы</text>
+<rect x="900" y="334" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="990.0" y="356" font-size="14" fill="#1F8F4E" text-anchor="middle" font-weight="700" xml:space="preserve">✔</text>
+<rect x="40" y="366" width="500" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="54" y="387" font-size="12" fill="#1D1E1E" text-anchor="start" font-weight="normal" xml:space="preserve">Статистика по документам своих разделов</text>
+<rect x="540" y="366" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="630.0" y="388" font-size="14" fill="#6E7480" text-anchor="middle" font-weight="700" xml:space="preserve">—</text>
+<rect x="720" y="366" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="810.0" y="387" font-size="11" fill="#D98A00" text-anchor="middle" font-weight="700" xml:space="preserve">свои разделы</text>
+<rect x="900" y="366" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="990.0" y="388" font-size="14" fill="#1F8F4E" text-anchor="middle" font-weight="700" xml:space="preserve">✔</text>
+<rect x="40" y="398" width="500" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="54" y="419" font-size="12" fill="#1D1E1E" text-anchor="start" font-weight="normal" xml:space="preserve">Назначение модераторов на разделы</text>
+<rect x="540" y="398" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="630.0" y="420" font-size="14" fill="#6E7480" text-anchor="middle" font-weight="700" xml:space="preserve">—</text>
+<rect x="720" y="398" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="810.0" y="420" font-size="14" fill="#6E7480" text-anchor="middle" font-weight="700" xml:space="preserve">—</text>
+<rect x="900" y="398" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="990.0" y="420" font-size="14" fill="#1F8F4E" text-anchor="middle" font-weight="700" xml:space="preserve">✔</text>
+<rect x="40" y="430" width="500" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="54" y="451" font-size="12" fill="#1D1E1E" text-anchor="start" font-weight="normal" xml:space="preserve">Пользователи, реестр документов, вся статистика, журнал, настройки</text>
+<rect x="540" y="430" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="630.0" y="452" font-size="14" fill="#6E7480" text-anchor="middle" font-weight="700" xml:space="preserve">—</text>
+<rect x="720" y="430" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="810.0" y="452" font-size="14" fill="#6E7480" text-anchor="middle" font-weight="700" xml:space="preserve">—</text>
+<rect x="900" y="430" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="990.0" y="452" font-size="14" fill="#1F8F4E" text-anchor="middle" font-weight="700" xml:space="preserve">✔</text>
+<rect x="40" y="462" width="500" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="54" y="483" font-size="12" fill="#1D1E1E" text-anchor="start" font-weight="normal" xml:space="preserve">Консольные команды и скрипты на сервере (root)</text>
+<rect x="540" y="462" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="630.0" y="484" font-size="14" fill="#6E7480" text-anchor="middle" font-weight="700" xml:space="preserve">—</text>
+<rect x="720" y="462" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="810.0" y="484" font-size="14" fill="#6E7480" text-anchor="middle" font-weight="700" xml:space="preserve">—</text>
+<rect x="900" y="462" width="180" height="32" fill="#FFFFFF" stroke="#DFDEDE"/>
+<text x="990.0" y="484" font-size="14" fill="#1F8F4E" text-anchor="middle" font-weight="700" xml:space="preserve">✔</text>
+<text x="40" y="520" font-size="12" fill="#6E7480" text-anchor="start" font-weight="normal" xml:space="preserve">«Свои разделы» — разделы, на которые пользователь назначен модератором, и все их подразделы любой глубины.</text>
+<text x="40" y="538" font-size="12" fill="#6E7480" text-anchor="start" font-weight="normal" xml:space="preserve">Администратор обладает всеми правами во всех разделах. Нельзя заблокировать/удалить себя и последнего администратора.</text>
+</svg>

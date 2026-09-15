@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1160" height="520" viewBox="0 0 1160 520" font-family="Roboto, Arial, Helvetica, sans-serif" font-size="14">
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0F4382"/></marker><marker id="arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#D00024"/></marker><marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#1F8F4E"/></marker><marker id="arrow-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#6E7480"/></marker></defs>
+<rect width="1160" height="520" fill="#FFFFFF"/>
+<text x="24" y="34" font-family="'DIN Condensed', 'Arial Narrow', Arial, sans-serif" font-size="24" font-weight="600" fill="#0F4382" letter-spacing="0.5">КОНТРОЛЬ АКТУАЛЬНОСТИ ДОКУМЕНТА</text>
+<text x="24" y="62" font-size="12" fill="#6E7480" text-anchor="start" font-weight="normal" xml:space="preserve">Дата «Актуален до» задаётся в карточке документа (по умолчанию — через DEFAULT_VALIDITY_MONTHS месяцев). Пустая дата — бессрочный документ.</text>
+<rect x="40" y="110" width="250" height="120" rx="14" fill="#F6F6F6" stroke="#6E7480" stroke-width="1.5"/>
+<text x="165.0" y="134" text-anchor="middle" font-weight="700" font-size="14" fill="#6E7480">Бессрочный</text>
+<text x="165.0" y="154" text-anchor="middle" font-size="13" fill="#1D1E1E">дата не задана</text>
+<text x="165.0" y="172" text-anchor="middle" font-size="13" fill="#1D1E1E">уведомлений нет</text>
+<text x="165.0" y="190" text-anchor="middle" font-size="13" fill="#1D1E1E">серый значок</text>
+<rect x="330" y="110" width="250" height="120" rx="14" fill="#E6F5EC" stroke="#1F8F4E" stroke-width="1.5"/>
+<text x="455.0" y="134" text-anchor="middle" font-weight="700" font-size="14" fill="#1F8F4E">Актуален</text>
+<text x="455.0" y="154" text-anchor="middle" font-size="13" fill="#1D1E1E">до срока больше</text>
+<text x="455.0" y="172" text-anchor="middle" font-size="13" fill="#1D1E1E">EXPIRY_SOON_DAYS (30) дней</text>
+<text x="455.0" y="190" text-anchor="middle" font-size="13" fill="#1D1E1E">зелёный значок</text>
+<rect x="620" y="110" width="250" height="120" rx="14" fill="#FFF3DC" stroke="#D98A00" stroke-width="1.5"/>
+<text x="745.0" y="134" text-anchor="middle" font-weight="700" font-size="14" fill="#D98A00">Истекает</text>
+<text x="745.0" y="154" text-anchor="middle" font-size="13" fill="#1D1E1E">до срока 0–30 дней</text>
+<text x="745.0" y="172" text-anchor="middle" font-size="13" fill="#1D1E1E">уведомление (стадия 1)</text>
+<text x="745.0" y="190" text-anchor="middle" font-size="13" fill="#1D1E1E">жёлтый значок</text>
+<rect x="910" y="110" width="220" height="120" rx="14" fill="#FCE9EC" stroke="#D00024" stroke-width="1.5"/>
+<text x="1020.0" y="134" text-anchor="middle" font-weight="700" font-size="14" fill="#D00024">Просрочен</text>
+<text x="1020.0" y="154" text-anchor="middle" font-size="13" fill="#1D1E1E">срок прошёл</text>
+<text x="1020.0" y="172" text-anchor="middle" font-size="13" fill="#1D1E1E">уведомление (стадия 2)</text>
+<text x="1020.0" y="190" text-anchor="middle" font-size="13" fill="#1D1E1E">красный значок</text>
+<line x1="580" y1="170" x2="620" y2="170" stroke="#0F4382" stroke-width="1.8" marker-end="url(#arrow)"/>
+<text x="600.0" y="162.0" text-anchor="middle" font-size="12" fill="#0F4382">время →</text>
+<line x1="870" y1="170" x2="910" y2="170" stroke="#0F4382" stroke-width="1.8" marker-end="url(#arrow)"/>
+<rect x="40" y="270" width="1090" height="220" rx="18" fill="#F4F8FB" stroke="#DFDEDE"/>
+<text x="56" y="292" font-size="12" font-weight="700" fill="#79A7C6" letter-spacing="1.5">ЕЖЕДНЕВНАЯ ПРОВЕРКА: DOCPORTAL CONSOLE APP:DOCUMENTS:EXPIRY (CRON 08:00)</text>
+<rect x="70" y="320" width="240" height="130" rx="14" fill="#FFFFFF" stroke="#0F4382" stroke-width="1.5"/>
+<text x="190.0" y="344" text-anchor="middle" font-weight="700" font-size="14" fill="#0F4382">Кому</text>
+<text x="190.0" y="364" text-anchor="middle" font-size="13" fill="#1D1E1E">ответственный (создатель),</text>
+<text x="190.0" y="382" text-anchor="middle" font-size="13" fill="#1D1E1E">модераторы раздела и всех</text>
+<text x="190.0" y="400" text-anchor="middle" font-size="13" fill="#1D1E1E">родительских разделов,</text>
+<text x="190.0" y="418" text-anchor="middle" font-size="13" fill="#1D1E1E">администраторы (NOTIFY_ADMINS)</text>
+<rect x="350" y="320" width="240" height="130" rx="14" fill="#FFFFFF" stroke="#0F4382" stroke-width="1.5"/>
+<text x="470.0" y="344" text-anchor="middle" font-weight="700" font-size="14" fill="#0F4382">Когда</text>
+<text x="470.0" y="364" text-anchor="middle" font-size="13" fill="#1D1E1E">один раз при входе в окно</text>
+<text x="470.0" y="382" text-anchor="middle" font-size="13" fill="#1D1E1E">«истекает» и один раз после</text>
+<text x="470.0" y="400" text-anchor="middle" font-size="13" fill="#1D1E1E">истечения; при изменении</text>
+<text x="470.0" y="418" text-anchor="middle" font-size="13" fill="#1D1E1E">даты стадия сбрасывается</text>
+<rect x="630" y="320" width="240" height="130" rx="14" fill="#FFFFFF" stroke="#0F4382" stroke-width="1.5"/>
+<text x="750.0" y="344" text-anchor="middle" font-weight="700" font-size="14" fill="#0F4382">Как</text>
+<text x="750.0" y="364" text-anchor="middle" font-size="13" fill="#1D1E1E">письмо со списком</text>
+<text x="750.0" y="382" text-anchor="middle" font-size="13" fill="#1D1E1E">документов и ссылками</text>
+<text x="750.0" y="400" text-anchor="middle" font-size="13" fill="#1D1E1E">(MAILER_DSN); событие</text>
+<text x="750.0" y="418" text-anchor="middle" font-size="13" fill="#1D1E1E">«Уведомление о сроке»</text>
+<rect x="910" y="320" width="190" height="130" rx="14" fill="#E7EFF6" stroke="#0F4382" stroke-width="1.5"/>
+<text x="1005.0" y="344" text-anchor="middle" font-weight="700" font-size="14" fill="#0F4382">Что делать</text>
+<text x="1005.0" y="364" text-anchor="middle" font-size="13" fill="#1D1E1E">загрузить новую версию</text>
+<text x="1005.0" y="382" text-anchor="middle" font-size="13" fill="#1D1E1E">и продлить срок, либо</text>
+<text x="1005.0" y="400" text-anchor="middle" font-size="13" fill="#1D1E1E">перенести документ</text>
+<text x="1005.0" y="418" text-anchor="middle" font-size="13" fill="#1D1E1E">в архив</text>
+<line x1="310" y1="385" x2="350" y2="385" stroke="#0F4382" stroke-width="1.8" marker-end="url(#arrow)"/>
+<line x1="590" y1="385" x2="630" y2="385" stroke="#0F4382" stroke-width="1.8" marker-end="url(#arrow)"/>
+<line x1="870" y1="385" x2="910" y2="385" stroke="#0F4382" stroke-width="1.8" marker-end="url(#arrow)"/>
+</svg>

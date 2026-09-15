@@ -1,0 +1,41 @@
+{% extends 'base.html.twig' %}
+{% import '_macros.html.twig' as m %}
+
+{% block title %}{{ is_new ? 'Новый раздел' : 'Раздел ' ~ section.name }}{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        {% if parent %}{{ m.breadcrumbs(parent, is_new ? 'Новый подраздел' : section.name) }}{% endif %}
+        <h1 class="h-display">{{ is_new ? (parent ? 'Новый подраздел' : 'Новый раздел') : section.name }}</h1>
+        {% if is_new and parent %}<p class="hero__meta">Будет создан внутри раздела «{{ parent.fullName }}».</p>{% endif %}
+    </div>
+</section>
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+    <div class="grid grid--two">
+        <div class="card card--form">
+            {{ form_start(form, {attr: {novalidate: 'novalidate', class: 'form'}}) }}
+                {{ form_row(form.name) }}
+                {% if form.parent is defined %}{{ form_row(form.parent) }}{% endif %}
+                {{ form_row(form.description) }}
+                <div class="form-actions">
+                    <button type="submit" class="btn btn--pill">{{ is_new ? 'Создать раздел' : 'Сохранить' }}</button>
+                    <a class="btn btn--ghost" href="{{ is_new ? (parent ? path('app_section_show', {id: parent.id}) : path('app_home')) : path('app_section_show', {id: section.id}) }}">Отмена</a>
+                </div>
+            {{ form_end(form) }}
+        </div>
+        <div class="card card--info">
+            <h2 class="h-section">Как устроены разделы</h2>
+            <p>Разделы образуют дерево: у каждого раздела может быть сколько угодно подразделов любой глубины (до {{ constant('App\\Entity\\Section::MAX_DEPTH') }} уровней). Документы кладутся в любой раздел дерева.</p>
+            <p>Модераторы, назначенные на раздел, автоматически получают права на все его подразделы.</p>
+            <h3 class="h-small">Советы</h3>
+            <ul class="bullets bullets--small">
+                <li>Называйте разделы по назначению документов: «Регламенты», «Инструкции», «Приказы».</li>
+                <li>Не создавайте раздел ради одного документа — используйте теги и поиск.</li>
+                <li>Порядок разделов меняется в панели администратора («Разделы» → стрелки).</li>
+            </ul>
+        </div>
+    </div>
+</section>
+{% endblock %}

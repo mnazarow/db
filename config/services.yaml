@@ -1,0 +1,96 @@
+parameters:
+    # Версия приложения (файл VERSION в корне проекта); используется для сброса кэша статики.
+    app.version: '%env(trim:file:APP_VERSION_FILE)%'
+    env(APP_VERSION_FILE): '%kernel.project_dir%/VERSION'
+
+    # Каталог хранения файлов документов (вне public/, недоступен напрямую через веб-сервер).
+    app.storage_dir: '%env(resolve:STORAGE_DIR)%'
+    env(STORAGE_DIR): '%kernel.project_dir%/var/storage'
+
+    # Загрузка файлов: максимальный размер (МБ) и разрешённые расширения.
+    app.upload_max_mb: '%env(int:UPLOAD_MAX_MB)%'
+    app.allowed_extensions: '%env(ALLOWED_EXTENSIONS)%'
+
+    # Актуальность: за сколько дней до срока документ считается истекающим; срок по умолчанию для новых документов.
+    app.expiry_soon_days: '%env(int:EXPIRY_SOON_DAYS)%'
+    app.default_validity_months: '%env(int:DEFAULT_VALIDITY_MONTHS)%'
+
+    # Пароли локальных пользователей.
+    app.password_min_length: '%env(int:PASSWORD_MIN_LENGTH)%'
+
+    # Почта.
+    app.mail_from: '%env(MAIL_FROM)%'
+    app.notify_admins: '%env(bool:NOTIFY_ADMINS)%'
+
+    # Часовой пояс и название.
+    app.timezone: '%env(APP_TIMEZONE)%'
+    app.name: '%env(APP_NAME)%'
+    app.company: '%env(APP_COMPANY)%'
+
+    # LDAP / Active Directory.
+    app.ldap.enabled: '%env(bool:LDAP_ENABLED)%'
+    app.ldap.host: '%env(LDAP_HOST)%'
+    app.ldap.port: '%env(int:LDAP_PORT)%'
+    app.ldap.encryption: '%env(LDAP_ENCRYPTION)%'
+    app.ldap.base_dn: '%env(LDAP_BASE_DN)%'
+    app.ldap.bind_dn: '%env(LDAP_BIND_DN)%'
+    app.ldap.bind_password: '%env(LDAP_BIND_PASSWORD)%'
+    app.ldap.upn_suffix: '%env(LDAP_UPN_SUFFIX)%'
+    app.ldap.uid_key: '%env(LDAP_UID_KEY)%'
+    app.ldap.filter: '%env(LDAP_FILTER)%'
+    app.ldap.name_attr: '%env(LDAP_NAME_ATTR)%'
+    app.ldap.mail_attr: '%env(LDAP_MAIL_ATTR)%'
+    app.ldap.admin_group: '%env(LDAP_ADMIN_GROUP)%'
+    app.ldap.user_group: '%env(LDAP_USER_GROUP)%'
+
+services:
+    _defaults:
+        autowire: true
+        autoconfigure: true
+        bind:
+            string $storageDir: '%app.storage_dir%'
+            int $uploadMaxMb: '%app.upload_max_mb%'
+            string $allowedExtensions: '%app.allowed_extensions%'
+            int $expirySoonDays: '%app.expiry_soon_days%'
+            int $defaultValidityMonths: '%app.default_validity_months%'
+            int $passwordMinLength: '%app.password_min_length%'
+            string $mailFrom: '%app.mail_from%'
+            bool $notifyAdmins: '%app.notify_admins%'
+            string $timezone: '%app.timezone%'
+            string $appName: '%app.name%'
+            string $appCompany: '%app.company%'
+            string $projectDir: '%kernel.project_dir%'
+            Psr\Log\LoggerInterface $auditLogger: '@monolog.logger.app_audit'
+
+    App\:
+        resource: '../src/'
+        exclude:
+            - '../src/DependencyInjection/'
+            - '../src/Entity/'
+            - '../src/Kernel.php'
+
+    # Параметры подключения к Active Directory / LDAP собраны в один объект настроек.
+    App\Security\Ldap\LdapSettings:
+        arguments:
+            $enabled: '%app.ldap.enabled%'
+            $host: '%app.ldap.host%'
+            $port: '%app.ldap.port%'
+            $encryption: '%app.ldap.encryption%'
+            $baseDn: '%app.ldap.base_dn%'
+            $bindDn: '%app.ldap.bind_dn%'
+            $bindPassword: '%app.ldap.bind_password%'
+            $upnSuffix: '%app.ldap.upn_suffix%'
+            $uidKey: '%app.ldap.uid_key%'
+            $filter: '%app.ldap.filter%'
+            $nameAttr: '%app.ldap.name_attr%'
+            $mailAttr: '%app.ldap.mail_attr%'
+            $adminGroup: '%app.ldap.admin_group%'
+            $userGroup: '%app.ldap.user_group%'
+
+    # Ограничитель попыток входа: «логин + IP» и отдельно «IP».
+    app.login_rate_limiter:
+        class: Symfony\Component\Security\Http\RateLimiter\DefaultLoginRateLimiter
+        arguments:
+            $globalFactory: '@limiter.login_global'
+            $localFactory: '@limiter.login_local'
+            $secret: '%kernel.secret%'

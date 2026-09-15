@@ -1,0 +1,19 @@
+Здравствуйте, {{ user.displayName }}!
+{% if expired|length > 0 %}
+
+СРОК АКТУАЛЬНОСТИ ИСТЁК у документов:
+{% for d in expired %}
+- {{ d.title }}{% if d.code %} ({{ d.code }}){% endif %} — {{ d.section.fullName }}, до {{ d.validUntil|date('d.m.Y') }}: {{ urls[d.id] }}
+{% endfor %}
+{% endif %}
+{% if soon|length > 0 %}
+
+Срок актуальности истекает в ближайшие {{ soon_days }} дней:
+{% for d in soon %}
+- {{ d.title }}{% if d.code %} ({{ d.code }}){% endif %} — {{ d.section.fullName }}, до {{ d.validUntil|date('d.m.Y') }}: {{ urls[d.id] }}
+{% endfor %}
+{% endif %}
+
+Проверьте документы: загрузите новую версию и продлите срок в карточке документа либо перенесите документ в архив.
+
+Письмо отправлено автоматически порталом «{{ app_name }}» {{ today|date('d.m.Y') }}.

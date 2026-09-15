@@ -1,0 +1,37 @@
+{% extends 'base.html.twig' %}
+{% import '_macros.html.twig' as m %}
+
+{% block title %}{{ document.title }} — версия {{ version.number }}{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        {{ m.breadcrumbs(document.section, document.title ~ ' — версия ' ~ version.number) }}
+        <div class="hero__row">
+            <div>
+                <div class="doc-head__badges">{% if version.current %}<span class="badge badge--done"><span class="badge__dot"></span>Текущая версия</span>{% else %}<span class="badge badge--none"><span class="badge__dot"></span>Старая версия</span>{% endif %}</div>
+                <h1 class="h-display">{{ document.title }}</h1>
+                <p class="hero__meta">Версия {{ version.number }} от {{ version.createdAt|date('d.m.Y H:i') }}{% if version.createdBy %} · {{ version.createdBy.displayName }}{% endif %}{% if version.changeNote %} · {{ version.changeNote }}{% endif %}</p>
+            </div>
+            <div class="hero__actions">
+                <a class="btn btn--ghost" href="{{ path('app_document_show', {id: document.id}) }}">К документу</a>
+                {% if not version.current and document.currentVersion %}
+                    <a class="btn btn--ghost" href="{{ path('app_document_compare', {id: document.id, a: version.number, b: document.currentVersion.number}) }}">Сравнить с текущей</a>
+                    {% if can_manage %}
+                        <form method="post" action="{{ path('app_document_restore', {id: document.id, number: version.number}) }}" class="inline-form" data-confirm="Сделать версию {{ version.number }} текущей?">
+                            <input type="hidden" name="_token" value="{{ csrf_token('document_' ~ document.id) }}">
+                            <button type="submit" class="btn btn--pill">Восстановить эту версию</button>
+                        </form>
+                    {% endif %}
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</section>
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+    <div class="card">
+        <div class="page-content">{{ version.content|raw }}</div>
+    </div>
+</section>
+{% endblock %}

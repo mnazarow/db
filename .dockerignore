@@ -1,0 +1,14 @@
+.git
+.gitignore
+var/cache
+var/log
+var/storage
+.env.local
+.env.*.local
+docker/.env
+docker/mysql-data
+backups
+docs
+tests
+node_modules
+*.log

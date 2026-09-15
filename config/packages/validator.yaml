@@ -1,0 +1,9 @@
+framework:
+    validation:
+        not_compromised_password:
+            enabled: false
+
+when@test:
+    framework:
+        validation:
+            not_compromised_password: false
