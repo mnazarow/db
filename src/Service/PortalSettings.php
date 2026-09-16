@@ -194,14 +194,6 @@ final class PortalSettings
         return $this->llm()['enabled'];
     }
 
-    /** Формировать ли описания автоматически при создании и импорте документов. */
-    public function isLlmAutoDescribe(): bool
-    {
-        $llm = $this->llm();
-
-        return $llm['enabled'] && $llm['auto_describe'];
-    }
-
     /**
      * @param array<string, mixed> $values ключи: enabled, base_url, api_key (null — не менять), model, prompt, max_input_chars, timeout, auto_describe, temperature
      *

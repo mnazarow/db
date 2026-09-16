@@ -7,9 +7,9 @@ namespace App\Controller\Api;
 use App\Controller\DocumentController;
 use App\Entity\Document;
 use App\Entity\DocumentDeletion;
+use App\Entity\DocumentVersion;
 use App\Entity\Section;
 use App\Repository\DocumentRepository;
-use App\Entity\DocumentVersion;
 use App\Repository\SectionRepository;
 use App\Security\Api\ApiPrincipal;
 use App\Service\FileStorage;
@@ -41,6 +41,9 @@ final class ApiController extends AbstractController
     public const VERSION = '1';
     public const MAX_PER_PAGE = 200;
     public const DEFAULT_PER_PAGE = 50;
+
+    /** Насколько next_since сдвигается назад (с): страховка от потери изменений в ту же секунду. */
+    public const OVERLAP_SECONDS = 2;
 
     public function __construct(
         private readonly DocumentRepository $documents,
@@ -113,6 +116,7 @@ final class ApiController extends AbstractController
     {
         $page = max(1, (int) $request->query->get('page', 1));
         $perPage = min(self::MAX_PER_PAGE, max(1, (int) $request->query->get('per_page', self::DEFAULT_PER_PAGE)));
+        $this->preloadSections();
         $filters = $this->filters($request, $principal);
         $result = $this->documents->findForApi($filters, $page, $perPage);
 
@@ -145,6 +149,7 @@ final class ApiController extends AbstractController
         }
         $filters = $this->filters($request, $principal);
         $filters['q'] = $q;
+        $this->preloadSections();
         $limit = min(self::MAX_PER_PAGE, max(1, (int) $request->query->get('limit', self::DEFAULT_PER_PAGE)));
         $result = $this->documents->findForApi($filters, 1, $limit);
 
@@ -203,6 +208,7 @@ final class ApiController extends AbstractController
             return new Response($html, 200, [
                 'Content-Type' => 'text/html; charset=UTF-8',
                 'Content-Disposition' => HeaderUtils::makeDisposition(ResponseHeaderBag::DISPOSITION_ATTACHMENT, DocumentController::asciiName($document->getTitle()).'.html', 'document.html'),
+                'X-Content-Type-Options' => 'nosniff',
                 'X-Document-Version' => (string) $version->getNumber(),
             ]);
         }
@@ -239,23 +245,43 @@ final class ApiController extends AbstractController
         $limit = min(1000, max(1, (int) $request->query->get('limit', 500)));
         $filters = $this->filters($request, $principal);
         $filters['updated_since'] = $since;
+        $this->preloadSections();
         $changed = $this->documents->findForApi($filters, 1, $limit);
         $includeArchived = \in_array(Document::STATUS_ARCHIVED, $filters['statuses'], true);
-        $hidden = $this->documents->findHiddenSinceForApi($since, !$principal->includesInternal(), $includeArchived, $limit);
+        $publicOnly = !$principal->includesInternal();
+        $hidden = $this->documents->findHiddenSinceForApi($since, $publicOnly, $includeArchived, $limit);
         $deletions = $this->em->getRepository(DocumentDeletion::class)->createQueryBuilder('x')
             ->andWhere('x.deletedAt > :since')->setParameter('since', $since)
             ->orderBy('x.deletedAt', 'ASC')->setMaxResults($limit)->getQuery()->getResult();
+        // Следующий запрос делаем с небольшим перекрытием: у времени изменения точность до секунды,
+        // и документ, изменённый в ту же секунду, иначе потерялся бы.
+        $nextSince = $now->modify('-'.self::OVERLAP_SECONDS.' seconds');
 
         return new ApiResponse([
             'since' => $since->format(\DATE_ATOM),
             'until' => $now->format(\DATE_ATOM),
-            'next_since' => $now->format(\DATE_ATOM),
+            'next_since' => $nextSince->format(\DATE_ATOM),
+            // Скрытые документы отдаём без названий: ключ «только открытые» не должен видеть
+            // содержимое внутренних документов и черновиков — индексатору достаточно id и причины.
             'changed' => array_map($this->presenter->document(...), $changed['items']),
             'changed_total' => $changed['total'],
-            'removed' => array_map(static fn (Document $d): array => ['id' => $d->getId(), 'title' => $d->getTitle(), 'status' => $d->getStatus(), 'is_public' => $d->isPublic(), 'updated_at' => $d->getUpdatedAt()->format(\DATE_ATOM)], $hidden),
-            'deleted' => array_map($this->presenter->deletion(...), $deletions),
-            'truncated' => $changed['total'] > $limit,
+            'removed' => array_map(static fn (Document $d): array => [
+                'id' => $d->getId(),
+                'reason' => $d->isDraft() ? 'draft' : ($d->isArchived() && !$includeArchived ? 'archived' : 'internal'),
+                'updated_at' => $d->getUpdatedAt()->format(\DATE_ATOM),
+            ], $hidden),
+            'deleted' => array_map(fn (DocumentDeletion $d): array => $this->presenter->deletion($d, !$publicOnly), $deletions),
+            'truncated' => $changed['total'] > $limit || \count($hidden) >= $limit || \count($deletions) >= $limit,
         ]);
+    }
+
+    /**
+     * Загружает всё дерево разделов одним запросом: в списках у каждого документа отдаётся путь по дереву,
+     * и без этого предзагрузки родительские разделы подтягивались бы по одному.
+     */
+    private function preloadSections(): void
+    {
+        $this->sections->findAllTree();
     }
 
     /**
@@ -276,11 +302,14 @@ final class ApiController extends AbstractController
             default => throw new BadRequestHttpException('Параметр status может быть published, archived или all (черновики через API недоступны).'),
         };
         $section = null;
-        $sectionId = (int) $request->query->get('section');
-        if ($sectionId > 0) {
-            $section = $this->sections->find($sectionId) ?? throw new NotFoundHttpException(\sprintf('Раздел %d не найден.', $sectionId));
+        $sectionParam = trim((string) $request->query->get('section', ''));
+        if ('' !== $sectionParam) {
+            if (!ctype_digit($sectionParam) || 0 === (int) $sectionParam) {
+                throw new BadRequestHttpException('Параметр section должен быть числовым идентификатором раздела.');
+            }
+            $section = $this->sections->find((int) $sectionParam) ?? throw new NotFoundHttpException(\sprintf('Раздел %d не найден.', (int) $sectionParam));
         }
-        $type = trim((string) $request->query->get('type', ''));
+        $type = strtolower(trim((string) $request->query->get('type', '')));
         if ('' !== $type && !\in_array($type, Document::TYPES, true)) {
             throw new BadRequestHttpException('Параметр type может быть file или page.');
         }

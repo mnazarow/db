@@ -18,7 +18,8 @@ final class CurlTransport implements HttpTransportInterface
         $ch = curl_init();
         $headerLines = [];
         foreach ($headers as $name => $value) {
-            $headerLines[] = $name.': '.$value;
+            // Значения берутся из настроек портала — переводы строк убираем, чтобы нельзя было подставить свой заголовок.
+            $headerLines[] = $name.': '.str_replace(["\r", "\n"], '', $value);
         }
         curl_setopt_array($ch, [
             \CURLOPT_URL => $url,

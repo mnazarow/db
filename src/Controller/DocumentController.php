@@ -6,7 +6,6 @@ namespace App\Controller;
 
 use App\Entity\Document;
 use App\Entity\DocumentVersion;
-use App\Entity\Section;
 use App\Entity\User;
 use App\Form\DocumentType;
 use App\Repository\DocumentEventRepository;

@@ -92,6 +92,7 @@ if [[ -z "${DOCPORTAL_UPDATE_REEXEC:-}" && -f "${SOURCE_DIR}/deploy/update.sh" &
     [[ "${NO_BACKUP}" == "1" ]] && REEXEC_ARGS+=(--no-backup)
     [[ "${NO_DB_ROLLBACK}" == "1" ]] && REEXEC_ARGS+=(--no-db-rollback)
     export DOCPORTAL_UPDATE_REEXEC=1 DOCPORTAL_UPDATE_TMP="${CREATED_TMP}"
+    info "Обновление продолжится скриптами новой версии: ${SOURCE_DIR}/deploy/update.sh"
     exec bash "${SOURCE_DIR}/deploy/update.sh" "${REEXEC_ARGS[@]}"
 fi
 # Временный каталог распакованного архива (из первого запуска) удаляем по завершении.
@@ -215,8 +216,13 @@ if [[ "${INSTALL_MODE}" == "native" ]]; then
     install_cli_wrapper && info "Команда управления ${APP_ID} обновлена."
     ensure_cron_entries
     # Извлечение текста из PDF (API, LLM) появилось в 1.3.0 — пакет poppler-utils ставим при обновлении, если его нет.
+    # Обновление к этому моменту уже выполнено и проверено, поэтому любая неудача здесь — только предупреждение.
     if ! command -v pdftotext >/dev/null 2>&1; then
-        pkg_install_optional poppler-utils && info "Установлен пакет poppler-utils (pdftotext)." || warn "Не удалось установить poppler-utils — текст из PDF извлекаться не будет (установите пакет вручную)."
+        if pkg_install_optional poppler-utils && command -v pdftotext >/dev/null 2>&1; then
+            info "Установлен пакет poppler-utils (pdftotext)."
+        else
+            warn "Не удалось установить poppler-utils — текст из PDF для API и описаний через LLM извлекаться не будет (установите пакет вручную)."
+        fi
     fi
 
     # Удаление старых релизов

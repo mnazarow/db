@@ -202,10 +202,30 @@ pkg_install() {
     esac
 }
 
-# Необязательные пакеты: при неудаче — предупреждение, а не остановка.
+# Определяет пакетный менеджер, ничего не прерывая: неизвестная ОС — просто код возврата 1.
+detect_pkg_quiet() {
+    [[ -n "${PKG}" ]] && return 0
+    [[ -r /etc/os-release ]] || return 1
+    local ID="" ID_LIKE=""
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    case "${ID:-}" in
+        ubuntu|debian|linuxmint|pop) PKG="apt" ;;
+        almalinux|rocky|centos|rhel|ol|fedora) PKG="dnf" ;;
+        *)
+            case "${ID_LIKE:-}" in
+                *debian*) PKG="apt" ;;
+                *rhel*|*fedora*) PKG="dnf" ;;
+                *) return 1 ;;
+            esac ;;
+    esac
+    return 0
+}
+
+# Необязательные пакеты: при неудаче — предупреждение, а не остановка (никогда не вызывает die).
 pkg_install_optional() {
     [[ $# -eq 0 ]] && return 0
-    [[ -n "${PKG}" ]] || detect_os
+    detect_pkg_quiet || return 1
     info "Установка пакетов (необязательных): $*"
     case "${PKG}" in
         apt) apt_update_once; env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends "$@" >>"${LOG_FILE}" 2>&1 ;;

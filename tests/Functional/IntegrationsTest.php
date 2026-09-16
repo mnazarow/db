@@ -136,6 +136,37 @@ final class IntegrationsTest extends PortalTestCase
         $test = $client->test();
         self::assertTrue($test['ok']);
         self::assertStringContainsString('test-model', $test['message']);
+
+        // Модели, не принимающие max_tokens/temperature: запрос повторяется без спорных параметров.
+        $this->http()->reset();
+        $this->http()->enqueue(
+            new HttpResponse(400, '{"error":{"message":"Unsupported parameter: \'max_tokens\' is not supported with this model. Use \'max_completion_tokens\' instead."}}'),
+            self::completion('Ответ после повтора.'),
+        );
+        self::assertSame('Ответ после повтора.', $client->complete('s', 'u', 100));
+        self::assertCount(2, $this->http()->requests);
+        $retry = json_decode((string) $this->http()->last()['body'], true);
+        self::assertArrayNotHasKey('max_tokens', $retry);
+        self::assertSame(100, $retry['max_completion_tokens']);
+
+        $this->http()->reset();
+        $this->http()->enqueue(
+            new HttpResponse(400, '{"error":{"message":"temperature does not support 0.1 with this model"}}'),
+            self::completion('Без температуры.'),
+        );
+        self::assertSame('Без температуры.', $client->complete('s', 'u', 100));
+        self::assertArrayNotHasKey('temperature', json_decode((string) $this->http()->last()['body'], true));
+
+        // Ошибка 400 без понятной причины не повторяется.
+        $this->http()->reset();
+        $this->http()->enqueue(new HttpResponse(400, '{"error":{"message":"model not found"}}'));
+        try {
+            $client->complete('s', 'u');
+            self::fail('ожидалось исключение');
+        } catch (LlmException $e) {
+            self::assertStringContainsString('model not found', $e->getMessage());
+        }
+        self::assertCount(1, $this->http()->requests, 'повтора быть не должно');
     }
 
     public function testDescriberAndCommand(): void
@@ -396,6 +427,11 @@ final class IntegrationsTest extends PortalTestCase
         $payload = json_decode((string) $request['body'], true);
         self::assertSame(WebhookNotifier::EVENT_CHANGED, $payload['event']);
         self::assertSame([['document_id' => $doc->getId(), 'type' => 'unpublish'], ['document_id' => $doc->getId(), 'type' => 'publish']], array_map(static fn (array $c) => ['document_id' => $c['document_id'], 'type' => $c['type']], $payload['changes']));
+        // Названий документов в webhook нет: получатель без ключа API не должен узнавать содержимое.
+        foreach ($payload['changes'] as $change) {
+            self::assertSame(['document_id', 'type', 'at'], array_keys($change));
+        }
+        self::assertStringNotContainsString($doc->getTitle(), (string) $request['body']);
         self::assertSame([], $payload['deleted']);
         self::assertStringEndsWith('/api/v1/documents/'.$doc->getId(), $payload['documents'][0]['url']);
         self::assertSame('sha256='.hash_hmac('sha256', (string) $request['body'], 's3cret'), $request['headers']['X-Docportal-Signature']);
@@ -409,6 +445,7 @@ final class IntegrationsTest extends PortalTestCase
         $notifier->flush();
         $payload = json_decode((string) $this->http()->last()['body'], true);
         self::assertSame([$victimId], array_column($payload['deleted'], 'document_id'));
+        self::assertSame(['document_id', 'deleted_at'], array_keys($payload['deleted'][0]));
 
         $this->http()->reset();
         $this->http()->setDefault(new HttpResponse(200, 'ok'));

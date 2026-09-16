@@ -30,6 +30,12 @@ final class TextExtractor
     /** Максимальный размер извлекаемого текста (символов). */
     public const MAX_CHARS = 2_000_000;
 
+    /** Сколько байт читаем из текстового файла (остальное не нужно: текст всё равно обрезается по MAX_CHARS). */
+    private const MAX_READ_BYTES = 16_777_216;
+
+    /** Максимальный размер одной записи внутри архива docx/xlsx/pptx/odt (защита от «зип-бомбы»). */
+    private const MAX_ENTRY_BYTES = 33_554_432;
+
     private ?bool $pdftotext = null;
 
     public function __construct(
@@ -109,7 +115,11 @@ final class TextExtractor
         if (!is_dir($this->cacheDir)) {
             @mkdir($this->cacheDir, 0775, true);
         }
-        @file_put_contents($cacheFile, $text, \LOCK_EX);
+        // Пишем через временный файл: читатель не должен увидеть наполовину записанный кэш.
+        $tmp = $cacheFile.'.'.bin2hex(random_bytes(4)).'.tmp';
+        if (false !== @file_put_contents($tmp, $text) && !@rename($tmp, $cacheFile)) {
+            @unlink($tmp);
+        }
 
         return ['status' => '' === $text ? self::STATUS_EMPTY : self::STATUS_OK, 'text' => '' === $text ? null : $text, 'chars' => mb_strlen($text), 'cached' => false];
     }
@@ -119,8 +129,8 @@ final class TextExtractor
     {
         $ext = strtolower(ltrim($extension, '.'));
         $text = match (true) {
-            \in_array($ext, self::PLAIN, true) => self::toUtf8((string) file_get_contents($path)),
-            \in_array($ext, self::HTML, true) => self::htmlToText(self::toUtf8((string) file_get_contents($path))),
+            \in_array($ext, self::PLAIN, true) => self::toUtf8(self::readHead($path)),
+            \in_array($ext, self::HTML, true) => self::htmlToText(self::toUtf8(self::readHead($path))),
             'pdf' === $ext => $this->pdfToText($path),
             'docx' === $ext => $this->docxToText($path),
             'xlsx' === $ext => $this->xlsxToText($path),
@@ -138,6 +148,10 @@ final class TextExtractor
     /** Приводит текст к аккуратному виду: переносы строк, пробелы, ограничение длины. */
     public static function normalize(string $text): string
     {
+        if (!mb_check_encoding($text, 'UTF-8')) {
+            // Некорректные байты (повреждённый файл) заменяются, иначе текст не пройдёт json_encode.
+            $text = (string) mb_convert_encoding($text, 'UTF-8', 'UTF-8');
+        }
         $text = str_replace(["\r\n", "\r", "\u{0}"], ["\n", "\n", ''], $text);
         $text = preg_replace('/[ \x{00A0}]+/u', ' ', $text) ?? $text;
         $text = preg_replace('/ ?\t[\t ]*/u', "\t", $text) ?? $text; // табуляции (границы ячеек) сохраняем, но без дублей
@@ -163,8 +177,21 @@ final class TextExtractor
         if (mb_check_encoding($raw, 'UTF-8')) {
             return $raw;
         }
+        // Файл мог быть прочитан не целиком — отбрасываем оборванный в конце символ UTF-8 и проверяем снова.
+        for ($cut = 1; $cut <= 3 && $cut < \strlen($raw); ++$cut) {
+            $candidate = substr($raw, 0, -$cut);
+            if (mb_check_encoding($candidate, 'UTF-8')) {
+                return $candidate;
+            }
+        }
 
         return (string) mb_convert_encoding($raw, 'UTF-8', 'Windows-1251');
+    }
+
+    /** Читает начало файла (не больше MAX_READ_BYTES). */
+    private static function readHead(string $path): string
+    {
+        return (string) file_get_contents($path, false, null, 0, self::MAX_READ_BYTES);
     }
 
     public static function htmlToText(string $html): string
@@ -208,7 +235,7 @@ final class TextExtractor
         $names = self::zipEntries($zip, static fn (string $n): bool => 'word/document.xml' === $n || (bool) preg_match('#^word/(header|footer|footnotes|endnotes)\d*\.xml$#', $n));
         usort($names, static fn (string $a, string $b): int => ('word/document.xml' === $a ? -1 : ('word/document.xml' === $b ? 1 : strcmp($a, $b))));
         foreach ($names as $name) {
-            $xml = (string) $zip->getFromName($name);
+            $xml = self::zipRead($zip, $name);
             $xml = preg_replace('#<w:tab/>#', "\t", $xml) ?? $xml;
             $xml = preg_replace('#<w:(br|cr)\b[^>]*/>#', "\n", $xml) ?? $xml;
             // Ячейки таблиц: абзацы внутри ячейки — через пробел, ячейки — через табуляцию, строки — с новой строки.
@@ -226,16 +253,16 @@ final class TextExtractor
     {
         $zip = self::openZip($path);
         $shared = [];
-        $sst = $zip->getFromName('xl/sharedStrings.xml');
-        if (\is_string($sst) && preg_match_all('#<si>(.*?)</si>#s', $sst, $m)) {
+        $sst = self::zipRead($zip, 'xl/sharedStrings.xml');
+        if ('' !== $sst && preg_match_all('#<si>(.*?)</si>#s', $sst, $m)) {
             foreach ($m[1] as $si) {
                 $shared[] = self::xmlText($si);
             }
         }
         $sheetNames = [];
-        $workbook = $zip->getFromName('xl/workbook.xml');
-        if (\is_string($workbook) && preg_match_all('#<sheet\b[^>]*\bname="([^"]*)"[^>]*\br:id="([^"]+)"#', $workbook, $m, \PREG_SET_ORDER)) {
-            $rels = (string) $zip->getFromName('xl/_rels/workbook.xml.rels');
+        $workbook = self::zipRead($zip, 'xl/workbook.xml');
+        if ('' !== $workbook && preg_match_all('#<sheet\b[^>]*\bname="([^"]*)"[^>]*\br:id="([^"]+)"#', $workbook, $m, \PREG_SET_ORDER)) {
+            $rels = self::zipRead($zip, 'xl/_rels/workbook.xml.rels');
             foreach ($m as $sheet) {
                 if (preg_match('#<Relationship\b[^>]*\bId="'.preg_quote($sheet[2], '#').'"[^>]*\bTarget="([^"]+)"#', $rels, $r)
                     || preg_match('#<Relationship\b[^>]*\bTarget="([^"]+)"[^>]*\bId="'.preg_quote($sheet[2], '#').'"#', $rels, $r)) {
@@ -248,7 +275,7 @@ final class TextExtractor
         natsort($entries);
         $out = [];
         foreach ($entries as $entry) {
-            $xml = (string) $zip->getFromName($entry);
+            $xml = self::zipRead($zip, $entry);
             $rows = [];
             if (preg_match_all('#<row\b[^>]*>(.*?)</row>#s', $xml, $rm)) {
                 foreach ($rm[1] as $rowXml) {
@@ -292,7 +319,7 @@ final class TextExtractor
         $slides = [];
         $notes = [];
         foreach ($entries as $entry) {
-            $xml = (string) $zip->getFromName($entry);
+            $xml = self::zipRead($zip, $entry);
             $xml = preg_replace('#</a:p>#', "\n", $xml) ?? $xml;
             $xml = preg_replace('#<a:br\b[^>]*/>#', "\n", $xml) ?? $xml;
             $xml = preg_replace('#</a:tc>#', "\t", $xml) ?? $xml;
@@ -323,7 +350,7 @@ final class TextExtractor
     private function openDocumentToText(string $path): string
     {
         $zip = self::openZip($path);
-        $xml = (string) $zip->getFromName('content.xml');
+        $xml = self::zipRead($zip, 'content.xml');
         $zip->close();
         $xml = preg_replace('#<text:tab/>#', "\t", $xml) ?? $xml;
         $xml = preg_replace('#<text:line-break/>#', "\n", $xml) ?? $xml;
@@ -346,6 +373,14 @@ final class TextExtractor
         }
 
         return $zip;
+    }
+
+    /** Читает запись архива, не больше MAX_ENTRY_BYTES (защита от «зип-бомбы»); отсутствующая запись — пустая строка. */
+    private static function zipRead(\ZipArchive $zip, string $name): string
+    {
+        $content = $zip->getFromName($name, self::MAX_ENTRY_BYTES);
+
+        return \is_string($content) ? $content : '';
     }
 
     /**

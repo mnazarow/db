@@ -77,7 +77,12 @@ if [[ "${INSTALL_MODE}" == "native" ]]; then
     if command -v pdftotext >/dev/null 2>&1; then ok "Извлечение текста из PDF (pdftotext): доступно"
     else warn "pdftotext не найден — установите пакет poppler-utils, иначе API и описания через LLM не получат текст PDF-файлов"; fi
     if [[ -f "/etc/cron.d/${APP_ID}" ]] && grep -q 'app:documents:describe' "/etc/cron.d/${APP_ID}"; then ok "Задания cron: проверка сроков, описания через LLM$(grep -q 'backup' "/etc/cron.d/${APP_ID}" && echo ', резервные копии')"
-    else warn "В /etc/cron.d/${APP_ID} нет задания app:documents:describe — обновите скриптами новой версии (update.sh)"; fi
+    else warn "В /etc/cron.d/${APP_ID} нет задания app:documents:describe — выполните: sudo ${APP_DIR}/current/deploy/refresh.sh"; PROBLEMS=$((PROBLEMS + 1)); fi
+    # Команда управления могла остаться от предыдущей версии (обновление скриптами старой версии).
+    if [[ -f "/usr/local/bin/${APP_ID}" ]] && ! grep -q 'api-key' "/usr/local/bin/${APP_ID}"; then
+        warn "Команда ${APP_ID} осталась от предыдущей версии (нет команд api-key и describe) — выполните: sudo ${APP_DIR}/current/deploy/refresh.sh"
+        PROBLEMS=$((PROBLEMS + 1))
+    fi
 fi
 if [[ -d "${BACKUP_DIR}" ]]; then
     last=$(ls -1t "${BACKUP_DIR}"/${APP_ID}-backup-*.tar.gz 2>/dev/null | head -n1)

@@ -111,14 +111,20 @@ final class ApiPresenter
         ];
     }
 
-    /** @return array<string, mixed> */
-    public function deletion(DocumentDeletion $deletion): array
+    /**
+     * Удалённый документ. Название и раздел отдаются только ключам, которым видны внутренние документы:
+     * удалить мог и внутренний документ, а индексатору для удаления из индекса достаточно идентификатора.
+     *
+     * @return array<string, mixed>
+     */
+    public function deletion(DocumentDeletion $deletion, bool $withDetails = false): array
     {
-        return [
-            'id' => $deletion->getDocumentId(),
-            'title' => $deletion->getTitle(),
-            'section_path' => $deletion->getSectionPath(),
-            'deleted_at' => $deletion->getDeletedAt()->format(\DATE_ATOM),
-        ];
+        $data = ['id' => $deletion->getDocumentId(), 'deleted_at' => $deletion->getDeletedAt()->format(\DATE_ATOM)];
+        if ($withDetails) {
+            $data['title'] = $deletion->getTitle();
+            $data['section_path'] = $deletion->getSectionPath();
+        }
+
+        return $data;
     }
 }

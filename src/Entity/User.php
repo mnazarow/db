@@ -310,6 +310,7 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
         return '' !== $initials ? $initials : mb_strtoupper(mb_substr($this->username, 0, 1));
     }
 
+    #[\Deprecated] // метод пустой: временные учётные данные в объекте не хранятся (требование Symfony 7.3+)
     public function eraseCredentials(): void
     {
     }

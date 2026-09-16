@@ -35,6 +35,7 @@ final class ApiPrincipal implements UserInterface
         return [self::ROLE];
     }
 
+    #[\Deprecated] // ключ API в объекте не хранится в открытом виде — стирать нечего (требование Symfony 7.3+)
     public function eraseCredentials(): void
     {
     }

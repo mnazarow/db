@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\Security\Api;
 
-use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 use App\Controller\Api\ApiResponse;
+use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Event\ExceptionEvent;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
@@ -29,8 +29,8 @@ final class ApiExceptionSubscriber implements EventSubscriberInterface
 
     public function onException(ExceptionEvent $event): void
     {
-        $request = $event->getRequest();
-        if (!str_starts_with($request->getPathInfo(), '/api/')) {
+        $path = $event->getRequest()->getPathInfo();
+        if ('/api' !== $path && !str_starts_with($path, '/api/')) {
             return;
         }
         $e = $event->getThrowable();
@@ -48,6 +48,7 @@ final class ApiExceptionSubscriber implements EventSubscriberInterface
             Response::HTTP_NOT_FOUND === $status => \in_array($e->getMessage(), ['', 'Not Found'], true) || preg_match('/object not found by|No route found/', $e->getMessage()) ? 'Не найдено.' : $e->getMessage(),
             Response::HTTP_UNAUTHORIZED === $status => 'Требуется ключ API.',
             Response::HTTP_FORBIDDEN === $status => 'Доступ запрещён.',
+            Response::HTTP_METHOD_NOT_ALLOWED === $status => 'Метод не поддерживается: используйте GET.',
             $status >= 500 => $this->debug ? $e->getMessage() : 'Внутренняя ошибка сервера.',
             default => $e->getMessage(),
         };

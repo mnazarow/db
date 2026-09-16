@@ -3,11 +3,13 @@
 Перед запуском: загрузите демо-данные (php bin/console app:demo:load --force) и запустите сервер
 (./scripts/dev-server.sh). Запуск: python3 tests/e2e_screens.py http://127.0.0.1:8080 docs/images [var/import] [http://127.0.0.1:8090/v1]
 """
+import json
 import pathlib
 import re
 import sys
 import time
 import tempfile
+import urllib.request
 
 from playwright.sync_api import expect, sync_playwright
 
@@ -299,13 +301,20 @@ with sync_playwright() as p:
     api_token = page.locator('#new-token-value').input_value()
     assert api_token.startswith('dp_'), api_token
     shot(page, '45-admin-integrations')
-    import urllib.request
-    req = urllib.request.Request(BASE + '/api/v1/documents?per_page=2', headers={'Authorization': 'Bearer ' + api_token})
-    with urllib.request.urlopen(req) as resp:
-        import json as _json
-        api_data = _json.loads(resp.read().decode('utf-8'))
+    def api(path):
+        req = urllib.request.Request(BASE + '/api/v1' + path, headers={'Authorization': 'Bearer ' + api_token})
+        with urllib.request.urlopen(req) as resp:
+            return json.loads(resp.read().decode('utf-8'))
+    api_data = api('/documents?per_page=2')
     assert api_data['total'] > 0 and api_data['items'][0]['links']['text'], api_data
-    print('api ok', api_data['total'])
+    # Лента изменений: скрытые и удалённые документы отдаются без названий (ключ видит только открытые).
+    changes = api('/changes?since=2000-01-01T00:00:00Z')
+    assert changes['changed'] and changes['next_since'] < changes['until'], changes['next_since']
+    for item in changes['removed']:
+        assert sorted(item.keys()) == ['id', 'reason', 'updated_at'], item
+    internal_title = 'Правила работы с конфиденциальной информацией'
+    assert internal_title not in json.dumps(changes, ensure_ascii=False), 'название внутреннего документа не должно попадать в ленту'
+    print('api ok', api_data['total'], '| removed', len(changes['removed']), '| deleted', len(changes['deleted']))
     if LLM_MOCK:
         page.check('form[action$="/integrations/llm"] input[name=enabled]')
         page.check('form[action$="/integrations/llm"] input[name=auto_describe]')

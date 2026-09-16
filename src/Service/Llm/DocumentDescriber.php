@@ -42,7 +42,9 @@ final class DocumentDescriber
     /** Включено ли автоматическое описание новых документов (при создании и импорте). */
     public function isAutoEnabled(): bool
     {
-        return $this->llm->config()['auto_describe'];
+        $cfg = $this->llm->config();
+
+        return $cfg['enabled'] && $cfg['auto_describe'];
     }
 
     /**

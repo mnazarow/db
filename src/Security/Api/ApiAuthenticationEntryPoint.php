@@ -8,6 +8,7 @@ use App\Controller\Api\ApiResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Security\Core\Exception\AuthenticationException;
+use Symfony\Component\Security\Core\Exception\BadCredentialsException;
 use Symfony\Component\Security\Http\Authentication\AuthenticationFailureHandlerInterface;
 use Symfony\Component\Security\Http\EntryPoint\AuthenticationEntryPointInterface;
 
@@ -23,7 +24,12 @@ final class ApiAuthenticationEntryPoint implements AuthenticationEntryPointInter
 
     public function onAuthenticationFailure(Request $request, AuthenticationException $exception): Response
     {
-        return self::unauthorized('invalid_token', $exception->getMessage() ?: 'Неверный ключ API.');
+        // Наружу отдаём только свои сообщения (ApiKeyHandler), чтобы не раскрывать внутренние подробности.
+        $message = $exception instanceof BadCredentialsException && '' !== $exception->getMessage() && 'Bad credentials.' !== $exception->getMessage()
+            ? $exception->getMessage()
+            : 'Неверный ключ API.';
+
+        return self::unauthorized('invalid_token', $message);
     }
 
     private static function unauthorized(string $code, string $message): ApiResponse

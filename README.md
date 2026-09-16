@@ -62,6 +62,7 @@ docportal import /mnt/share/Документы --dry-run   # импорт из �
 docportal api-key create "Индексатор RAG"    # ключ REST API для внешней системы (или панель администратора → Интеграции)
 docportal describe --missing --limit=50      # описания документов через LLM (настройки — в «Интеграциях»)
 docportal uninstall                   # удаление (с --purge — вместе с базой данных)
+sudo /opt/docportal/current/deploy/refresh.sh   # обновить команду управления, cron и пакеты по текущему релизу
 ```
 
 ## Запуск для разработки

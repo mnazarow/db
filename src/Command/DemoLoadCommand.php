@@ -379,7 +379,9 @@ HTML, true, [
     private function wipe(): void
     {
         $this->connection->executeStatement('SET FOREIGN_KEY_CHECKS = 0');
-        foreach (['document_event', 'document_version', 'document', 'section_moderator', 'section'] as $table) {
+        // document_deletion тоже очищаем: иначе отметки об удалении остались бы от прежних демо-данных
+        // и относились бы к идентификаторам, которые после перезагрузки принадлежат другим документам.
+        foreach (['document_event', 'document_version', 'document', 'document_deletion', 'section_moderator', 'section'] as $table) {
             $this->connection->executeStatement('TRUNCATE TABLE '.$table);
         }
         $this->connection->executeStatement('SET FOREIGN_KEY_CHECKS = 1');

@@ -32,6 +32,9 @@ final class IntegrationsController extends AbstractController
 {
     private const DESCRIBE_NOW_LIMIT = 10;
 
+    /** Сколько секунд «Описать документы без описания» работает в одном запросе (дальше — повтор или команда). */
+    private const DESCRIBE_NOW_SECONDS = 25.0;
+
     public function __construct(
         private readonly ApiKeyRepository $keys,
         private readonly DocumentRepository $documents,
@@ -199,6 +202,7 @@ final class IntegrationsController extends AbstractController
         }
         $done = 0;
         $errors = [];
+        $started = microtime(true);
         foreach ($this->documents->findForDescribing('missing', self::DESCRIBE_NOW_LIMIT) as $document) {
             try {
                 $this->describer->describe($document, $user, $request->getClientIp());
@@ -208,6 +212,9 @@ final class IntegrationsController extends AbstractController
                 if (\count($errors) >= 3) {
                     break;
                 }
+            }
+            if (microtime(true) - $started > self::DESCRIBE_NOW_SECONDS) {
+                break; // не держим запрос дольше разумного — остальное по кнопке ещё раз или командой
             }
         }
         $left = $this->documents->countDescriptions()['without'];

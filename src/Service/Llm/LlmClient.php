@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Service\Llm;
 
+use App\Service\Http\HttpResponse;
 use App\Service\Http\HttpTransportInterface;
 use App\Service\PortalSettings;
 use Psr\Log\LoggerInterface;
@@ -52,11 +53,16 @@ final class LlmClient
         if (null !== $maxTokens) {
             $payload['max_tokens'] = $maxTokens;
         }
-        $headers = ['Content-Type' => 'application/json', 'Accept' => 'application/json'];
-        if ('' !== $cfg['api_key']) {
-            $headers['Authorization'] = 'Bearer '.$cfg['api_key'];
+        $response = $this->send($payload, $cfg);
+        if (!$response->ok() && 400 === $response->status) {
+            // Часть моделей не принимает max_tokens (нужен max_completion_tokens) или фиксирует температуру —
+            // разбираем ответ и повторяем запрос без спорных параметров.
+            $adjusted = self::adjustPayload($payload, $response->body);
+            if (null !== $adjusted) {
+                $this->logger->info('Повтор запроса к LLM без неподдерживаемых параметров', ['model' => $cfg['model'], 'error' => $response->describeError()]);
+                $response = $this->send($adjusted, $cfg);
+            }
         }
-        $response = $this->http->request('POST', $cfg['base_url'].'/chat/completions', json_encode($payload, \JSON_UNESCAPED_UNICODE | \JSON_THROW_ON_ERROR), $headers, $cfg['timeout']);
         if (!$response->ok()) {
             $this->logger->warning('Ошибка обращения к LLM', ['model' => $cfg['model'], 'base_url' => $cfg['base_url'], 'error' => $response->describeError()]);
             throw new LlmException('Ошибка LLM: '.$response->describeError());
@@ -71,6 +77,47 @@ final class LlmClient
         }
 
         return trim($content);
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     * @param array<string, mixed> $cfg
+     */
+    private function send(array $payload, array $cfg): HttpResponse
+    {
+        $headers = ['Content-Type' => 'application/json', 'Accept' => 'application/json'];
+        if ('' !== $cfg['api_key']) {
+            $headers['Authorization'] = 'Bearer '.$cfg['api_key'];
+        }
+
+        return $this->http->request('POST', $cfg['base_url'].'/chat/completions', json_encode($payload, \JSON_UNESCAPED_UNICODE | \JSON_THROW_ON_ERROR), $headers, $cfg['timeout']);
+    }
+
+    /**
+     * По тексту ошибки убирает или переименовывает параметры, которые модель не поддерживает.
+     *
+     * @param array<string, mixed> $payload
+     *
+     * @return array<string, mixed>|null null — повторять нечего
+     */
+    private static function adjustPayload(array $payload, string $errorBody): ?array
+    {
+        $body = mb_strtolower($errorBody);
+        $changed = false;
+        if (isset($payload['max_tokens']) && str_contains($body, 'max_completion_tokens')) {
+            $payload['max_completion_tokens'] = $payload['max_tokens'];
+            unset($payload['max_tokens']);
+            $changed = true;
+        } elseif (isset($payload['max_tokens']) && str_contains($body, 'max_tokens')) {
+            unset($payload['max_tokens']);
+            $changed = true;
+        }
+        if (isset($payload['temperature']) && str_contains($body, 'temperature')) {
+            unset($payload['temperature']);
+            $changed = true;
+        }
+
+        return $changed ? $payload : null;
     }
 
     /**

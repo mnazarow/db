@@ -175,6 +175,13 @@ final class ApiTest extends PortalTestCase
             self::assertSame('page', $item['type']);
         }
         self::assertGreaterThan(0, $data['total']);
+        self::assertSame($data['total'], $this->api('/documents?type=PAGE', self::$publicToken)['total'], 'значения фильтров не зависят от регистра');
+        $this->api('/documents?type=файл', self::$publicToken);
+        self::assertResponseStatusCodeSame(400);
+        // Нечисловой раздел — явная ошибка, а не молчаливая выдача всех документов.
+        $this->api('/documents?section=abc', self::$publicToken);
+        self::assertResponseStatusCodeSame(400);
+        self::assertSame($publicCount, $this->api('/documents?section=', self::$publicToken)['total'], 'пустое значение фильтра игнорируется');
         $data = $this->api('/documents?tag='.rawurlencode('регламент'), self::$publicToken);
         self::assertSame(1, $data['total']);
         self::assertSame('ПОЛ-001', $data['items'][0]['code']);
@@ -269,7 +276,26 @@ final class ApiTest extends PortalTestCase
         self::assertSame($publicCount, $data['changed_total']);
         self::assertNotEmpty($data['removed'], 'внутренние, архивные и черновики попадают в removed для ключа «только открытые»');
         self::assertSame([], $data['deleted']);
+        self::assertFalse($data['truncated']);
+
+        // Скрытые документы отдаются без названий: ключ «только открытые» не должен узнать содержимое
+        // внутренних документов и черновиков — только идентификатор и причину.
+        $internalTitle = $this->document('ИБ-002')->getTitle();
+        $draftTitle = static::getContainer()->get(DocumentRepository::class)->findOneBy(['status' => Document::STATUS_DRAFT])?->getTitle();
+        self::assertStringNotContainsString($internalTitle, (string) $this->client->getResponse()->getContent());
+        self::assertStringNotContainsString((string) $draftTitle, (string) $this->client->getResponse()->getContent());
+        foreach ($data['removed'] as $item) {
+            self::assertSame(['id', 'reason', 'updated_at'], array_keys($item));
+            self::assertContains($item['reason'], ['draft', 'archived', 'internal']);
+        }
+        $reasons = array_column($data['removed'], 'reason', 'id');
+        self::assertSame('internal', $reasons[$this->document('ИБ-002')->getId()]);
+        self::assertSame('archived', $reasons[$this->document('ПР-2025-01')->getId()]);
+
+        // next_since — с небольшим перекрытием назад, иначе изменения в ту же секунду потерялись бы.
         self::assertArrayHasKey('next_since', $data);
+        self::assertLessThan(strtotime($data['until']), strtotime($data['next_since']));
+        self::assertGreaterThanOrEqual(strtotime($data['until']) - 60, strtotime($data['next_since']));
 
         $future = (new \DateTimeImmutable('+1 hour'))->format(\DATE_ATOM);
         $data = $this->api('/changes?since='.rawurlencode($future), self::$internalToken);
@@ -291,8 +317,12 @@ final class ApiTest extends PortalTestCase
         self::assertContains($toHide->getId(), array_column($data['removed'], 'id'));
         self::assertNotContains($toHide->getId(), array_column($data['changed'], 'id'));
         self::assertSame([$deletedId], array_column($data['deleted'], 'id'));
-        self::assertSame('Схема сетевых розеток офиса', $data['deleted'][0]['title']);
+        self::assertSame('Схема сетевых розеток офиса', $data['deleted'][0]['title'], 'ключу «все документы» отдаём и название');
         self::assertStringContainsString('Рабочее место', (string) $data['deleted'][0]['section_path']);
+        // Ключу «только открытые» — лишь идентификатор: удалить могли и внутренний документ.
+        $publicView = $this->api('/changes?since='.rawurlencode($mark), self::$publicToken);
+        self::assertSame([$deletedId], array_column($publicView['deleted'], 'id'));
+        self::assertSame(['id', 'deleted_at'], array_keys($publicView['deleted'][0]));
         $this->api('/documents/'.$deletedId, self::$internalToken);
         self::assertResponseStatusCodeSame(404);
 

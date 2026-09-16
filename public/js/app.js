@@ -34,9 +34,9 @@
         /* Копирование в буфер обмена (data-copy="селектор или текст") */
         Array.prototype.forEach.call(document.querySelectorAll('[data-copy]'), function (btn) {
             btn.addEventListener('click', function () {
-                var ref = btn.getAttribute('data-copy');
-                var source = ref ? document.querySelector(ref) : null;
-                var text = source ? (source.value !== undefined && source.tagName !== 'DIV' ? source.value : source.textContent) : ref;
+                var ref = btn.getAttribute('data-copy') || '';
+                var source = /^[#.]/.test(ref) ? document.querySelector(ref) : null;
+                var text = source ? (typeof source.value === 'string' ? source.value : source.textContent) : ref;
                 var done = function () {
                     var label = btn.textContent;
                     btn.textContent = 'Скопировано';

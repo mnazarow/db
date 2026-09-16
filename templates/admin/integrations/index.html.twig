@@ -86,7 +86,7 @@
     <div class="card card--form">
         <div class="card__head"><h2 class="h-section">Webhook об изменениях</h2>
             {% if webhook.enabled %}<span class="badge badge--done"><span class="badge__dot"></span>Включён</span>{% else %}<span class="badge badge--none"><span class="badge__dot"></span>Выключен</span>{% endif %}</div>
-        <p>После каждого изменения документов (создание, новая версия, публикация, архив, перемещение, удаление) портал отправляет на указанный адрес POST-запрос с JSON <code>{"event": "documents.changed", "changes": [...], "deleted": [...]}</code>. Внешняя система по нему запускает синхронизацию через <code>/changes</code>.</p>
+        <p>После каждого изменения документов (создание, новая версия, публикация, архив, перемещение, удаление) портал отправляет на указанный адрес POST-запрос с JSON <code>{"event": "documents.changed", "changes": [...], "deleted": [...]}</code> — только идентификаторы документов и типы событий, без названий. Внешняя система по нему запускает синхронизацию через <code>/changes</code>.</p>
         <form method="post" action="{{ path('admin_integrations_webhook') }}" class="form">
             <input type="hidden" name="_token" value="{{ csrf_token('integrations') }}">
             <div class="form-row form-row--check">

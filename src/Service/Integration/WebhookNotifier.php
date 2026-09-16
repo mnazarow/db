@@ -38,10 +38,10 @@ final class WebhookNotifier implements EventSubscriberInterface
         DocumentEvent::PUBLISH, DocumentEvent::UNPUBLISH, DocumentEvent::ARCHIVE, DocumentEvent::MOVE, DocumentEvent::DELETE,
     ];
 
-    /** @var array<string, array{document_id: int, type: string, at: string, title: string}> */
+    /** @var array<string, array{document_id: int, type: string, at: string}> */
     private array $changes = [];
 
-    /** @var array<int, array{document_id: int, title: string, section_path: ?string, deleted_at: string}> */
+    /** @var array<int, array{document_id: int, deleted_at: string}> */
     private array $deleted = [];
 
     public function __construct(
@@ -68,18 +68,17 @@ final class WebhookNotifier implements EventSubscriberInterface
             if (!\in_array($entity->getType(), self::NOTIFY_TYPES, true)) {
                 return;
             }
+            // Названия документов в webhook не передаём: получатель не предъявляет ключ API, а среди
+            // изменившихся документов могут быть внутренние. Подробности он забирает сам через /api/v1.
             $id = (int) $entity->getDocument()->getId();
             $this->changes[$id.':'.$entity->getType()] = [
                 'document_id' => $id,
                 'type' => $entity->getType(),
                 'at' => $entity->getCreatedAt()->format(\DATE_ATOM),
-                'title' => $entity->getDocument()->getTitle(),
             ];
         } elseif ($entity instanceof DocumentDeletion) {
             $this->deleted[$entity->getDocumentId()] = [
                 'document_id' => $entity->getDocumentId(),
-                'title' => $entity->getTitle(),
-                'section_path' => $entity->getSectionPath(),
                 'deleted_at' => $entity->getDeletedAt()->format(\DATE_ATOM),
             ];
         }
