@@ -8,6 +8,7 @@ use App\Entity\User;
 use App\Security\Ldap\LdapClient;
 use App\Service\ExpiryNotifier;
 use App\Service\FileStorage;
+use App\Service\PortalSettings;
 use App\Service\Validity;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\Request;
@@ -32,15 +33,24 @@ final class SettingsController extends AbstractController
         private readonly int $defaultValidityMonths,
         private readonly string $timezone,
         private readonly string $importDir,
+        private readonly PortalSettings $settings,
     ) {
     }
 
     #[Route('', name: 'admin_settings', methods: ['GET'])]
-    public function index(): Response
+    public function index(Request $request): Response
     {
         $storageDir = $this->storage->getStorageDir();
+        $clientIp = (string) $request->getClientIp();
 
         return $this->render('admin/settings/index.html.twig', [
+            'guest' => [
+                'mode' => $this->settings->guestMode(),
+                'networks' => $this->settings->guestNetworks(),
+                'modes' => PortalSettings::GUEST_MODE_LABELS,
+                'client_ip' => $clientIp,
+                'client_allowed' => $this->settings->isGuestAllowed($clientIp),
+            ],
             'ldap' => $this->ldap->getSettings()->summary(),
             'storage' => [
                 'dir' => $storageDir,
@@ -91,6 +101,23 @@ final class SettingsController extends AbstractController
             $this->addFlash('success', \sprintf('Проверка сроков выполнена: проверено %d, истекает %d, просрочено %d, отправлено писем %d (получатели: %s).', $stats['checked'], $stats['soon'], $stats['expired'], $stats['emails'], [] !== $stats['recipients'] ? implode(', ', $stats['recipients']) : 'нет'));
         } catch (\Throwable $e) {
             $this->addFlash('danger', 'Ошибка проверки сроков: '.$e->getMessage());
+        }
+
+        return $this->redirectToRoute('admin_settings');
+    }
+
+    /** Сохраняет режим просмотра без входа и список разрешённых IP-адресов и подсетей. */
+    #[Route('/guest-access', name: 'admin_settings_guest_access', methods: ['POST'])]
+    public function guestAccess(Request $request, #[CurrentUser] User $user): Response
+    {
+        $this->checkToken($request);
+        $mode = (string) $request->request->get('mode', PortalSettings::GUEST_ALL);
+        $networks = PortalSettings::parseNetworkList((string) $request->request->get('networks', ''));
+        try {
+            $this->settings->setGuestAccess($mode, $networks, $user);
+            $this->addFlash('success', 'Настройки гостевого доступа сохранены: '.(PortalSettings::GUEST_MODE_LABELS[$this->settings->guestMode()] ?? $mode).'.');
+        } catch (\InvalidArgumentException $e) {
+            $this->addFlash('danger', $e->getMessage());
         }
 
         return $this->redirectToRoute('admin_settings');

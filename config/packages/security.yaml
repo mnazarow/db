@@ -40,11 +40,17 @@ security:
             login_throttling:
                 limiter: app.login_rate_limiter
 
+    # Просмотр разделов и открытых документов доступен без входа (если это разрешено настройками портала —
+    # см. App\Security\GuestAccessSubscriber); панель администратора, профиль и все действия с документами
+    # и разделами требуют входа (проверяются voter'ом PortalVoter и атрибутами #[IsGranted]).
     access_control:
         - { path: ^/login$, roles: PUBLIC_ACCESS }
         - { path: ^/health$, roles: PUBLIC_ACCESS }
         - { path: ^/admin, roles: ROLE_ADMIN }
-        - { path: ^/, roles: ROLE_USER }
+        - { path: ^/profile, roles: ROLE_USER }
+        - { path: ^/documents/new, roles: ROLE_USER }
+        - { path: ^/sections/new, roles: ROLE_USER }
+        - { path: ^/, roles: PUBLIC_ACCESS }
 
 when@test:
     security:

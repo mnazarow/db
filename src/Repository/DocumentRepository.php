@@ -36,10 +36,13 @@ final class DocumentRepository extends ServiceEntityRepository
      *
      * @return list<Document>
      */
-    public function findBySection(Section $section, array $statuses, string $sort = 'title'): array
+    public function findBySection(Section $section, array $statuses, string $sort = 'title', bool $publicOnly = false): array
     {
         $qb = $this->baseQb()->andWhere('d.section = :s')->setParameter('s', $section)
             ->andWhere('d.status IN (:st)')->setParameter('st', $statuses);
+        if ($publicOnly) {
+            $qb->andWhere('d.isPublic = true');
+        }
         $this->applySort($qb, $sort);
 
         return $qb->getQuery()->getResult();
@@ -52,10 +55,13 @@ final class DocumentRepository extends ServiceEntityRepository
      *
      * @return list<Document>
      */
-    public function findInSubtree(Section $root, array $statuses, string $sort = 'title', int $limit = 0): array
+    public function findInSubtree(Section $root, array $statuses, string $sort = 'title', int $limit = 0, bool $publicOnly = false): array
     {
         $qb = $this->baseQb()->andWhere('s.path LIKE :path')->setParameter('path', $root->getPath().'%')
             ->andWhere('d.status IN (:st)')->setParameter('st', $statuses);
+        if ($publicOnly) {
+            $qb->andWhere('d.isPublic = true');
+        }
         $this->applySort($qb, $sort);
         if ($limit > 0) {
             $qb->setMaxResults($limit);
@@ -75,11 +81,15 @@ final class DocumentRepository extends ServiceEntityRepository
         };
     }
 
-    /** @return list<Document> недавно обновлённые опубликованные документы */
-    public function findRecentPublished(int $limit = 10): array
+    /** @return list<Document> недавно обновлённые опубликованные документы (для гостей — только открытые) */
+    public function findRecentPublished(int $limit = 10, bool $publicOnly = false): array
     {
-        return $this->baseQb()->andWhere('d.status = :st')->setParameter('st', Document::STATUS_PUBLISHED)
-            ->orderBy('d.updatedAt', 'DESC')->setMaxResults($limit)->getQuery()->getResult();
+        $qb = $this->baseQb()->andWhere('d.status = :st')->setParameter('st', Document::STATUS_PUBLISHED);
+        if ($publicOnly) {
+            $qb->andWhere('d.isPublic = true');
+        }
+
+        return $qb->orderBy('d.updatedAt', 'DESC')->setMaxResults($limit)->getQuery()->getResult();
     }
 
     /**
@@ -133,13 +143,16 @@ final class DocumentRepository extends ServiceEntityRepository
      *
      * @return list<Document>
      */
-    public function search(string $query, array $statuses, ?Section $section = null, int $limit = 100): array
+    public function search(string $query, array $statuses, ?Section $section = null, int $limit = 100, bool $publicOnly = false): array
     {
         $terms = array_values(array_filter(preg_split('/\s+/u', mb_strtolower(trim($query))) ?: [], static fn ($t) => mb_strlen($t) >= 2));
         if ([] === $terms) {
             return [];
         }
         $qb = $this->baseQb()->andWhere('d.status IN (:st)')->setParameter('st', $statuses);
+        if ($publicOnly) {
+            $qb->andWhere('d.isPublic = true');
+        }
         foreach (\array_slice($terms, 0, 6) as $i => $term) {
             $qb->andWhere(\sprintf('(LOWER(d.title) LIKE :t%1$d OR LOWER(d.code) LIKE :t%1$d OR LOWER(d.description) LIKE :t%1$d OR LOWER(d.tags) LIKE :t%1$d OR LOWER(cv.content) LIKE :t%1$d OR LOWER(cv.originalName) LIKE :t%1$d)', $i))
                 ->setParameter('t'.$i, '%'.addcslashes($term, '%_').'%');
@@ -154,7 +167,7 @@ final class DocumentRepository extends ServiceEntityRepository
     /**
      * Реестр документов для панели администратора с фильтрами.
      *
-     * @param array{section?: ?Section, status?: ?string, type?: ?string, validity?: ?string, owner?: ?User, q?: ?string} $filters
+     * @param array{section?: ?Section, status?: ?string, type?: ?string, validity?: ?string, owner?: ?User, access?: ?string, q?: ?string} $filters
      *
      * @return list<Document>
      */
@@ -172,6 +185,9 @@ final class DocumentRepository extends ServiceEntityRepository
         }
         if (!empty($filters['owner'])) {
             $qb->andWhere('d.owner = :owner')->setParameter('owner', $filters['owner']);
+        }
+        if (!empty($filters['access'])) {
+            $qb->andWhere('d.isPublic = :public')->setParameter('public', 'public' === $filters['access']);
         }
         if (!empty($filters['q'])) {
             $qb->andWhere('(LOWER(d.title) LIKE :q OR LOWER(d.code) LIKE :q)')->setParameter('q', '%'.mb_strtolower(trim($filters['q'])).'%');
@@ -197,10 +213,13 @@ final class DocumentRepository extends ServiceEntityRepository
         return $qb->setMaxResults($limit)->getQuery()->getResult();
     }
 
-    /** @return array<string, int> число документов по статусам */
-    public function countByStatus(?array $sectionIds = null): array
+    /** @return array<string, int> число документов по статусам (для гостей — только открытых) */
+    public function countByStatus(?array $sectionIds = null, bool $publicOnly = false): array
     {
         $qb = $this->createQueryBuilder('d')->select('d.status AS st, COUNT(d.id) AS cnt')->groupBy('d.status');
+        if ($publicOnly) {
+            $qb->andWhere('d.isPublic = true');
+        }
         if (null !== $sectionIds) {
             if ([] === $sectionIds) {
                 return array_fill_keys(Document::STATUSES, 0);
@@ -269,10 +288,13 @@ final class DocumentRepository extends ServiceEntityRepository
      *
      * @return array<int, array<string, int>> section_id => [status => count]
      */
-    public function countPerSection(): array
+    public function countPerSection(bool $publicOnly = false): array
     {
-        $rows = $this->createQueryBuilder('d')->select('IDENTITY(d.section) AS sid, d.status AS st, COUNT(d.id) AS cnt')
-            ->groupBy('sid', 'st')->getQuery()->getArrayResult();
+        $qb = $this->createQueryBuilder('d')->select('IDENTITY(d.section) AS sid, d.status AS st, COUNT(d.id) AS cnt')->groupBy('sid', 'st');
+        if ($publicOnly) {
+            $qb->andWhere('d.isPublic = true');
+        }
+        $rows = $qb->getQuery()->getArrayResult();
         $out = [];
         foreach ($rows as $row) {
             $out[(int) $row['sid']][$row['st']] = (int) $row['cnt'];

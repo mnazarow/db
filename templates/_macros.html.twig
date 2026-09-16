@@ -11,6 +11,14 @@
     <span class="badge badge--{{ cls }}"><span class="badge__dot"></span>{{ document.status|status_label }}</span>
 {%- endmacro %}
 
+{% macro access_badge(document) %}
+    {%- if document.public -%}
+        <span class="badge badge--progress" title="Открытый документ: опубликованную версию можно читать без входа"><span class="badge__dot"></span>Открытый</span>
+    {%- else -%}
+        <span class="badge badge--admin" title="Внутренний документ: виден только после входа"><span class="badge__dot"></span>Внутренний</span>
+    {%- endif -%}
+{%- endmacro %}
+
 {% macro file_icon(document) %}
     {%- set current = document.currentVersion -%}
     {%- if document.page -%}
@@ -64,6 +72,7 @@
                     <td>
                         <a class="doc-table__title" href="{{ path('app_document_show', {id: d.id}) }}">{{ d.title }}</a>
                         {% if d.code %}<span class="doc-table__code">{{ d.code }}</span>{% endif %}
+                        {% if not d.public %}<span class="tag tag--internal" title="Внутренний документ: виден только после входа">внутренний</span>{% endif %}
                         {% if d.description %}<div class="hints">{{ d.description|length > 140 ? d.description|slice(0, 140) ~ '…' : d.description }}</div>{% endif %}
                     </td>
                     {% if show_section %}<td class="col-section"><a href="{{ path('app_section_show', {id: d.section.id}) }}">{{ d.section.fullName }}</a></td>{% endif %}

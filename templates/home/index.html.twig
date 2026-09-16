@@ -11,7 +11,7 @@
         <div class="hero__row">
             <div>
                 <h1 class="h-display">{{ app_name }}</h1>
-                <p class="hero__meta">Опубликовано документов: {{ total_published }}. Выберите раздел или воспользуйтесь поиском.</p>
+                <p class="hero__meta">{% if app.user %}Опубликовано документов: {{ total_published }}. Выберите раздел или воспользуйтесь поиском.{% else %}Открытых документов: {{ total_published }}. Выберите раздел или воспользуйтесь поиском. <a href="{{ path('app_login') }}">Войдите</a>, чтобы видеть внутренние документы и работать с разделами.{% endif %}</p>
             </div>
             <div class="hero__actions">
                 {% if is_moderator %}

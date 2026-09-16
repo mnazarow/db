@@ -20,6 +20,7 @@ use Symfony\Component\Validator\Constraints as Assert;
  * published — опубликован (виден всем сотрудникам), archived — архив (снят с публикации, сохранён для истории).
  *
  * Актуальность: validUntil — дата, до которой документ считается актуальным (null — бессрочно).
+ * Доступ: isPublic — открытый документ (читается без входа), иначе — только для сотрудников после входа.
  */
 #[ORM\Entity(repositoryClass: DocumentRepository::class)]
 #[ORM\Table(name: 'document')]
@@ -27,6 +28,7 @@ use Symfony\Component\Validator\Constraints as Assert;
 #[ORM\Index(name: 'idx_document_status_valid', columns: ['status', 'valid_until'])]
 #[ORM\Index(name: 'idx_document_updated', columns: ['updated_at'])]
 #[ORM\Index(name: 'idx_document_code', columns: ['code'])]
+#[ORM\Index(name: 'idx_document_public', columns: ['status', 'is_public'])]
 #[ORM\HasLifecycleCallbacks]
 class Document
 {
@@ -68,6 +70,13 @@ class Document
 
     #[ORM\Column(length: 12)]
     private string $status = self::STATUS_DRAFT;
+
+    /**
+     * Открытый документ: опубликованную версию можно читать без входа в портал (если гостевой доступ
+     * разрешён настройками). Внутренние документы (false) видны только после входа.
+     */
+    #[ORM\Column(name: 'is_public', options: ['default' => true])]
+    private bool $isPublic = true;
 
     /** @var list<string> */
     #[ORM\Column(type: Types::JSON)]
@@ -241,6 +250,18 @@ class Document
     public function isArchived(): bool
     {
         return self::STATUS_ARCHIVED === $this->status;
+    }
+
+    public function isPublic(): bool
+    {
+        return $this->isPublic;
+    }
+
+    public function setPublic(bool $public): static
+    {
+        $this->isPublic = $public;
+
+        return $this;
     }
 
     /** @return list<string> */

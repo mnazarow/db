@@ -112,7 +112,7 @@ final class DocumentController extends AbstractController
 
     #[Route('/{id}', name: 'app_document_show', requirements: ['id' => '\d+'], methods: ['GET'])]
     #[IsGranted(PortalVoter::DOCUMENT_VIEW, subject: 'document')]
-    public function show(Document $document, Request $request, #[CurrentUser] User $user): Response
+    public function show(Document $document, Request $request, #[CurrentUser] ?User $user): Response
     {
         $this->trackView($document, $request, $user);
         $canManage = $this->access->canEditDocument($user, $document);
@@ -178,7 +178,7 @@ final class DocumentController extends AbstractController
 
     #[Route('/{id}/download', name: 'app_document_download', requirements: ['id' => '\d+'], methods: ['GET'])]
     #[IsGranted(PortalVoter::DOCUMENT_VIEW, subject: 'document')]
-    public function download(Document $document, Request $request, #[CurrentUser] User $user): Response
+    public function download(Document $document, Request $request, #[CurrentUser] ?User $user): Response
     {
         $version = $document->getCurrentVersion();
         if (null === $version) {
@@ -190,7 +190,7 @@ final class DocumentController extends AbstractController
 
     #[Route('/{id}/versions/{number}/download', name: 'app_document_version_download', requirements: ['id' => '\d+', 'number' => '\d+'], methods: ['GET'])]
     #[IsGranted(PortalVoter::DOCUMENT_VIEW, subject: 'document')]
-    public function downloadVersion(Document $document, int $number, Request $request, #[CurrentUser] User $user): Response
+    public function downloadVersion(Document $document, int $number, Request $request, #[CurrentUser] ?User $user): Response
     {
         $version = $document->findVersion($number) ?? throw $this->createNotFoundException('Версия не найдена.');
 
@@ -199,7 +199,7 @@ final class DocumentController extends AbstractController
 
     #[Route('/{id}/versions/{number}', name: 'app_document_version', requirements: ['id' => '\d+', 'number' => '\d+'], methods: ['GET'])]
     #[IsGranted(PortalVoter::DOCUMENT_VIEW, subject: 'document')]
-    public function version(Document $document, int $number, #[CurrentUser] User $user): Response
+    public function version(Document $document, int $number, #[CurrentUser] ?User $user): Response
     {
         $version = $document->findVersion($number) ?? throw $this->createNotFoundException('Версия не найдена.');
         if ($version->isFile()) {
@@ -310,7 +310,7 @@ final class DocumentController extends AbstractController
         ]);
     }
 
-    private function serveVersion(Document $document, DocumentVersion $version, Request $request, User $user): Response
+    private function serveVersion(Document $document, DocumentVersion $version, Request $request, ?User $user): Response
     {
         if ($version->isPage()) {
             // Страницу отдаём как HTML-файл.
@@ -339,7 +339,7 @@ final class DocumentController extends AbstractController
         return $response;
     }
 
-    private function trackView(Document $document, Request $request, User $user): void
+    private function trackView(Document $document, Request $request, ?User $user): void
     {
         $session = $request->getSession();
         $key = 'viewed_doc_'.$document->getId();

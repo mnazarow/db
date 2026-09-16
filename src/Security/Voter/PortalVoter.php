@@ -53,7 +53,12 @@ final class PortalVoter extends Voter
     {
         $user = $token->getUser();
         if (!$user instanceof User) {
-            return false;
+            // Гость: только просмотр разделов и открытых опубликованных документов.
+            return match ($attribute) {
+                self::SECTION_VIEW => true,
+                self::DOCUMENT_VIEW => $this->access->canViewDocument(null, $subject),
+                default => false,
+            };
         }
 
         return match ($attribute) {

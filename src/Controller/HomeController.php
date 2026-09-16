@@ -27,37 +27,42 @@ final class HomeController extends AbstractController
     ) {
     }
 
+    /**
+     * Главная: дерево разделов и недавние документы. Гость (без входа) видит только открытые
+     * опубликованные документы; доступ гостей регулируется настройками (GuestAccessSubscriber).
+     */
     #[Route('/', name: 'app_home', methods: ['GET'])]
-    public function index(#[CurrentUser] User $user): Response
+    public function index(#[CurrentUser] ?User $user): Response
     {
+        $guest = null === $user;
         $tree = $this->sections->findAllTree();
-        $counts = self::subtreeCounts($tree, $this->documents->countPerSection());
-        $managedIds = $this->access->managedSectionIds($user);
-        $isModerator = $this->access->isModerator($user);
+        $counts = self::subtreeCounts($tree, $this->documents->countPerSection($guest));
+        $managedIds = $guest ? [] : $this->access->managedSectionIds($user);
+        $isModerator = !$guest && $this->access->isModerator($user);
 
         return $this->render('home/index.html.twig', [
             'roots' => array_values(array_filter($tree, static fn (Section $s) => null === $s->getParent())),
             'tree' => $tree,
             'counts' => $counts,
-            'recent' => $this->documents->findRecentPublished(8),
+            'recent' => $this->documents->findRecentPublished(8, $guest),
             'expiring' => $isModerator ? $this->stats->expiring($managedIds, 8) : [],
             'drafts' => $isModerator ? $this->documents->findDrafts($managedIds, 6) : [],
             'is_moderator' => $isModerator,
-            'total_published' => $this->documents->countByStatus()[Document::STATUS_PUBLISHED],
+            'total_published' => $this->documents->countByStatus(null, $guest)[Document::STATUS_PUBLISHED],
         ]);
     }
 
     #[Route('/search', name: 'app_search', methods: ['GET'])]
-    public function search(Request $request, #[CurrentUser] User $user): Response
+    public function search(Request $request, #[CurrentUser] ?User $user): Response
     {
         $q = trim((string) $request->query->get('q', ''));
         $sectionId = $request->query->getInt('section');
         $section = $sectionId > 0 ? $this->sections->find($sectionId) : null;
         $results = [];
         if (mb_strlen($q) >= 2) {
-            $statuses = $this->access->isModerator($user) ? Document::STATUSES : [Document::STATUS_PUBLISHED];
-            $results = $this->documents->search($q, $statuses, $section);
-            // Черновики и архив видны только тем, кто управляет разделом.
+            $statuses = null !== $user && $this->access->isModerator($user) ? Document::STATUSES : [Document::STATUS_PUBLISHED];
+            $results = $this->documents->search($q, $statuses, $section, 100, null === $user);
+            // Черновики и архив видны только тем, кто управляет разделом; гостям — только открытые документы.
             $results = array_values(array_filter($results, fn (Document $d) => $this->access->canViewDocument($user, $d)));
         }
 

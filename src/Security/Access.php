@@ -17,6 +17,8 @@ use App\Repository\SectionRepository;
  * - Модератор раздела управляет разделом, его подразделами и документами в них
  *   (создание/изменение/публикация/удаление документов, создание подразделов).
  * - Обычный пользователь читает опубликованные документы во всех разделах.
+ * - Гость (без входа) читает опубликованные открытые документы, если гостевой доступ разрешён
+ *   настройками портала (режим и список сетей проверяет GuestAccessSubscriber).
  */
 final class Access
 {
@@ -73,10 +75,14 @@ final class Access
         return null !== $user && ($user->isAdmin() || [] !== $this->moderatedSectionIds($user));
     }
 
+    /**
+     * Гость (без входа) видит только опубликованные открытые документы; сотрудник — все опубликованные;
+     * модератор раздела и администратор — также черновики и архив своих разделов.
+     */
     public function canViewDocument(?User $user, Document $document): bool
     {
         if (null === $user) {
-            return false;
+            return $document->isPublished() && $document->isPublic();
         }
         if ($document->isPublished()) {
             return true;

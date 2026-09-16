@@ -33,6 +33,9 @@ class DocumentEvent
     public const DELETE = 'delete';
     public const EXPIRY_NOTICE = 'expiry_notice';
 
+    /** Имя, под которым в журнале записываются просмотры и скачивания без входа. */
+    public const GUEST_NAME = 'Гость';
+
     public const LABELS = [
         self::VIEW => 'Просмотр',
         self::DOWNLOAD => 'Скачивание',
@@ -90,7 +93,8 @@ class DocumentEvent
         $this->document = $document;
         $this->type = $type;
         $this->user = $user;
-        $this->actorName = $user?->getDisplayName();
+        // Просмотры и скачивания без входа записываются как «Гость»; события без пользователя иных типов — системные.
+        $this->actorName = $user?->getDisplayName() ?? (\in_array($type, [self::VIEW, self::DOWNLOAD], true) ? self::GUEST_NAME : null);
         $this->version = $version;
         $this->ip = null === $ip ? null : mb_substr($ip, 0, 45);
         $this->details = $details;

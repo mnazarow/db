@@ -118,8 +118,15 @@ final class PortalAuthenticator extends AbstractLoginFormAuthenticator
 
     public function onAuthenticationSuccess(Request $request, TokenInterface $token, string $firewallName): ?Response
     {
-        if ($target = $this->getTargetPath($request->getSession(), $firewallName)) {
-            return new RedirectResponse($target);
+        $target = $this->getTargetPath($request->getSession(), $firewallName);
+        if (null !== $target && '' !== $target) {
+            $this->removeTargetPath($request->getSession(), $firewallName);
+            $user = $token->getUser();
+            // Страницу панели администратора после входа показываем только администратору.
+            $adminPage = str_contains((string) parse_url($target, \PHP_URL_PATH), '/admin');
+            if (!$adminPage || ($user instanceof User && $user->isAdmin())) {
+                return new RedirectResponse($target);
+            }
         }
 
         return new RedirectResponse($this->urlGenerator->generate('app_home'));

@@ -4,7 +4,40 @@
 {% block admin_title %}Настройки{% endblock %}
 
 {% block admin_body %}
-<div class="alert alert--info">Значения задаются в файле <code>.env.local</code> на сервере (или в <code>docker/.env</code>); после изменения выполните <code>docportal console cache:clear</code>. Здесь настройки только просматриваются и проверяются.</div>
+<div class="grid grid--two">
+    <div class="card card--form">
+        <div class="card__head"><h2 class="h-section">Просмотр без входа</h2>
+            {% if guest.mode == 'off' %}<span class="badge badge--none"><span class="badge__dot"></span>Выключен</span>
+            {% elseif guest.mode == 'ip' %}<span class="badge badge--soon"><span class="badge__dot"></span>Только с указанных адресов</span>
+            {% else %}<span class="badge badge--done"><span class="badge__dot"></span>Разрешён отовсюду</span>{% endif %}</div>
+        <p>Гости (без входа в портал) видят дерево разделов и <b>открытые</b> опубликованные документы. Внутренние документы, черновики и архив доступны только после входа. Здесь можно ограничить просмотр без входа адресами корпоративной сети или выключить его совсем.</p>
+        <form method="post" action="{{ path('admin_settings_guest_access') }}" class="form">
+            <input type="hidden" name="_token" value="{{ csrf_token('settings') }}">
+            <div class="form-row">
+                <span class="form-label">Режим</span>
+                <div class="choice-list">
+                    {% for value, label in guest.modes %}
+                        <label class="form-check form-check--radio"><input type="radio" name="mode" value="{{ value }}" {{ guest.mode == value ? 'checked' }}><span>{{ label|slice(0, 1)|upper }}{{ label|slice(1) }}</span></label>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="guest-networks">Разрешённые IP-адреса и подсети</label>
+                <textarea class="form-control" id="guest-networks" name="networks" rows="5" placeholder="192.168.10.0/24&#10;10.0.0.0/8&#10;172.16.5.20">{{ guest.networks|join("\n") }}</textarea>
+                <div class="form-help">По одному адресу или подсети (CIDR) в строке; поддерживаются IPv4 и IPv6. Используются в режиме «только с указанных IP-адресов и подсетей». Ваш текущий адрес: <code>{{ guest.client_ip }}</code>{% if guest.mode == 'ip' %} — {{ guest.client_allowed ? 'входит в список' : 'НЕ входит в список' }}{% endif %}. Если портал стоит за прокси, укажите его в <code>TRUSTED_PROXIES</code>, иначе все посетители будут видны с адреса прокси.</div>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn--pill btn--small">Сохранить</button>
+            </div>
+        </form>
+    </div>
+    <div class="card card--info">
+        <h2 class="h-section">Как это работает</h2>
+        <p>Открытый документ — флажок «Открытый документ» в карточке (включён по умолчанию для всех документов, в том числе импортированных). Снимите его у документов только для сотрудников — они станут <b>внутренними</b> и будут показываться только после входа.</p>
+        <p>Гость, которому просмотр без входа не разрешён (выключен или адрес вне списка), при открытии любой страницы попадает на форму входа. Вход по логину и паролю, панель администратора, работа модераторов и внутренние документы от режима не зависят.</p>
+        <p>Просмотры и скачивания гостей учитываются в статистике под именем «Гость». Остальные параметры ниже задаются в файле <code>.env.local</code> на сервере (или в <code>docker/.env</code>); после их изменения выполните <code>docportal console cache:clear</code>.</p>
+    </div>
+</div>
 <div class="grid grid--two">
     <div class="card">
         <div class="card__head"><h2 class="h-section">Active Directory / LDAP</h2>

@@ -31,14 +31,14 @@
             </span>
         </a>
 
-        {% if app.user %}
-            {% set route = app.request.attributes.get('_route') ?? '' %}
+        {% set route = app.request.attributes.get('_route') ?? '' %}
+        {% if route != 'app_login' %}
             <nav class="site-nav" aria-label="Основная навигация">
                 <a class="site-nav__link {{ route in ['app_home', 'app_section_show'] or route starts with 'app_document' ? 'is-active' }}" href="{{ path('app_home') }}">Документы</a>
-                {% if is_granted('MODERATOR') %}
+                {% if app.user and is_granted('MODERATOR') %}
                     <a class="site-nav__link {{ route == 'app_document_new' ? 'is-active' }}" href="{{ path('app_document_new') }}">Добавить документ</a>
                 {% endif %}
-                {% if is_granted('ROLE_ADMIN') %}
+                {% if app.user and is_granted('ROLE_ADMIN') %}
                     <a class="site-nav__link {{ route starts with 'admin_' ? 'is-active' }}" href="{{ path('admin_dashboard') }}">Панель администратора</a>
                 {% endif %}
             </nav>
@@ -47,7 +47,9 @@
                 <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
                 <input class="header-search__input" type="search" name="q" value="{{ app.request.query.get('q') }}" placeholder="Поиск…" aria-label="Поиск документов" autocomplete="off">
             </form>
+        {% endif %}
 
+        {% if app.user %}
             <div class="site-header__user">
                 {% if app.user.local %}
                     <a class="user-chip" href="{{ path('app_password_change') }}" title="Сменить пароль">
@@ -64,6 +66,17 @@
                 </form>
             </div>
 
+        {% elseif route != 'app_login' %}
+            <div class="site-header__user site-header__user--guest">
+                <span class="user-chip user-chip--guest" title="Вы просматриваете открытые документы без входа">
+                    <span class="user-chip__avatar" aria-hidden="true">Г</span>
+                    <span class="user-chip__name">Гость</span>
+                    <span class="user-chip__role">открытые документы</span>
+                </span>
+                <a class="btn btn--pill btn--small" href="{{ path('app_login') }}">Войти</a>
+            </div>
+        {% endif %}
+        {% if route != 'app_login' %}
             <button class="nav-toggle" type="button" aria-label="Открыть меню" aria-expanded="false" data-nav-toggle>
                 <span></span><span></span><span></span>
             </button>

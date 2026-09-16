@@ -73,6 +73,8 @@ abstract class PortalTestCase extends WebTestCase
         $code = $app->run(new ArrayInput(['command' => 'app:demo:load', '--no-events' => true, '--force' => true]), $out);
         self::assertSame(0, $code, $out->fetch());
         $em->clear();
+        // Настройки портала кэшируются (cache.app) — после пересоздания схемы кэш должен быть пустым.
+        static::getContainer()->get('cache.app')->clear();
     }
 
     protected function em(): EntityManagerInterface

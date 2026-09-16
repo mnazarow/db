@@ -14,6 +14,7 @@
                 <div>
                     <div class="doc-head__badges">
                         {{ m.status_badge(document) }}
+                        {% if app.user and not document.public %}{{ m.access_badge(document) }}{% endif %}
                         {{ m.validity_badge(document, true) }}
                         {% if document.code %}<span class="badge badge--code">{{ document.code }}</span>{% endif %}
                     </div>
@@ -135,6 +136,7 @@
                     <div><dt>Раздел</dt><dd><a href="{{ path('app_section_show', {id: document.section.id}) }}">{{ document.section.fullName }}</a></dd></div>
                     {% if document.code %}<div><dt>Обозначение</dt><dd>{{ document.code }}</dd></div>{% endif %}
                     <div><dt>Актуальность</dt><dd>{{ document|validity_text|capitalize }}</dd></div>
+                    {% if app.user %}<div><dt>Доступ</dt><dd>{{ document.public ? 'открытый — читается без входа в портал' : 'внутренний — только для сотрудников после входа' }}</dd></div>{% endif %}
                     <div><dt>Создан</dt><dd>{{ document.createdAt|date('d.m.Y') }}{% if document.owner %} · {{ document.owner.displayName }}{% endif %}</dd></div>
                     {% if document.publishedAt %}<div><dt>Опубликован</dt><dd>{{ document.publishedAt|date('d.m.Y H:i') }}</dd></div>{% endif %}
                     <div><dt>Обновлён</dt><dd>{{ document.updatedAt|date('d.m.Y H:i') }}</dd></div>

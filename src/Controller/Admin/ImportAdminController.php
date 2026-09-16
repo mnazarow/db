@@ -185,6 +185,7 @@ final class ImportAdminController extends AbstractController
             'update' => $defaults ? (bool) $bag->get('update', true) : $bag->has('update'),
             'delete_source' => $defaults ? (bool) $bag->get('delete_source', false) : $bag->has('delete_source'),
             'any_extension' => $defaults ? (bool) $bag->get('any_extension', false) : $bag->has('any_extension'),
+            'public' => $defaults ? (bool) $bag->get('public', true) : $bag->has('public'),
         ];
     }
 
@@ -229,6 +230,7 @@ final class ImportAdminController extends AbstractController
             deleteSource: (bool) $values['delete_source'],
             anyExtension: (bool) $values['any_extension'],
             removeRootIfEmpty: (bool) $values['delete_source'] && '' !== $folder,
+            publicAccess: (bool) $values['public'],
         )];
     }
 

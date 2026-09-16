@@ -275,6 +275,7 @@ p { margin: 0 0 12px; }
 .bullets li { margin-bottom: 6px; }
 .bullets--small { font-size: 13px; }
 .tag { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--blue-pale); color: var(--blue); margin-left: 6px; vertical-align: middle; }
+.tag--internal { background: var(--blue); color: #fff; letter-spacing: .02em; }
 
 /* --- Hero ---------------------------------------------------------------------- */
 .hero { padding: 48px 0 24px; }

@@ -266,6 +266,7 @@ final class DirectoryImporter
         $document = (new Document($section))
             ->setTitle(DirectoryScanner::documentTitle($entry['name']))
             ->setType(Document::TYPE_FILE)
+            ->setPublic($options->publicAccess)
             ->setValidUntil($options->validityMonths > 0 ? $this->validity->today()->modify('+'.$options->validityMonths.' months') : null);
         $this->documentManager->createFromPath($document, $abs, $entry['name'], 'Импорт из каталога: '.$source, $actor, $options->publish, $options->deleteSource, $options->anyExtension, ['import' => $abs]);
 

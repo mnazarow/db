@@ -46,6 +46,7 @@ final class ImportDirectoryCommand extends Command
             ->addOption('user', 'u', InputOption::VALUE_REQUIRED, 'Логин пользователя, от имени которого создаются разделы и документы (по умолчанию — первый администратор)')
             ->addOption('root-as-section', 'r', InputOption::VALUE_NONE, 'Создать раздел с именем самого каталога (иначе его содержимое попадает прямо в целевой раздел)')
             ->addOption('draft', null, InputOption::VALUE_NONE, 'Импортировать как черновики (по умолчанию документы сразу публикуются)')
+            ->addOption('internal', null, InputOption::VALUE_NONE, 'Создавать внутренние документы (видны только после входа); по умолчанию — открытые')
             ->addOption('validity', null, InputOption::VALUE_REQUIRED, 'Срок актуальности в месяцах от сегодня; 0 — бессрочно (по умолчанию DEFAULT_VALIDITY_MONTHS)')
             ->addOption('no-update', null, InputOption::VALUE_NONE, 'Не загружать новые версии для изменившихся файлов, которые уже есть в разделе')
             ->addOption('delete-source', null, InputOption::VALUE_NONE, 'Удалять исходные файлы после успешного импорта (перенос) и опустевшие папки')
@@ -111,6 +112,7 @@ HELP);
             updateExisting: !$input->getOption('no-update'),
             deleteSource: (bool) $input->getOption('delete-source'),
             anyExtension: (bool) $input->getOption('any-extension'),
+            publicAccess: !$input->getOption('internal'),
         );
 
         try {
@@ -129,6 +131,7 @@ HELP);
             ['Раздел по имени каталога' => $options->rootAsSection ? 'да («'.$plan->label.'»)' : 'нет'],
             ['От имени' => $actor->getDisplayName().' ('.$actor->getUsername().')'],
             ['Статус документов' => $options->publish ? 'опубликованы' : 'черновики'],
+            ['Доступ' => $options->publicAccess ? 'открытые (читаются без входа)' : 'внутренние (только после входа)'],
             ['Срок актуальности' => $options->validityMonths > 0 ? $options->validityMonths.' мес.' : 'бессрочно'],
             ['Изменившиеся файлы' => $options->updateExisting ? 'новая версия' : 'пропускаются'],
             ['Исходные файлы' => $options->deleteSource ? 'удаляются после импорта' : 'остаются на месте'],

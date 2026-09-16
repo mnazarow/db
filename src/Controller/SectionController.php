@@ -37,8 +37,9 @@ final class SectionController extends AbstractController
     }
 
     #[Route('/{id}', name: 'app_section_show', requirements: ['id' => '\d+'], methods: ['GET'])]
-    public function show(Section $section, Request $request, #[CurrentUser] User $user): Response
+    public function show(Section $section, Request $request, #[CurrentUser] ?User $user): Response
     {
+        $guest = null === $user;
         $canManage = $this->access->canManageSection($user, $section);
         $filter = (string) $request->query->get('status', $canManage ? 'all' : 'published');
         $sort = (string) $request->query->get('sort', 'title');
@@ -53,14 +54,14 @@ final class SectionController extends AbstractController
             $filter = 'published';
         }
         $tree = $this->sections->findAllTree();
-        $counts = HomeController::subtreeCounts($tree, $this->documents->countPerSection());
-        $byStatus = $this->documents->countByStatus([(int) $section->getId()]);
+        $counts = HomeController::subtreeCounts($tree, $this->documents->countPerSection($guest));
+        $byStatus = $this->documents->countByStatus([(int) $section->getId()], $guest);
 
         return $this->render('section/show.html.twig', [
             'section' => $section,
             'children' => $section->getChildren(),
             'counts' => $counts,
-            'documents' => $this->documents->findBySection($section, $statuses, $sort),
+            'documents' => $this->documents->findBySection($section, $statuses, $sort, $guest),
             'filter' => $filter,
             'sort' => $sort,
             'by_status' => $byStatus,

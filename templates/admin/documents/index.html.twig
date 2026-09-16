@@ -27,6 +27,9 @@
             <option value="">Любая актуальность</option>
             {% for value, label in {expired: 'Просрочены', soon: 'Истекают', valid: 'Актуальны', none: 'Бессрочные'} %}<option value="{{ value }}" {{ filters.validity == value ? 'selected' }}>{{ label }}</option>{% endfor %}
         </select>
+        <select class="form-control form-control--inline" name="access" aria-label="Доступ">
+            <option value="">Любой доступ</option><option value="public" {{ filters.access == 'public' ? 'selected' }}>Открытые (без входа)</option><option value="internal" {{ filters.access == 'internal' ? 'selected' }}>Внутренние (после входа)</option>
+        </select>
         <select class="form-control form-control--inline" name="owner" aria-label="Ответственный">
             <option value="">Любой ответственный</option>
             {% for u in owners %}<option value="{{ u.id }}" {{ filters.owner and filters.owner.id == u.id ? 'selected' }}>{{ u.displayName }}</option>{% endfor %}

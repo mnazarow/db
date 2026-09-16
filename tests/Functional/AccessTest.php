@@ -12,9 +12,45 @@ use App\Tests\PortalTestCase;
  */
 final class AccessTest extends PortalTestCase
 {
-    public function testAnonymousIsRedirectedToLogin(): void
+    public function testGuestSeesOpenDocumentsOnly(): void
     {
-        $this->client->request('GET', '/');
+        // Гостевой доступ по умолчанию разрешён: дерево разделов и открытые опубликованные документы.
+        $crawler = $this->client->request('GET', '/');
+        self::assertResponseIsSuccessful();
+        self::assertSelectorTextContains('.h-display', 'Портал документации');
+        self::assertSelectorExists('.section-card');
+        self::assertSelectorExists('a[href="/login"]');
+        self::assertSelectorNotExists('.site-nav__link[href="/documents/new"]');
+        self::assertStringNotContainsString('Приказ о графике отпусков на 2026', $crawler->text(), 'внутренний документ не показывается гостю');
+
+        $public = $this->document('ИТ-РМ-002');
+        self::assertTrue($public->isPublic());
+        $this->client->request('GET', '/documents/'.$public->getId());
+        self::assertResponseIsSuccessful();
+        self::assertSelectorNotExists('.card--actions');
+        $this->client->request('GET', '/documents/'.$public->getId().'/download');
+        self::assertResponseIsSuccessful();
+        $this->client->request('GET', '/sections/'.$public->getSection()->getId());
+        self::assertResponseIsSuccessful();
+        $crawler = $this->client->request('GET', '/search?q=ИТ-РМ-002');
+        self::assertResponseIsSuccessful();
+        self::assertGreaterThan(0, $crawler->filter('.doc-table__title')->count());
+
+        // Внутренний документ, черновик и все действия — только после входа.
+        $internal = $this->document('ПР-2026-01');
+        self::assertFalse($internal->isPublic());
+        $this->client->request('GET', '/documents/'.$internal->getId());
+        self::assertResponseRedirects('/login');
+        $crawler = $this->client->request('GET', '/search?q=ПР-2026-01');
+        self::assertSame(0, $crawler->filter('.doc-table__title')->count(), 'внутренний документ не находится поиском без входа');
+        $draft = $this->document('ИБ-003');
+        $this->client->request('GET', '/documents/'.$draft->getId());
+        self::assertResponseRedirects('/login');
+        foreach (['/admin', '/documents/new', '/documents/'.$public->getId().'/edit', '/documents/'.$public->getId().'/stats', '/sections/'.$public->getSection()->getId().'/new', '/profile/password'] as $url) {
+            $this->client->request('GET', $url);
+            self::assertResponseRedirects('/login', null, $url);
+        }
+        $this->client->request('POST', '/documents/'.$public->getId().'/publish');
         self::assertResponseRedirects('/login');
         $this->client->request('GET', '/health');
         self::assertResponseIsSuccessful();

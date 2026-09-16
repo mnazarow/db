@@ -51,11 +51,12 @@ final class DocumentAdminController extends AbstractController
         $response = new StreamedResponse(function () use ($documents): void {
             $out = fopen('php://output', 'w');
             fwrite($out, "\xEF\xBB\xBF"); // BOM для Excel
-            fputcsv($out, ['ID', 'Обозначение', 'Название', 'Раздел', 'Вид', 'Статус', 'Версия', 'Актуален до', 'Состояние', 'Владелец', 'Создан', 'Обновлён', 'Просмотры', 'Скачивания', 'Теги'], ';');
+            fputcsv($out, ['ID', 'Обозначение', 'Название', 'Раздел', 'Вид', 'Статус', 'Доступ', 'Версия', 'Актуален до', 'Состояние', 'Владелец', 'Создан', 'Обновлён', 'Просмотры', 'Скачивания', 'Теги'], ';');
             foreach ($documents as $d) {
                 fputcsv($out, [
                     $d->getId(), $d->getCode(), $d->getTitle(), $d->getSection()->getFullName(),
                     AppExtension::TYPE_LABELS[$d->getType()] ?? $d->getType(), AppExtension::STATUS_LABELS[$d->getStatus()] ?? $d->getStatus(),
+                    $d->isPublic() ? 'открытый' : 'внутренний',
                     $d->getCurrentVersion()?->getNumber(), $d->getValidUntil()?->format('d.m.Y'),
                     Validity::LABELS[$this->validity->stateOf($d)], $d->getOwner()?->getDisplayName(),
                     $d->getCreatedAt()->format('d.m.Y H:i'), $d->getUpdatedAt()->format('d.m.Y H:i'),
@@ -81,6 +82,7 @@ final class DocumentAdminController extends AbstractController
             'type' => $request->query->get('type') ?: null,
             'validity' => $request->query->get('validity') ?: null,
             'owner' => $ownerId > 0 ? $this->users->find($ownerId) : null,
+            'access' => \in_array($request->query->get('access'), ['public', 'internal'], true) ? $request->query->get('access') : null,
             'q' => $request->query->get('q') ?: null,
         ];
         $sort = (string) $request->query->get('sort', 'updated');

@@ -22,6 +22,10 @@ parameters:
     # Пароли локальных пользователей.
     app.password_min_length: '%env(int:PASSWORD_MIN_LENGTH)%'
 
+    # Начальный режим гостевого доступа (all | ip | off); текущее значение хранится в таблице setting.
+    app.guest_access_default: '%env(GUEST_ACCESS_DEFAULT)%'
+    env(GUEST_ACCESS_DEFAULT): 'all'
+
     # Почта.
     app.mail_from: '%env(MAIL_FROM)%'
     app.notify_admins: '%env(bool:NOTIFY_ADMINS)%'
@@ -59,6 +63,7 @@ services:
             int $expirySoonDays: '%app.expiry_soon_days%'
             int $defaultValidityMonths: '%app.default_validity_months%'
             int $passwordMinLength: '%app.password_min_length%'
+            string $defaultGuestMode: '%app.guest_access_default%'
             string $mailFrom: '%app.mail_from%'
             bool $notifyAdmins: '%app.notify_admins%'
             string $timezone: '%app.timezone%'

@@ -7,7 +7,7 @@
 #    sudo ./deploy/install.sh --domain docs.example.ru --ssl-email admin@example.ru
 #    sudo ./deploy/install.sh --domain docs.example.ru --ldap-host dc1.example.local --ldap-base-dn "DC=example,DC=local" --ldap-upn-suffix example.local
 #    sudo ./deploy/install.sh --mode docker --port 8080      # установка в Docker
-#    sudo ./deploy/install.sh --archive docportal-1.1.0.tar.gz --yes
+#    sudo ./deploy/install.sh --archive docportal-1.2.0.tar.gz --yes
 #
 #  Полный список параметров: ./deploy/install.sh --help
 # =============================================================================

@@ -79,6 +79,23 @@ with sync_playwright() as p:
     page.on('response', lambda r: errors.append(f'HTTP {r.status} {r.url}') if r.status >= 500 else None)
     page.on('dialog', lambda d: d.accept())
 
+    # 0. Гость (без входа): дерево разделов и открытые документы, внутренние — только после входа
+    page.goto(BASE + '/')
+    expect(page.locator('.section-card').first).to_be_visible()
+    expect(page.locator('.user-chip--guest')).to_be_visible()
+    shot(page, '00-guest-home')
+    page.goto(BASE + '/search?q=ИТ-РМ-002')
+    guest_doc = page.locator('.doc-table__title').first.get_attribute('href')
+    page.goto(BASE + guest_doc)
+    expect(page.locator('.h-display')).to_be_visible()
+    assert page.locator('.card--actions').count() == 0, 'guest must not see moderator actions'
+    shot(page, '00-guest-document', full=False)
+    page.goto(BASE + '/search?q=ПР-2026-01')
+    assert page.locator('.doc-table__title').count() == 0, 'internal document must be hidden from guests'
+    page.goto(BASE + '/admin')
+    expect(page).to_have_url(BASE + '/login')
+    print('guest ok')
+
     # 1. Вход
     page.goto(BASE + '/login')
     shot(page, '01-login', full=False)
@@ -250,6 +267,15 @@ with sync_playwright() as p:
     shot(page, '38-admin-events', full=False)
     page.goto(BASE + '/admin/settings')
     shot(page, '39-admin-settings')
+    # гостевой доступ: ограничение по подсетям и возврат режима «отовсюду»
+    page.check('input[name=mode][value=ip]')
+    page.fill('#guest-networks', '10.0.0.0/8\n192.168.0.0/16')
+    page.click('form[action$="/guest-access"] button[type=submit]')
+    expect(page.locator('.alert--success').first).to_contain_text('гостевого доступа')
+    shot(page, '39-admin-settings-guest', full=False)
+    page.check('input[name=mode][value=all]')
+    page.click('form[action$="/guest-access"] button[type=submit]')
+    expect(page.locator('.alert--success').first).to_contain_text('любых адресов')
     page.click('form[action$="/ldap-test"] button')
     expect(page.locator('.alert--danger').first).to_contain_text('LDAP')
     page.click('form[action$="/expiry-run"] button')
