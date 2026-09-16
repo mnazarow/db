@@ -35,6 +35,9 @@ final class LoginSuccessSubscriber implements EventSubscriberInterface
 
     public function onLoginSuccess(LoginSuccessEvent $event): void
     {
+        if ('api' === $event->getFirewallName()) {
+            return; // обращения по ключу API — не вход пользователя; учёт ведётся в самом ключе (последний запрос, счётчик)
+        }
         $user = $event->getUser();
         if ($user instanceof User) {
             $user->setLastLoginAt(new \DateTimeImmutable());
@@ -53,6 +56,11 @@ final class LoginSuccessSubscriber implements EventSubscriberInterface
 
     public function onLoginFailure(LoginFailureEvent $event): void
     {
+        if ('api' === $event->getFirewallName()) {
+            $this->auditLogger->warning('Отклонён запрос к API: неверный или отключённый ключ', ['ip' => $event->getRequest()->getClientIp(), 'path' => $event->getRequest()->getPathInfo()]);
+
+            return;
+        }
         $passport = $event->getPassport();
         $badge = null !== $passport && $passport->hasBadge(UserBadge::class) ? $passport->getBadge(UserBadge::class) : null;
         $identifier = $badge instanceof UserBadge ? $badge->getUserIdentifier() : (string) $event->getRequest()->request->get('_username', '');

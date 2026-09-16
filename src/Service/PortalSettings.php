@@ -37,6 +37,33 @@ final class PortalSettings
         self::GUEST_OFF => 'выключен — для просмотра нужно войти',
     ];
 
+    // Интеграции: webhook об изменениях документов и описания через внешнюю LLM.
+    public const WEBHOOK_URL = 'webhook.url';
+    public const WEBHOOK_SECRET = 'webhook.secret';
+    public const WEBHOOK_ENABLED = 'webhook.enabled';
+
+    public const LLM_ENABLED = 'llm.enabled';
+    public const LLM_BASE_URL = 'llm.base_url';
+    public const LLM_API_KEY = 'llm.api_key';
+    public const LLM_MODEL = 'llm.model';
+    public const LLM_PROMPT = 'llm.prompt';
+    public const LLM_MAX_INPUT_CHARS = 'llm.max_input_chars';
+    public const LLM_TIMEOUT = 'llm.timeout';
+    public const LLM_AUTO_DESCRIBE = 'llm.auto_describe';
+    public const LLM_TEMPERATURE = 'llm.temperature';
+
+    public const LLM_DEFAULT_BASE_URL = 'https://api.openai.com/v1';
+    public const LLM_DEFAULT_MODEL = 'gpt-4o-mini';
+    public const LLM_DEFAULT_MAX_INPUT_CHARS = 12000;
+    public const LLM_DEFAULT_TIMEOUT = 60;
+    public const LLM_DEFAULT_TEMPERATURE = 0.2;
+    public const LLM_DEFAULT_PROMPT = <<<'PROMPT'
+        Ты помогаешь вести корпоративный портал документации. По названию, реквизитам и фрагменту текста документа составь его краткое описание на русском языке: 2–4 предложения, деловой стиль, без вступлений и оценок. Укажи, о чём документ, для кого он и какие ключевые вопросы охватывает. Не придумывай сведений, которых нет в тексте. Ответь только текстом описания.
+        PROMPT;
+
+    /** Настройки, значения которых не должны попадать в журнал. */
+    private const SECRET_NAMES = [self::WEBHOOK_SECRET, self::LLM_API_KEY];
+
     private const CACHE_KEY = 'portal_settings';
 
     /** @var array<string, mixed>|null */
@@ -81,7 +108,136 @@ final class PortalSettings
         $this->em->flush();
         $this->cache->delete(self::CACHE_KEY);
         $this->values = null;
-        $this->auditLogger->info('Изменена настройка портала', ['name' => $name, 'value' => $value, 'by' => $by?->getUsername()]);
+        $this->auditLogger->info('Изменена настройка портала', ['name' => $name, 'value' => \in_array($name, self::SECRET_NAMES, true) ? self::mask((string) $value) : $value, 'by' => $by?->getUsername()]);
+    }
+
+    /** Сохраняет несколько настроек, сбрасывая кэш один раз. */
+    public function setMany(array $values, ?User $by = null): void
+    {
+        foreach ($values as $name => $value) {
+            $this->set((string) $name, $value, $by);
+        }
+    }
+
+    /** Скрывает секрет, оставляя первые и последние символы: sk-ab…wxyz. */
+    public static function mask(?string $secret): string
+    {
+        $secret = (string) $secret;
+        if ('' === $secret) {
+            return '';
+        }
+        if (mb_strlen($secret) <= 8) {
+            return str_repeat('•', mb_strlen($secret));
+        }
+
+        return mb_substr($secret, 0, 4).'…'.mb_substr($secret, -4);
+    }
+
+    // ---- Webhook -----------------------------------------------------------------------------------------
+
+    /** @return array{enabled: bool, url: string, secret: string} */
+    public function webhook(): array
+    {
+        $url = trim((string) $this->get(self::WEBHOOK_URL, ''));
+
+        return [
+            'enabled' => (bool) $this->get(self::WEBHOOK_ENABLED, false) && '' !== $url,
+            'url' => $url,
+            'secret' => (string) $this->get(self::WEBHOOK_SECRET, ''),
+        ];
+    }
+
+    /**
+     * @throws \InvalidArgumentException при некорректном адресе
+     */
+    public function setWebhook(bool $enabled, string $url, ?string $secret, ?User $by = null): void
+    {
+        $url = trim($url);
+        if ('' !== $url && (false === filter_var($url, \FILTER_VALIDATE_URL) || !preg_match('#^https?://#i', $url))) {
+            throw new \InvalidArgumentException('Адрес webhook должен начинаться с http:// или https://.');
+        }
+        if ($enabled && '' === $url) {
+            throw new \InvalidArgumentException('Укажите адрес webhook.');
+        }
+        $values = [self::WEBHOOK_ENABLED => $enabled, self::WEBHOOK_URL => $url];
+        if (null !== $secret) { // null — оставить прежний секрет
+            $values[self::WEBHOOK_SECRET] = trim($secret);
+        }
+        $this->setMany($values, $by);
+    }
+
+    // ---- LLM ---------------------------------------------------------------------------------------------
+
+    /**
+     * @return array{enabled: bool, base_url: string, api_key: string, model: string, prompt: string, max_input_chars: int, timeout: int, auto_describe: bool, temperature: float}
+     */
+    public function llm(): array
+    {
+        $baseUrl = rtrim(trim((string) $this->get(self::LLM_BASE_URL, self::LLM_DEFAULT_BASE_URL)), '/');
+        $prompt = trim((string) $this->get(self::LLM_PROMPT, ''));
+
+        return [
+            'enabled' => (bool) $this->get(self::LLM_ENABLED, false),
+            'base_url' => '' !== $baseUrl ? $baseUrl : self::LLM_DEFAULT_BASE_URL,
+            'api_key' => (string) $this->get(self::LLM_API_KEY, ''),
+            'model' => trim((string) $this->get(self::LLM_MODEL, self::LLM_DEFAULT_MODEL)) ?: self::LLM_DEFAULT_MODEL,
+            'prompt' => '' !== $prompt ? $prompt : self::LLM_DEFAULT_PROMPT,
+            'max_input_chars' => max(500, (int) $this->get(self::LLM_MAX_INPUT_CHARS, self::LLM_DEFAULT_MAX_INPUT_CHARS)),
+            'timeout' => max(5, min(600, (int) $this->get(self::LLM_TIMEOUT, self::LLM_DEFAULT_TIMEOUT))),
+            'auto_describe' => (bool) $this->get(self::LLM_AUTO_DESCRIBE, false),
+            'temperature' => (float) $this->get(self::LLM_TEMPERATURE, self::LLM_DEFAULT_TEMPERATURE),
+        ];
+    }
+
+    public function isLlmEnabled(): bool
+    {
+        return $this->llm()['enabled'];
+    }
+
+    /** Формировать ли описания автоматически при создании и импорте документов. */
+    public function isLlmAutoDescribe(): bool
+    {
+        $llm = $this->llm();
+
+        return $llm['enabled'] && $llm['auto_describe'];
+    }
+
+    /**
+     * @param array<string, mixed> $values ключи: enabled, base_url, api_key (null — не менять), model, prompt, max_input_chars, timeout, auto_describe, temperature
+     *
+     * @throws \InvalidArgumentException
+     */
+    public function setLlm(array $values, ?User $by = null): void
+    {
+        $baseUrl = rtrim(trim((string) ($values['base_url'] ?? self::LLM_DEFAULT_BASE_URL)), '/');
+        if ('' === $baseUrl) {
+            $baseUrl = self::LLM_DEFAULT_BASE_URL;
+        }
+        if (false === filter_var($baseUrl, \FILTER_VALIDATE_URL) || !preg_match('#^https?://#i', $baseUrl)) {
+            throw new \InvalidArgumentException('Адрес API LLM должен начинаться с http:// или https:// (например, https://api.openai.com/v1).');
+        }
+        $model = trim((string) ($values['model'] ?? ''));
+        if ('' === $model) {
+            throw new \InvalidArgumentException('Укажите название модели.');
+        }
+        $temperature = (float) str_replace(',', '.', (string) ($values['temperature'] ?? self::LLM_DEFAULT_TEMPERATURE));
+        if ($temperature < 0 || $temperature > 2) {
+            throw new \InvalidArgumentException('Температура должна быть в пределах от 0 до 2.');
+        }
+        $set = [
+            self::LLM_ENABLED => (bool) ($values['enabled'] ?? false),
+            self::LLM_BASE_URL => $baseUrl,
+            self::LLM_MODEL => mb_substr($model, 0, 128),
+            self::LLM_PROMPT => trim((string) ($values['prompt'] ?? '')),
+            self::LLM_MAX_INPUT_CHARS => max(500, min(400000, (int) ($values['max_input_chars'] ?? self::LLM_DEFAULT_MAX_INPUT_CHARS))),
+            self::LLM_TIMEOUT => max(5, min(600, (int) ($values['timeout'] ?? self::LLM_DEFAULT_TIMEOUT))),
+            self::LLM_AUTO_DESCRIBE => (bool) ($values['auto_describe'] ?? false),
+            self::LLM_TEMPERATURE => $temperature,
+        ];
+        if (\array_key_exists('api_key', $values) && null !== $values['api_key']) {
+            $set[self::LLM_API_KEY] = trim((string) $values['api_key']);
+        }
+        $this->setMany($set, $by);
     }
 
     public function guestMode(): string

@@ -3,7 +3,7 @@
 #  Обновление портала документации до новой версии одной командой.
 #
 #  Запускается из каталога НОВОЙ версии:   sudo ./deploy/update.sh
-#  или с указанием источника:              sudo docportal update --archive docportal-1.2.0.tar.gz
+#  или с указанием источника:              sudo docportal update --archive docportal-1.3.0.tar.gz
 #
 #  Порядок: резервная копия → новый релиз рядом с текущим → миграции → переключение →
 #  проверка работоспособности; при ошибке — автоматический откат на предыдущий релиз.
@@ -63,6 +63,9 @@ banner "обновление"
 if [[ -n "${ARCHIVE}" ]]; then
     [[ -f "${ARCHIVE}" ]] || die "Архив не найден: ${ARCHIVE}"
     CREATED_TMP=$(mktemp -d "/tmp/${APP_ID}-upd.XXXXXX")
+    # Распакованный архив удаляем при любом завершении (в том числе при отмене); при перезапуске
+    # из новой версии (exec ниже) ловушка не срабатывает — каталог удалит перезапущенный скрипт.
+    trap '[[ -n "${CREATED_TMP:-}" ]] && rm -rf "${CREATED_TMP}"' EXIT
     case "${ARCHIVE}" in
         *.tar.gz|*.tgz) tar -xzf "${ARCHIVE}" -C "${CREATED_TMP}" || die "Не удалось распаковать архив." ;;
         *.zip) require_cmd unzip; unzip -q "${ARCHIVE}" -d "${CREATED_TMP}" || die "Не удалось распаковать архив." ;;
@@ -78,6 +81,24 @@ elif [[ -z "${SOURCE_DIR}" ]]; then
 fi
 SOURCE_DIR="$(cd "${SOURCE_DIR}" && pwd)"
 is_project_dir "${SOURCE_DIR}" || die "Каталог «${SOURCE_DIR}» не похож на проект портала."
+
+# Скрипты обновления берём из НОВОЙ версии: при запуске «docportal update --archive …» этот файл
+# принадлежит установленной (старой) версии, а новая может содержать изменения в самих скриптах
+# (команда управления, задания cron, шаги обновления). Один раз перезапускаемся из нового каталога.
+if [[ -z "${DOCPORTAL_UPDATE_REEXEC:-}" && -f "${SOURCE_DIR}/deploy/update.sh" && -f "${SOURCE_DIR}/deploy/common.sh" \
+      && "$(cd "${SOURCE_DIR}/deploy" && pwd)" != "${SCRIPT_DIR}" ]]; then
+    REEXEC_ARGS=(--source "${SOURCE_DIR}" --keep "${KEEP_RELEASES}")
+    [[ "${ASSUME_YES}" == "1" ]] && REEXEC_ARGS+=(--yes)
+    [[ "${NO_BACKUP}" == "1" ]] && REEXEC_ARGS+=(--no-backup)
+    [[ "${NO_DB_ROLLBACK}" == "1" ]] && REEXEC_ARGS+=(--no-db-rollback)
+    export DOCPORTAL_UPDATE_REEXEC=1 DOCPORTAL_UPDATE_TMP="${CREATED_TMP}"
+    exec bash "${SOURCE_DIR}/deploy/update.sh" "${REEXEC_ARGS[@]}"
+fi
+# Временный каталог распакованного архива (из первого запуска) удаляем по завершении.
+if [[ -n "${DOCPORTAL_UPDATE_TMP:-}" && -z "${CREATED_TMP}" ]]; then
+    CREATED_TMP="${DOCPORTAL_UPDATE_TMP}"
+    trap '[[ -n "${CREATED_TMP:-}" ]] && rm -rf "${CREATED_TMP}"' EXIT
+fi
 NEW_VERSION=$(project_version "${SOURCE_DIR}")
 info "Текущая версия: ${APP_VERSION}; новая версия: ${NEW_VERSION}; источник: ${SOURCE_DIR}"
 if [[ "${INSTALL_MODE}" == "native" && "${SOURCE_DIR}" == "${APP_DIR}"/* ]]; then
@@ -192,6 +213,11 @@ if [[ "${INSTALL_MODE}" == "native" ]]; then
     nginx -t >>"${LOG_FILE}" 2>&1 && svc reload nginx || true
     health || die "Новая версия не отвечает."
     install_cli_wrapper && info "Команда управления ${APP_ID} обновлена."
+    ensure_cron_entries
+    # Извлечение текста из PDF (API, LLM) появилось в 1.3.0 — пакет poppler-utils ставим при обновлении, если его нет.
+    if ! command -v pdftotext >/dev/null 2>&1; then
+        pkg_install_optional poppler-utils && info "Установлен пакет poppler-utils (pdftotext)." || warn "Не удалось установить poppler-utils — текст из PDF извлекаться не будет (установите пакет вручную)."
+    fi
 
     # Удаление старых релизов
     mapfile -t old < <(ls -1dt "${APP_DIR}"/releases/*/ 2>/dev/null | tail -n +$((KEEP_RELEASES + 2)))

@@ -56,7 +56,7 @@ final class HomeController extends AbstractController
     public function search(Request $request, #[CurrentUser] ?User $user): Response
     {
         $q = trim((string) $request->query->get('q', ''));
-        $sectionId = $request->query->getInt('section');
+        $sectionId = (int) $request->query->get('section');
         $section = $sectionId > 0 ? $this->sections->find($sectionId) : null;
         $results = [];
         if (mb_strlen($q) >= 2) {

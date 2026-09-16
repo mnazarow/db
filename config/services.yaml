@@ -26,6 +26,9 @@ parameters:
     app.guest_access_default: '%env(GUEST_ACCESS_DEFAULT)%'
     env(GUEST_ACCESS_DEFAULT): 'all'
 
+    # Путь к pdftotext (poppler-utils) для извлечения текста из PDF; по умолчанию ищется в PATH.
+    env(PDFTOTEXT_BIN): 'pdftotext'
+
     # Почта.
     app.mail_from: '%env(MAIL_FROM)%'
     app.notify_admins: '%env(bool:NOTIFY_ADMINS)%'
@@ -69,6 +72,7 @@ services:
             string $timezone: '%app.timezone%'
             string $appName: '%app.name%'
             string $appCompany: '%app.company%'
+            string $appVersion: '%app.version%'
             string $projectDir: '%kernel.project_dir%'
             Psr\Log\LoggerInterface $auditLogger: '@monolog.logger.app_audit'
 
@@ -97,6 +101,26 @@ services:
             $adminGroup: '%app.ldap.admin_group%'
             $userGroup: '%app.ldap.user_group%'
 
+    # Извлечение текста из файлов документов (API для RAG, описания через LLM); кэш — в var/cache/<env>/doc-text.
+    App\Service\Text\TextExtractor:
+        arguments:
+            $cacheDir: '%kernel.cache_dir%/doc-text'
+            $pdftotextBin: '%env(PDFTOTEXT_BIN)%'
+
+    # Ключ API можно передать и заголовком X-Api-Key (кроме стандартного Authorization: Bearer …).
+    app.api_key_header_extractor:
+        class: Symfony\Component\Security\Http\AccessToken\HeaderAccessTokenExtractor
+        arguments:
+            $headerParameter: 'X-Api-Key'
+            $tokenType: ''
+
+    # Внешние HTTP-вызовы (LLM, webhook) идут через curl; в тестах — через записывающую заглушку.
+    App\Service\Http\HttpTransportInterface: '@App\Service\Http\CurlTransport'
+
+    App\Security\Api\ApiExceptionSubscriber:
+        arguments:
+            $debug: '%kernel.debug%'
+
     # Ограничитель попыток входа: «логин + IP» и отдельно «IP».
     app.login_rate_limiter:
         class: Symfony\Component\Security\Http\RateLimiter\DefaultLoginRateLimiter
@@ -104,3 +128,12 @@ services:
             $globalFactory: '@limiter.login_global'
             $localFactory: '@limiter.login_local'
             $secret: '%kernel.secret%'
+
+when@test:
+    services:
+        _defaults:
+            autowire: true
+            autoconfigure: true
+        App\Service\Http\RecordingTransport:
+            public: true
+        App\Service\Http\HttpTransportInterface: '@App\Service\Http\RecordingTransport'

@@ -73,6 +73,12 @@ free_mb=$(free_space_mb "${APP_DIR}")
 if [[ -n "${free_mb}" ]]; then
     if [[ ${free_mb} -lt 1024 ]]; then warn "Свободно на диске: ${free_mb} МБ (мало!)"; PROBLEMS=$((PROBLEMS + 1)); else ok "Свободно на диске: ${free_mb} МБ"; fi
 fi
+if [[ "${INSTALL_MODE}" == "native" ]]; then
+    if command -v pdftotext >/dev/null 2>&1; then ok "Извлечение текста из PDF (pdftotext): доступно"
+    else warn "pdftotext не найден — установите пакет poppler-utils, иначе API и описания через LLM не получат текст PDF-файлов"; fi
+    if [[ -f "/etc/cron.d/${APP_ID}" ]] && grep -q 'app:documents:describe' "/etc/cron.d/${APP_ID}"; then ok "Задания cron: проверка сроков, описания через LLM$(grep -q 'backup' "/etc/cron.d/${APP_ID}" && echo ', резервные копии')"
+    else warn "В /etc/cron.d/${APP_ID} нет задания app:documents:describe — обновите скриптами новой версии (update.sh)"; fi
+fi
 if [[ -d "${BACKUP_DIR}" ]]; then
     last=$(ls -1t "${BACKUP_DIR}"/${APP_ID}-backup-*.tar.gz 2>/dev/null | head -n1)
     if [[ -n "${last}" ]]; then ok "Последняя резервная копия: $(basename "${last}") ($(date -r "${last}" '+%d.%m.%Y %H:%M'))"; else warn "Резервных копий пока нет (${BACKUP_DIR})"; fi

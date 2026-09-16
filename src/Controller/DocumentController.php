@@ -16,6 +16,8 @@ use App\Security\Voter\PortalVoter;
 use App\Service\DiffService;
 use App\Service\DocumentManager;
 use App\Service\FileStorage;
+use App\Service\Llm\DocumentDescriber;
+use App\Service\Llm\LlmException;
 use App\Service\StatsService;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\Form\FormError;
@@ -44,6 +46,7 @@ final class DocumentController extends AbstractController
         private readonly Access $access,
         private readonly StatsService $stats,
         private readonly DiffService $diff,
+        private readonly DocumentDescriber $describer,
         private readonly int $defaultValidityMonths,
     ) {
     }
@@ -52,7 +55,7 @@ final class DocumentController extends AbstractController
     #[IsGranted(PortalVoter::MODERATOR)]
     public function new(Request $request, #[CurrentUser] User $user): Response
     {
-        $sectionId = $request->query->getInt('section');
+        $sectionId = (int) $request->query->get('section');
         $section = $sectionId > 0 ? $this->sections->find($sectionId) : null;
         if (null !== $section && !$this->access->canManageSection($user, $section)) {
             throw $this->createAccessDeniedException('Нет прав на добавление документов в этот раздел.');
@@ -94,6 +97,7 @@ final class DocumentController extends AbstractController
                         $request->getClientIp(),
                     );
                     $this->addFlash('success', $document->isPublished() ? 'Документ опубликован.' : 'Документ сохранён как черновик.');
+                    $this->autoDescribe($document, $user, $request);
 
                     return $this->redirectToRoute('app_document_show', ['id' => $document->getId()]);
                 } catch (\InvalidArgumentException|\RuntimeException $e) {
@@ -126,7 +130,38 @@ final class DocumentController extends AbstractController
             'inline' => null !== $current && $current->isFile() && FileStorage::isInlineViewable($current->getMimeType(), $current->getExtension()),
             'file_exists' => null !== $current && $current->isFile() ? $this->manager->getStorage()->exists($current) : true,
             'recent_events' => $canManage ? $this->events->findForDocument($document, 10) : [],
+            'llm_enabled' => $canManage && $this->describer->isEnabled(),
         ]);
+    }
+
+    /** Формирует описание документа через внешнюю LLM (кнопка «Описать через ИИ» в карточке). */
+    #[Route('/{id}/describe', name: 'app_document_describe', requirements: ['id' => '\d+'], methods: ['POST'])]
+    #[IsGranted(PortalVoter::DOCUMENT_EDIT, subject: 'document')]
+    public function describe(Document $document, Request $request, #[CurrentUser] User $user): Response
+    {
+        $this->checkToken($request, $document);
+        try {
+            $this->describer->describe($document, $user, $request->getClientIp());
+            $this->addFlash('success', 'Описание сформировано языковой моделью. Проверьте его и при необходимости отредактируйте в карточке.');
+        } catch (LlmException $e) {
+            $this->addFlash('danger', $e->getMessage());
+        }
+
+        return $this->redirectToRoute('app_document_show', ['id' => $document->getId()]);
+    }
+
+    /** При включённом автоописании пытается сразу описать новый документ без описания; ошибка не мешает созданию. */
+    private function autoDescribe(Document $document, User $user, Request $request): void
+    {
+        if ('' !== trim((string) $document->getDescription()) || !$this->describer->isEnabled() || !$this->describer->isAutoEnabled()) {
+            return;
+        }
+        try {
+            $this->describer->describe($document, $user, $request->getClientIp());
+            $this->addFlash('info', 'Описание документа сформировано языковой моделью — проверьте его в карточке.');
+        } catch (LlmException $e) {
+            $this->addFlash('warning', 'Описание не сформировано: '.$e->getMessage().' Его можно сформировать позже кнопкой «Описать через ИИ».');
+        }
     }
 
     #[Route('/{id}/edit', name: 'app_document_edit', requirements: ['id' => '\d+'], methods: ['GET', 'POST'])]
@@ -325,7 +360,7 @@ final class DocumentController extends AbstractController
         if (null === $path || !is_file($path)) {
             throw $this->createNotFoundException('Файл версии не найден в хранилище. Сообщите администратору.');
         }
-        $inline = $request->query->getBoolean('inline') && FileStorage::isInlineViewable($version->getMimeType(), $version->getExtension());
+        $inline = filter_var($request->query->get('inline'), \FILTER_VALIDATE_BOOL) && FileStorage::isInlineViewable($version->getMimeType(), $version->getExtension());
         if (!$inline) {
             $this->manager->recordDownload($document, $version, $user, $request->getClientIp());
         }

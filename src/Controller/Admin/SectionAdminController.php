@@ -50,7 +50,7 @@ final class SectionAdminController extends AbstractController
     #[Route('/new', name: 'admin_section_new', methods: ['GET', 'POST'])]
     public function new(Request $request, #[CurrentUser] User $user): Response
     {
-        $parentId = $request->query->getInt('parent');
+        $parentId = (int) $request->query->get('parent');
         $parent = $parentId > 0 ? $this->sections->find($parentId) : null;
         $section = (new Section())->setParent($parent);
         $form = $this->createForm(SectionType::class, $section, ['parent_choices' => $this->sections->findAllTree(), 'allow_root' => true]);
@@ -123,7 +123,7 @@ final class SectionAdminController extends AbstractController
     {
         if ($request->isMethod('POST')) {
             $this->checkToken($request, $section);
-            $userId = $request->request->getInt('user_id');
+            $userId = (int) $request->request->get('user_id');
             $target = $userId > 0 ? $this->users->find($userId) : null;
             if (null === $target) {
                 $this->addFlash('danger', 'Выберите пользователя.');

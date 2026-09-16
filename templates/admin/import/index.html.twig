@@ -64,6 +64,12 @@
                 <label class="form-check" for="import-public"><input type="checkbox" id="import-public" name="public" value="1" {{ values.public ? 'checked' }}><span>Открытые документы — можно читать без входа в портал</span></label>
                 <div class="form-help">Снимите флажок, чтобы импортированные документы были внутренними (только для сотрудников после входа).</div>
             </div>
+            {% if can_describe %}
+            <div class="form-row form-row--check">
+                <label class="form-check" for="import-describe"><input type="checkbox" id="import-describe" name="describe" value="1" {{ values.describe ? 'checked' }}><span>Сформировать описания новых документов через LLM</span></label>
+                <div class="form-help">Для каждого нового документа будет вызвана языковая модель (настройки — в разделе «Интеграции»); импорт идёт медленнее. Описания можно сформировать и позже командой <code>app:documents:describe --missing</code>.</div>
+            </div>
+            {% endif %}
             <div class="form-row form-row--check">
                 <label class="form-check" for="import-update"><input type="checkbox" id="import-update" name="update" value="1" {{ values.update ? 'checked' }}><span>Для изменившихся файлов, которые уже есть в разделе, загружать новую версию</span></label>
                 <div class="form-help">Совпадение определяется по имени файла в разделе; неизменившиеся файлы пропускаются, поэтому импорт можно повторять.</div>

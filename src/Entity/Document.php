@@ -40,6 +40,9 @@ class Document
     public const STATUS_ARCHIVED = 'archived';
 
     public const STATUSES = [self::STATUS_DRAFT, self::STATUS_PUBLISHED, self::STATUS_ARCHIVED];
+
+    public const DESCRIPTION_MANUAL = 'manual';
+    public const DESCRIPTION_LLM = 'llm';
     public const TYPES = [self::TYPE_FILE, self::TYPE_PAGE];
 
     #[ORM\Id]
@@ -64,6 +67,13 @@ class Document
     #[ORM\Column(type: Types::TEXT, nullable: true)]
     #[Assert\Length(max: 8000)]
     private ?string $description = null;
+
+    /** Откуда описание: manual — введено человеком, llm — сгенерировано внешней языковой моделью. */
+    #[ORM\Column(name: 'description_source', length: 8, nullable: true)]
+    private ?string $descriptionSource = null;
+
+    #[ORM\Column(name: 'description_generated_at', type: Types::DATETIME_IMMUTABLE, nullable: true)]
+    private ?\DateTimeImmutable $descriptionGeneratedAt = null;
 
     #[ORM\Column(length: 8)]
     private string $type = self::TYPE_FILE;
@@ -192,9 +202,40 @@ class Document
     public function setDescription(?string $description): static
     {
         $description = null === $description ? null : trim($description);
+        $changed = $this->description !== ('' === $description ? null : $description);
         $this->description = '' === $description ? null : $description;
+        if ($changed) {
+            // Ручное изменение описания снимает пометку «сгенерировано LLM» (генератор ставит её сам после вызова).
+            $this->descriptionSource = null === $this->description ? null : self::DESCRIPTION_MANUAL;
+            $this->descriptionGeneratedAt = null;
+        }
 
         return $this;
+    }
+
+    public function getDescriptionSource(): ?string
+    {
+        return $this->descriptionSource;
+    }
+
+    public function isDescriptionGenerated(): bool
+    {
+        return self::DESCRIPTION_LLM === $this->descriptionSource;
+    }
+
+    /** Записывает описание, сгенерированное языковой моделью. */
+    public function setGeneratedDescription(string $description): static
+    {
+        $this->description = '' === trim($description) ? null : trim($description);
+        $this->descriptionSource = null === $this->description ? null : self::DESCRIPTION_LLM;
+        $this->descriptionGeneratedAt = null === $this->description ? null : new \DateTimeImmutable();
+
+        return $this;
+    }
+
+    public function getDescriptionGeneratedAt(): ?\DateTimeImmutable
+    {
+        return $this->descriptionGeneratedAt;
     }
 
     public function getType(): string

@@ -672,6 +672,24 @@ a.chip { text-decoration: none; }
 .hints { font-size: 12px; color: var(--muted); margin-top: 2px; }
 .table-scroll { overflow-x: auto; }
 
+/* --- Актуальность по разделам ---------------------------------------------------- */
+.share-bar { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: var(--gray-bg); min-width: 160px; }
+.share-bar__seg { display: block; height: 100%; }
+.share-bar__seg--expired { background: var(--st-overdue); }
+.share-bar__seg--soon { background: var(--st-soon); }
+.share-bar__seg--valid { background: var(--st-done); }
+.share-bar__seg--none { background: var(--st-none); }
+.legend-dot--none { background: var(--st-none); }
+.validity-table__bar-cell { min-width: 200px; }
+.admin-table tr.is-expired td:first-child { box-shadow: inset 3px 0 0 var(--st-overdue); }
+.admin-table tr.is-soon td:first-child { box-shadow: inset 3px 0 0 var(--st-soon); }
+.outdated-table__group td { background: var(--blue-bg); font-weight: 500; padding: 8px 12px; }
+.outdated-table .col-icon { width: 46px; padding-right: 0; }
+.outdated-table .col-icon .ficon { width: 30px; height: 34px; font-size: 9px; }
+.form-check--inline { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; white-space: nowrap; }
+.form-check--inline input { width: 18px; height: 18px; accent-color: var(--blue); margin: 0; }
+.card__head form.toolbar__row { margin: 0; }
+
 /* --- Адаптивность компонентов --------------------------------------------------- */
 @media (max-width: 1250px) {
     .header-search { display: none; }
@@ -693,3 +711,32 @@ a.chip { text-decoration: none; }
     .card__head--padded { padding: 18px 18px 8px; }
     .card__padded { padding: 0 18px 16px; }
 }
+
+/* Интеграции: ключи API, webhook, LLM */
+.card--token { border-color: var(--blue); background: var(--blue-bg); }
+.token-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 12px 0; }
+.token-row__value { flex: 1 1 320px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 15px; }
+.code-block { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; margin: 0; }
+.api-table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+.api-table td { padding: 6px 8px 6px 0; vertical-align: top; border-bottom: 1px solid rgba(0, 0, 0, 0.06); }
+.api-table td:first-child { white-space: nowrap; width: 38%; }
+.api-table code { background: #fff; }
+.keys-table td { vertical-align: middle; }
+.keys-table th, .keys-table td { padding-left: 8px; padding-right: 8px; }
+.keys-table .col-actions { width: 1%; white-space: nowrap; }
+.row-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+.grid--stats-compact { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 12px 0 16px; }
+.grid--stats-compact .stat__value { font-size: 40px; }
+.h-sub { font-family: var(--font-head); font-size: 17px; font-weight: 700; margin: 18px 0 8px; }
+.btn.is-done { background: var(--green, #2e7d32); color: #fff; border-color: transparent; }
+.ai-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--blue); background: var(--blue-bg); border-radius: 999px; padding: 2px 8px; vertical-align: middle; }
+@media (max-width: 720px) {
+    .grid--stats-compact { grid-template-columns: 1fr; }
+    .api-table td:first-child { white-space: normal; width: auto; }
+}
+
+/* Карточки с таблицами: заголовок, таблица и подвал выровнены по одному внутреннему отступу карточки. */
+.card > .card__head--padded, .card > .card__padded { padding-left: 0; padding-right: 0; }
+.card > .card__head--padded { padding-top: 0; }
+.card > .card__padded { padding-bottom: 0; padding-top: 16px; }
+.table-card__empty { padding: 12px 0 4px; color: var(--muted); }

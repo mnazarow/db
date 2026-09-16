@@ -45,8 +45,8 @@ final class GuestAccessSubscriber implements EventSubscriberInterface
         }
         $request = $event->getRequest();
         $route = (string) $request->attributes->get('_route', '');
-        if ('' === $route || str_starts_with($route, '_') || \in_array($route, self::PUBLIC_ROUTES, true)) {
-            return;
+        if ('' === $route || str_starts_with($route, '_') || str_starts_with($route, 'api_') || \in_array($route, self::PUBLIC_ROUTES, true)) {
+            return; // служебные маршруты и REST API (доступ по ключу) под гостевые правила не попадают
         }
         if ($this->security->getUser() instanceof User) {
             return;

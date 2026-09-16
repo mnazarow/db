@@ -219,6 +219,109 @@ final class StatsService
         ];
     }
 
+    /**
+     * Актуальность по дереву разделов: для каждого раздела — число опубликованных документов
+     * по состояниям (просрочено / истекает / актуально / бессрочно) непосредственно в разделе
+     * и вместе с подразделами, а также самый большой срок просрочки в поддереве.
+     *
+     * @return array{
+     *     rows: list<array{section: Section, direct: array{expired: int, soon: int, valid: int, none: int}, subtree: array{expired: int, soon: int, valid: int, none: int}, problems: int, max_overdue: int, share: array{expired: float, soon: float, valid: float, none: float}}>,
+     *     totals: array{expired: int, soon: int, valid: int, none: int, documents: int},
+     *     today: \DateTimeImmutable,
+     *     soon_days: int
+     * }
+     */
+    public function validityBySection(?Section $root = null, bool $onlyProblems = false): array
+    {
+        $today = $this->validity->today();
+        $soonDays = $this->validity->getSoonDays();
+        $tree = $this->sections->findAllTree();
+        if (null !== $root) {
+            $tree = array_values(array_filter($tree, static fn (Section $s) => $s->isSameOrDescendantOf($root)));
+        }
+        $empty = ['expired' => 0, 'soon' => 0, 'valid' => 0, 'none' => 0];
+        $direct = [];
+        $maxOverdue = [];
+        foreach ($tree as $s) {
+            $direct[$s->getId()] = $empty;
+            $maxOverdue[$s->getId()] = 0;
+        }
+        foreach ($this->documents->publishedValidity() as $row) {
+            $sid = (int) $row['sid'];
+            if (!isset($direct[$sid])) {
+                continue;
+            }
+            $state = $this->validity->stateForDate($row['vu']);
+            ++$direct[$sid][$state];
+            if (Validity::EXPIRED === $state) {
+                $days = (int) $today->diff($row['vu']->setTime(0, 0))->format('%a');
+                $maxOverdue[$sid] = max($maxOverdue[$sid], $days);
+            }
+        }
+        // Суммы по поддеревьям: каждый раздел добавляет свои счётчики всем предкам (в пределах выбранного дерева).
+        $subtree = $direct;
+        $subtreeOverdue = $maxOverdue;
+        foreach ($tree as $s) {
+            foreach ($s->getPathIds() as $ancestorId) {
+                if ($ancestorId === $s->getId() || !isset($subtree[$ancestorId])) {
+                    continue;
+                }
+                foreach ($direct[$s->getId()] as $k => $v) {
+                    $subtree[$ancestorId][$k] += $v;
+                }
+                $subtreeOverdue[$ancestorId] = max($subtreeOverdue[$ancestorId], $maxOverdue[$s->getId()]);
+            }
+        }
+        $rows = [];
+        $totals = $empty + ['documents' => 0];
+        foreach ($tree as $s) {
+            $sid = (int) $s->getId();
+            $sub = $subtree[$sid];
+            $problems = $sub['expired'] + $sub['soon'];
+            if ($onlyProblems && 0 === $problems) {
+                continue;
+            }
+            $total = array_sum($sub);
+            $share = $empty;
+            if ($total > 0) {
+                foreach ($sub as $k => $v) {
+                    $share[$k] = round($v * 100 / $total, 1);
+                }
+            }
+            $rows[] = ['section' => $s, 'direct' => $direct[$sid], 'subtree' => $sub, 'problems' => $problems, 'max_overdue' => $subtreeOverdue[$sid], 'share' => $share];
+            if (null === $s->getParent() || (null !== $root && $s->getId() === $root->getId())) {
+                foreach ($sub as $k => $v) {
+                    $totals[$k] += $v;
+                }
+                $totals['documents'] += $total;
+            }
+        }
+
+        return ['rows' => $rows, 'totals' => $totals, 'today' => $today, 'soon_days' => $soonDays];
+    }
+
+    /**
+     * Устаревшие документы (просроченные и истекающие) с группировкой по ответственным.
+     *
+     * @return array{documents: list<Document>, owners: list<array{name: string, expired: int, soon: int}>}
+     */
+    public function outdatedDocuments(?Section $root = null): array
+    {
+        $ids = null !== $root ? $this->sections->findSubtreeIds($root) : null;
+        $documents = $this->expiring($ids);
+        $today = $this->validity->today();
+        usort($documents, static fn (Document $a, Document $b) => [$a->getSection()->getPath(), $a->getValidUntil()?->format('Y-m-d') ?? ''] <=> [$b->getSection()->getPath(), $b->getValidUntil()?->format('Y-m-d') ?? '']);
+        $owners = [];
+        foreach ($documents as $doc) {
+            $name = $doc->getOwner()?->getDisplayName() ?? '— без ответственного —';
+            $owners[$name] ??= ['name' => $name, 'expired' => 0, 'soon' => 0];
+            ++$owners[$name][$doc->isExpired($today) ? 'expired' : 'soon'];
+        }
+        usort($owners, static fn (array $a, array $b) => [$b['expired'], $b['soon']] <=> [$a['expired'], $a['soon']]);
+
+        return ['documents' => $documents, 'owners' => array_values($owners)];
+    }
+
     /** @return list<Document> */
     public function expiring(?array $sectionIds = null, int $limit = 0): array
     {

@@ -23,9 +23,9 @@ final class EventLogController extends AbstractController
     #[Route('', name: 'admin_events', methods: ['GET'])]
     public function index(Request $request, DocumentEventRepository $events, UserRepository $users, SectionRepository $sections, DocumentRepository $documents): Response
     {
-        $userId = $request->query->getInt('user');
-        $sectionId = $request->query->getInt('section');
-        $documentId = $request->query->getInt('document');
+        $userId = (int) $request->query->get('user');
+        $sectionId = (int) $request->query->get('section');
+        $documentId = (int) $request->query->get('document');
         $from = self::date((string) $request->query->get('from', ''));
         $to = self::date((string) $request->query->get('to', ''));
         $type = (string) $request->query->get('type', '');

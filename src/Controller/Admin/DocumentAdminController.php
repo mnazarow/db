@@ -74,8 +74,8 @@ final class DocumentAdminController extends AbstractController
     /** @return array{0: array<string, mixed>, 1: list<Document>} */
     private function query(Request $request, int $limit = 500): array
     {
-        $sectionId = $request->query->getInt('section');
-        $ownerId = $request->query->getInt('owner');
+        $sectionId = (int) $request->query->get('section');
+        $ownerId = (int) $request->query->get('owner');
         $filters = [
             'section' => $sectionId > 0 ? $this->sections->find($sectionId) : null,
             'status' => $request->query->get('status') ?: null,

@@ -5,7 +5,10 @@ declare(strict_types=1);
 namespace App\Command;
 
 use App\Repository\UserRepository;
+use App\Repository\ApiKeyRepository;
 use App\Security\Ldap\LdapSettings;
+use App\Service\PortalSettings;
+use App\Service\Text\TextExtractor;
 use App\Service\FileStorage;
 use Doctrine\DBAL\Connection;
 use Symfony\Component\Console\Attribute\AsCommand;
@@ -24,6 +27,9 @@ final class CheckCommand extends Command
         private readonly FileStorage $storage,
         private readonly UserRepository $users,
         private readonly LdapSettings $ldap,
+        private readonly TextExtractor $extractor,
+        private readonly PortalSettings $settings,
+        private readonly ApiKeyRepository $apiKeys,
         private readonly string $projectDir,
         private readonly string $importDir,
     ) {
@@ -126,6 +132,23 @@ final class CheckCommand extends Command
             }
         } catch (\Throwable $e) {
             $io->warning('Не удалось проверить пользователей: '.$e->getMessage());
+        }
+
+        $io->section('Интеграции');
+        $io->writeln($this->extractor->hasPdftotext()
+            ? 'Извлечение текста из PDF (pdftotext): <info>доступно</info>'
+            : 'Извлечение текста из PDF: <comment>pdftotext не найден</comment> — установите пакет poppler-utils (иначе API и LLM не получат текст PDF-файлов)');
+        $io->writeln(\sprintf('Расширения PHP curl/zip (LLM, webhook, docx/xlsx/pptx): %s', \function_exists('curl_init') && class_exists(\ZipArchive::class) ? '<info>установлены</info>' : '<comment>'.(!\function_exists('curl_init') ? 'нет curl ' : '').(!class_exists(\ZipArchive::class) ? 'нет zip' : '').'</comment>'));
+        try {
+            $keys = $this->apiKeys->findAllOrdered();
+            $active = \count(array_filter($keys, static fn ($k) => $k->isEnabled()));
+            $io->writeln(\sprintf('Ключи REST API: %s', [] === $keys ? 'не созданы (панель администратора → Интеграции или app:api-key create)' : \sprintf('<info>%d</info>, активных %d', \count($keys), $active)));
+            $llm = $this->settings->llm();
+            $io->writeln(\sprintf('Описания через LLM: %s', $llm['enabled'] ? \sprintf('<info>включены</info> (%s, модель %s%s)', $llm['base_url'], $llm['model'], $llm['auto_describe'] ? ', автоописание новых документов' : '') : 'выключены'));
+            $webhook = $this->settings->webhook();
+            $io->writeln(\sprintf('Webhook об изменениях: %s', $webhook['enabled'] ? '<info>включён</info> ('.$webhook['url'].')' : 'выключен'));
+        } catch (\Throwable $e) {
+            $io->writeln('<comment>Настройки интеграций недоступны: '.$e->getMessage().'</comment>');
         }
 
         if ($ok) {

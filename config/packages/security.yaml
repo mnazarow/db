@@ -15,6 +15,19 @@ security:
         dev:
             pattern: ^/(_(profiler|wdt)|css|img|js|fonts|vendor)/
             security: false
+        # REST API для внешних систем (индексатор RAG и т. п.): без сессий, по ключу API
+        # (Authorization: Bearer dp_… или X-Api-Key: dp_…). Ключи создаются в панели администратора → Интеграции.
+        api:
+            pattern: ^/api/
+            stateless: true
+            provider: app_user_provider
+            entry_point: App\Security\Api\ApiAuthenticationEntryPoint
+            access_token:
+                token_handler: App\Security\Api\ApiKeyHandler
+                failure_handler: App\Security\Api\ApiAuthenticationEntryPoint
+                token_extractors:
+                    - header
+                    - app.api_key_header_extractor
         main:
             lazy: true
             provider: app_user_provider
@@ -43,7 +56,9 @@ security:
     # Просмотр разделов и открытых документов доступен без входа (если это разрешено настройками портала —
     # см. App\Security\GuestAccessSubscriber); панель администратора, профиль и все действия с документами
     # и разделами требуют входа (проверяются voter'ом PortalVoter и атрибутами #[IsGranted]).
+    # Всё под /api требует действующего ключа API.
     access_control:
+        - { path: ^/api, roles: ROLE_API }
         - { path: ^/login$, roles: PUBLIC_ACCESS }
         - { path: ^/health$, roles: PUBLIC_ACCESS }
         - { path: ^/admin, roles: ROLE_ADMIN }

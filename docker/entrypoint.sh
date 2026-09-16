@@ -2,7 +2,7 @@
 # =============================================================================
 #  Точка входа контейнера приложения: ждёт базу данных, применяет миграции,
 #  прогревает кэш, создаёт первого администратора и запускает PHP-FPM.
-#  Команда "cron" запускает планировщик проверки сроков актуальности.
+#  Команда "cron" запускает планировщик: проверка сроков актуальности и описания документов через LLM.
 #  Переменные окружения — см. docker/.env.example.
 # =============================================================================
 set -Eeuo pipefail
@@ -49,6 +49,8 @@ if [[ "${1:-php-fpm}" == "cron" ]]; then
     wait_for_db
     mkdir -p /etc/crontabs
     printf '%s cd /var/www/html && su-exec www-data php bin/console app:documents:expiry --no-interaction >> /var/www/html/var/log/expiry-cron.log 2>&1\n' "${EXPIRY_CRON:-0 8 * * *}" > /etc/crontabs/root
+    # Описания документов через LLM (только если интеграция включена в панели администратора).
+    printf '%s cd /var/www/html && su-exec www-data php bin/console app:documents:describe --missing --limit=50 --quiet-if-disabled --no-interaction >> /var/www/html/var/log/describe-cron.log 2>&1\n' "${DESCRIBE_CRON:-20 * * * *}" >> /etc/crontabs/root
     log "Планировщик запущен: проверка сроков актуальности по расписанию «${EXPIRY_CRON:-0 8 * * *}»."
     exec crond -f -l 6
 fi

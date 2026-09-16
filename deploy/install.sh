@@ -7,7 +7,7 @@
 #    sudo ./deploy/install.sh --domain docs.example.ru --ssl-email admin@example.ru
 #    sudo ./deploy/install.sh --domain docs.example.ru --ldap-host dc1.example.local --ldap-base-dn "DC=example,DC=local" --ldap-upn-suffix example.local
 #    sudo ./deploy/install.sh --mode docker --port 8080      # установка в Docker
-#    sudo ./deploy/install.sh --archive docportal-1.2.0.tar.gz --yes
+#    sudo ./deploy/install.sh --archive docportal-1.3.0.tar.gz --yes
 #
 #  Полный список параметров: ./deploy/install.sh --help
 # =============================================================================
@@ -384,12 +384,14 @@ install_packages_native() {
     case "${OS_FAMILY}" in
         debian)
             pkg_install ca-certificates curl gnupg rsync tar gzip unzip cron acl lsb-release git
+            pkg_install_optional poppler-utils || warn "Пакет poppler-utils (pdftotext) не установлен — текст из PDF для API и LLM извлекаться не будет."
             install_php_debian
             pkg_install nginx
             if [[ "${DB_LOCAL}" == "1" ]]; then pkg_install mariadb-server mariadb-client; DB_SERVICE="mariadb"; else pkg_install mariadb-client; fi
             ;;
         rhel)
             pkg_install ca-certificates curl rsync tar gzip unzip cronie policycoreutils-python-utils git
+            pkg_install_optional poppler-utils || warn "Пакет poppler-utils (pdftotext) не установлен — текст из PDF для API и LLM извлекаться не будет."
             install_php_rhel
             pkg_install nginx
             if [[ "${DB_LOCAL}" == "1" ]]; then pkg_install mariadb-server mariadb; DB_SERVICE="mariadb"; else pkg_install mariadb; fi
@@ -741,8 +743,11 @@ configure_firewall() {
 install_backup_cron() {
     if [[ "${BACKUP_CRON}" != "1" ]]; then
         cat > "/etc/cron.d/${APP_ID}" <<EOF
-# Портал «${APP_TITLE}»: ежедневная проверка сроков актуальности документов (создано install.sh)
+# Портал «${APP_TITLE}» (создано install.sh):
+#  - ежедневная проверка сроков актуальности документов и рассылка уведомлений в 08:00;
+#  - ежечасно — описания документов через LLM (работает только если интеграция включена в панели администратора).
 0 8 * * * root /usr/local/bin/${APP_ID} console app:documents:expiry --no-interaction >> ${LOG_DIR}/expiry-cron.log 2>&1
+20 * * * * root /usr/local/bin/${APP_ID} console app:documents:describe --missing --limit=50 --quiet-if-disabled --no-interaction >> ${LOG_DIR}/describe-cron.log 2>&1
 EOF
         chmod 644 "/etc/cron.d/${APP_ID}"
         return 0
@@ -750,9 +755,11 @@ EOF
     cat > "/etc/cron.d/${APP_ID}" <<EOF
 # Портал «${APP_TITLE}» (создано install.sh):
 #  - ежедневная проверка сроков актуальности документов и рассылка уведомлений в 08:00;
-#  - ежедневная резервная копия в 03:15.
+#  - ежедневная резервная копия в 03:15;
+#  - ежечасно — описания документов через LLM (работает только если интеграция включена в панели администратора).
 0 8 * * * root /usr/local/bin/${APP_ID} console app:documents:expiry --no-interaction >> ${LOG_DIR}/expiry-cron.log 2>&1
 15 3 * * * root /usr/local/bin/${APP_ID} backup --quiet >> ${LOG_DIR}/backup-cron.log 2>&1
+20 * * * * root /usr/local/bin/${APP_ID} console app:documents:describe --missing --limit=50 --quiet-if-disabled --no-interaction >> ${LOG_DIR}/describe-cron.log 2>&1
 EOF
     chmod 644 "/etc/cron.d/${APP_ID}"
     if has_systemd; then svc enable cron >/dev/null 2>&1 || svc enable crond >/dev/null 2>&1 || true; fi

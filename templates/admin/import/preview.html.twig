@@ -14,7 +14,7 @@
         <dl class="meta meta--stack">
             <div><dt>Каталог</dt><dd><code>{{ plan.dir }}</code></dd></div>
             <div><dt>Целевой раздел</dt><dd>{{ target ? target.fullName : '(верхний уровень)' }}{% if options.rootAsSection %} → новый/существующий раздел «{{ plan.label }}»{% endif %}</dd></div>
-            <div><dt>Документы</dt><dd>{{ options.publish ? 'публикуются сразу' : 'создаются как черновики' }}, {{ options.publicAccess ? 'открытые (без входа)' : 'внутренние (после входа)' }}, срок актуальности — {{ options.validityMonths > 0 ? options.validityMonths ~ ' мес.' : 'бессрочно' }}</dd></div>
+            <div><dt>Документы</dt><dd>{{ options.publish ? 'публикуются сразу' : 'создаются как черновики' }}, {{ options.publicAccess ? 'открытые (без входа)' : 'внутренние (после входа)' }}, срок актуальности — {{ options.validityMonths > 0 ? options.validityMonths ~ ' мес.' : 'бессрочно' }}{% if options.describe %}, описания формируются через LLM{% endif %}</dd></div>
             <div><dt>Изменившиеся файлы</dt><dd>{{ options.updateExisting ? 'новая версия существующего документа' : 'пропускаются' }}</dd></div>
             <div><dt>Исходные файлы</dt><dd>{{ options.deleteSource ? 'удаляются после переноса (опустевшие папки — тоже)' : 'остаются на месте (копирование)' }}</dd></div>
         </dl>
@@ -42,6 +42,7 @@
             {% if values.delete_source %}<input type="hidden" name="delete_source" value="1">{% endif %}
             {% if values.any_extension %}<input type="hidden" name="any_extension" value="1">{% endif %}
             {% if values.public %}<input type="hidden" name="public" value="1">{% endif %}
+            {% if values.describe %}<input type="hidden" name="describe" value="1">{% endif %}
             <button type="submit" class="btn btn--pill" {{ total_actions == 0 ? 'disabled' }}>Начать импорт</button>
             <a class="btn btn--ghost" href="{{ path('admin_import') }}">Отмена</a>
         </form>

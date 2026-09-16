@@ -59,7 +59,7 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "5" }
 
-  # Планировщик: ежедневная проверка сроков актуальности документов (app:documents:expiry).
+  # Планировщик: ежедневная проверка сроков актуальности (app:documents:expiry) и ежечасные описания через LLM (app:documents:describe).
   cron:
     image: ${APP_IMAGE:-docportal:latest}
     env_file:
@@ -69,6 +69,7 @@ services:
       STORAGE_DIR: /var/www/html/var/storage
       IMPORT_DIR: /var/www/html/var/import
       EXPIRY_CRON: ${EXPIRY_CRON:-0 8 * * *}
+      DESCRIBE_CRON: ${DESCRIBE_CRON:-20 * * * *}
     command: ["cron"]
     volumes:
       - storage:/var/www/html/var/storage

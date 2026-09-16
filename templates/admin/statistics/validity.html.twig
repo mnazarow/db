@@ -1,0 +1,135 @@
+{% extends 'admin/_layout.html.twig' %}
+{% import '_macros.html.twig' as m %}
+
+{% block title %}Актуальность по разделам{% endblock %}
+{% block admin_title %}Актуальность по разделам{% endblock %}
+{% block admin_actions %}
+    <a class="btn btn--ghost" href="{{ path('admin_statistics') }}">← Вся статистика</a>
+    <a class="btn btn--ghost" href="{{ path('admin_statistics_validity_csv', root ? {section: root.id} : {}) }}">Выгрузить CSV</a>
+{% endblock %}
+
+{% block admin_body %}
+{% set problems = totals.expired + totals.soon %}
+<div class="grid grid--stats">
+    <div class="card"><div class="stat__label">Просрочено</div><div class="stat__value {{ totals.expired > 0 ? 'text-danger' }}">{{ totals.expired }}</div><div class="stat__hint">срок актуальности истёк</div></div>
+    <div class="card"><div class="stat__label">Истекает</div><div class="stat__value {{ totals.soon > 0 ? 'text-warning' }}">{{ totals.soon }}</div><div class="stat__hint">в ближайшие {{ soon_days }} дн.</div></div>
+    <div class="card"><div class="stat__label">Актуальны</div><div class="stat__value">{{ totals.valid }}</div><div class="stat__hint">срок ещё не подходит</div></div>
+    <div class="card"><div class="stat__label">Бессрочные</div><div class="stat__value stat__value--muted">{{ totals.none }}</div><div class="stat__hint">дата «актуален до» не задана</div></div>
+    <div class="card"><div class="stat__label">Доля проблемных</div><div class="stat__value {{ problems > 0 ? 'text-danger' }}">{{ totals.documents > 0 ? (problems * 100 / totals.documents)|round : 0 }}%</div><div class="stat__hint">из {{ totals.documents|plural(['опубликованного документа', 'опубликованных документов', 'опубликованных документов']) }}{% if root %} в разделе «{{ root.name }}»{% endif %}</div></div>
+</div>
+
+<div class="card table-card">
+    <div class="card__head card__head--padded">
+        <h2 class="h-section">Дерево разделов</h2>
+        <form method="get" class="toolbar__row toolbar__row--compact" data-validity-filter>
+            <select class="form-control form-control--inline" name="section" aria-label="Раздел" data-autosubmit>
+                <option value="">Все разделы</option>
+                {{ m.section_option_tree(all_sections, root) }}
+            </select>
+            <label class="form-check form-check--inline"><input type="checkbox" name="only_problems" value="1" {{ only_problems ? 'checked' }} data-autosubmit><span>только с проблемами</span></label>
+        </form>
+    </div>
+    {% if tree|length == 0 %}
+        <div class="table-card__empty">{{ only_problems ? 'Просроченных и истекающих документов нет — все разделы в порядке.' : 'Разделов пока нет.' }}</div>
+    {% else %}
+    <div class="table-scroll">
+        <table class="admin-table tree-table validity-table">
+            <thead>
+                <tr>
+                    <th>Раздел</th>
+                    <th>Состояние документов<div class="hints">с подразделами</div></th>
+                    <th class="col-num">Просроч.</th>
+                    <th class="col-num">Истекает</th>
+                    <th class="col-num">Актуальны</th>
+                    <th class="col-num">Бессрочн.</th>
+                    <th class="col-num">В самом разделе<div class="hints">просроч. / истекает</div></th>
+                    <th class="col-num">Макс. просрочка</th>
+                    <th class="col-actions"></th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for r in tree %}
+                {% set s = r.section %}
+                <tr class="{{ r.problems == 0 ? 'is-inactive' : (r.subtree.expired > 0 ? 'is-expired' : 'is-soon') }}">
+                    <td>
+                        <div class="tree-cell" style="--depth: {{ root ? s.depth - root.depth : s.depth }}">
+                            <span class="tree-cell__line" aria-hidden="true"></span>
+                            <a class="tree-cell__name" href="{{ path('app_section_show', {id: s.id}) }}">{{ s.name }}</a>
+                            {% if s.moderators|length > 0 %}<div class="hints">{% for mod in s.moderators %}{{ mod.user.displayName }}{{ not loop.last ? ', ' }}{% endfor %}</div>{% endif %}
+                        </div>
+                    </td>
+                    <td class="validity-table__bar-cell">
+                        {% set total = r.subtree.expired + r.subtree.soon + r.subtree.valid + r.subtree.none %}
+                        {% if total > 0 %}
+                        <div class="share-bar" title="просрочено {{ r.subtree.expired }}, истекает {{ r.subtree.soon }}, актуальны {{ r.subtree.valid }}, бессрочных {{ r.subtree.none }}">
+                            <span class="share-bar__seg share-bar__seg--expired" style="width: {{ r.share.expired }}%"></span>
+                            <span class="share-bar__seg share-bar__seg--soon" style="width: {{ r.share.soon }}%"></span>
+                            <span class="share-bar__seg share-bar__seg--valid" style="width: {{ r.share.valid }}%"></span>
+                            <span class="share-bar__seg share-bar__seg--none" style="width: {{ r.share.none }}%"></span>
+                        </div>
+                        <div class="hints">{{ total|plural(['документ', 'документа', 'документов']) }}{% if r.problems > 0 %} · проблемных {{ (r.problems * 100 / total)|round }}%{% endif %}</div>
+                        {% else %}<span class="text-muted">нет опубликованных документов</span>{% endif %}
+                    </td>
+                    <td class="col-num {{ r.subtree.expired > 0 ? 'text-danger' }}">{{ r.subtree.expired }}</td>
+                    <td class="col-num {{ r.subtree.soon > 0 ? 'text-warning' }}">{{ r.subtree.soon }}</td>
+                    <td class="col-num">{{ r.subtree.valid }}</td>
+                    <td class="col-num">{{ r.subtree.none }}</td>
+                    <td class="col-num">{{ r.direct.expired }} / {{ r.direct.soon }}</td>
+                    <td class="col-num">{% if r.max_overdue > 0 %}<span class="text-danger">{{ r.max_overdue|plural(['день', 'дня', 'дней']) }}</span>{% else %}—{% endif %}</td>
+                    <td class="col-actions">{% if r.problems > 0 %}<a class="btn btn--ghost btn--small" href="{{ path('admin_documents', {section: s.id, validity: r.subtree.expired > 0 ? 'expired' : 'soon', status: 'published'}) }}">В реестре</a>{% endif %}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+    <div class="card__padded">
+        <div class="chart__legend"><span><i class="legend-dot legend-dot--overdue"></i>просрочено</span><span><i class="legend-dot legend-dot--soon"></i>истекает в ближайшие {{ soon_days }} дн.</span><span><i class="legend-dot legend-dot--done"></i>актуальны</span><span><i class="legend-dot legend-dot--none"></i>бессрочные</span></div>
+        <p class="form-help">Учитываются опубликованные документы. Счётчики раздела включают все его подразделы; колонка «В самом разделе» — только документы, лежащие непосредственно в нём. Черновики и архив в сводку не входят.</p>
+    </div>
+</div>
+
+<div class="card table-card">
+    <div class="card__head card__head--padded"><h2 class="h-section">Устаревшие документы</h2><span class="text-muted">{{ documents|length|plural(['документ', 'документа', 'документов']) }}{% if root %} в разделе «{{ root.name }}»{% endif %}</span></div>
+    {% if documents|length == 0 %}<div class="table-card__empty">Просроченных и истекающих документов нет.</div>{% else %}
+    <div class="table-scroll"><table class="admin-table outdated-table">
+        <thead><tr><th></th><th>Документ</th><th>Ответственный</th><th>Актуален до</th><th class="col-num">Дней</th><th>Версия</th><th>Последний просмотр</th><th class="col-num">Просм.</th></tr></thead>
+        <tbody>
+        {% set prev = null %}
+        {% for d in documents %}
+            {% if prev != d.section.id %}
+                <tr class="outdated-table__group"><td colspan="8"><a href="{{ path('app_section_show', {id: d.section.id}) }}">{{ d.section.fullName }}</a>{% if d.section.moderatorUsers|length > 0 %} <span class="text-muted">— модераторы: {% for u in d.section.moderatorUsers %}{{ u.displayName }}{{ not loop.last ? ', ' }}{% endfor %}</span>{% endif %}</td></tr>
+            {% endif %}
+            {% set prev = d.section.id %}
+            {% set days = d|days_left %}
+            <tr class="{{ days < 0 ? 'is-expired' : 'is-soon' }}">
+                <td class="col-icon">{{ m.file_icon(d) }}</td>
+                <td><a class="doc-table__title" href="{{ path('app_document_show', {id: d.id}) }}">{{ d.title }}</a>{% if d.code %} <span class="doc-table__code">{{ d.code }}</span>{% endif %}{% if not d.public %} <span class="tag tag--internal">внутренний</span>{% endif %}</td>
+                <td>{{ d.owner ? d.owner.displayName : '—' }}</td>
+                <td class="col-nowrap">{{ m.validity_badge(d, true) }}</td>
+                <td class="col-num {{ days < 0 ? 'text-danger' : 'text-warning' }}">{{ days < 0 ? '−' ~ (-days) : days }}</td>
+                <td class="col-nowrap">{% if d.currentVersion %}v{{ d.currentVersion.number }} <span class="hints">{{ d.currentVersion.createdAt|date('d.m.Y') }}</span>{% else %}—{% endif %}</td>
+                <td class="col-nowrap">{{ d.lastViewedAt ? d.lastViewedAt|date('d.m.Y') : 'никогда' }}</td>
+                <td class="col-num">{{ d.viewCount }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table></div>{% endif %}
+</div>
+
+<div class="grid grid--two">
+    <div class="card table-card">
+        <div class="card__head card__head--padded"><h2 class="h-section">По ответственным</h2></div>
+        {% if owners|length == 0 %}<div class="table-card__empty">Нет устаревших документов.</div>{% else %}
+        <div class="table-scroll"><table class="admin-table">
+            <thead><tr><th>Ответственный</th><th class="col-num">Просроч.</th><th class="col-num">Истекает</th></tr></thead>
+            <tbody>{% for o in owners %}<tr><td>{{ o.name }}</td><td class="col-num {{ o.expired > 0 ? 'text-danger' }}">{{ o.expired }}</td><td class="col-num {{ o.soon > 0 ? 'text-warning' }}">{{ o.soon }}</td></tr>{% endfor %}</tbody>
+        </table></div>{% endif %}
+    </div>
+    <div class="card card--info">
+        <h2 class="h-section">Что делать</h2>
+        <p>Просроченный документ нужно либо актуализировать (загрузить новую версию и продлить дату «Актуален до» в карточке), либо перенести в архив, если он утратил силу. Уведомления ответственным и администраторам рассылаются ежедневно командой <code>app:documents:expiry</code>; запустить проверку вручную можно в «Настройках».</p>
+        <p>Кнопка «В реестре» открывает список проблемных документов раздела с фильтрами, а «Выгрузить CSV» — весь перечень устаревших документов с ответственными и модераторами разделов для рассылки или совещания.</p>
+    </div>
+</div>
+{% endblock %}

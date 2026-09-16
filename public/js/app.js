@@ -31,6 +31,26 @@
             });
         }
 
+        /* Копирование в буфер обмена (data-copy="селектор или текст") */
+        Array.prototype.forEach.call(document.querySelectorAll('[data-copy]'), function (btn) {
+            btn.addEventListener('click', function () {
+                var ref = btn.getAttribute('data-copy');
+                var source = ref ? document.querySelector(ref) : null;
+                var text = source ? (source.value !== undefined && source.tagName !== 'DIV' ? source.value : source.textContent) : ref;
+                var done = function () {
+                    var label = btn.textContent;
+                    btn.textContent = 'Скопировано';
+                    btn.classList.add('is-done');
+                    setTimeout(function () { btn.textContent = label; btn.classList.remove('is-done'); }, 1500);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done, function () { window.prompt('Скопируйте:', text); });
+                } else {
+                    window.prompt('Скопируйте:', text);
+                }
+            });
+        });
+
         /* Автоотправка при выборе */
         Array.prototype.forEach.call(document.querySelectorAll('[data-autosubmit]'), function (el) {
             el.addEventListener('change', function () { if (el.form) { el.form.submit(); } });

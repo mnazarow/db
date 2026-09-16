@@ -1,0 +1,198 @@
+{% extends 'admin/_layout.html.twig' %}
+
+{% block title %}Интеграции{% endblock %}
+{% block admin_title %}Интеграции{% endblock %}
+{% block admin_actions %}
+    <a class="btn btn--ghost" href="#api-keys">Ключи API</a>
+    <a class="btn btn--ghost" href="#webhook">Webhook</a>
+    <a class="btn btn--ghost" href="#llm">Описания через LLM</a>
+{% endblock %}
+
+{% block admin_body %}
+{% if new_token %}
+<div class="card card--token" id="new-token">
+    <h2 class="h-section">Новый ключ API создан</h2>
+    <p>Скопируйте ключ сейчас и сохраните в настройках внешней системы — в портале хранится только его хэш, повторно ключ не показывается.</p>
+    <div class="token-row">
+        <input class="form-control token-row__value" id="new-token-value" type="text" readonly value="{{ new_token }}" onclick="this.select()">
+        <button type="button" class="btn btn--pill btn--small" data-copy="#new-token-value">Скопировать</button>
+    </div>
+    <pre class="code-block">curl -H "Authorization: Bearer {{ new_token }}" {{ api_base }}/documents?per_page=5</pre>
+</div>
+{% endif %}
+
+<div class="grid grid--two" id="api-keys">
+    <div class="card table-card">
+        <div class="card__head card__head--padded"><h2 class="h-section">Ключи REST API</h2>
+            <span class="badge {{ keys|filter(k => k.enabled)|length > 0 ? 'badge--done' : 'badge--none' }}"><span class="badge__dot"></span>{{ keys|filter(k => k.enabled)|length|plural(['активный ключ', 'активных ключа', 'активных ключей']) }}</span></div>
+        {% if keys|length == 0 %}
+            <div class="table-card__empty">Ключей пока нет. Создайте ключ для индексатора RAG или другой внешней системы.</div>
+        {% else %}
+        <div class="table-scroll"><table class="admin-table keys-table">
+            <thead><tr><th>Название</th><th>Ключ</th><th>Документы</th><th>Запросов</th><th>Последний запрос</th><th class="col-actions"></th></tr></thead>
+            <tbody>
+            {% for key in keys %}
+                <tr class="{{ not key.enabled ? 'is-inactive' }}">
+                    <td><b>{{ key.name }}</b><div class="hints">создан {{ key.createdAt|date('d.m.Y') }}{% if key.createdBy %} · {{ key.createdBy.displayName }}{% endif %}{% if not key.enabled %} · <span class="text-danger">отключён</span>{% endif %}</div></td>
+                    <td><code>{{ key.tokenPrefix }}…</code></td>
+                    <td>{% if key.includeInternal %}<span class="tag tag--internal">все, включая внутренние</span>{% else %}только открытые{% endif %}</td>
+                    <td class="col-num">{{ key.requestCount }}</td>
+                    <td class="col-nowrap">{% if key.lastUsedAt %}{{ key.lastUsedAt|date('d.m.Y H:i') }}<div class="hints">{{ key.lastUsedIp }}</div>{% else %}—{% endif %}</td>
+                    <td class="col-actions">
+                        <div class="row-actions">
+                            <form method="post" action="{{ path('admin_integrations_key_toggle', {id: key.id}) }}" class="inline-form"><input type="hidden" name="_token" value="{{ csrf_token('integrations') }}"><button type="submit" class="btn btn--ghost btn--small">{{ key.enabled ? 'Отключить' : 'Включить' }}</button></form>
+                            <form method="post" action="{{ path('admin_integrations_key_delete', {id: key.id}) }}" class="inline-form" data-confirm="Удалить ключ «{{ key.name }}»? Внешняя система с этим ключом потеряет доступ."><input type="hidden" name="_token" value="{{ csrf_token('integrations') }}"><button type="submit" class="btn btn--ghost btn--small btn--danger">Удалить</button></form>
+                        </div>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table></div>
+        {% endif %}
+        <div class="card__padded">
+            <form method="post" action="{{ path('admin_integrations_key_create') }}" class="form">
+                <input type="hidden" name="_token" value="{{ csrf_token('integrations') }}">
+                <div class="form-row">
+                    <label class="form-label" for="key-name">Новый ключ</label>
+                    <div class="toolbar__row toolbar__row--compact">
+                        <input class="form-control form-control--inline" id="key-name" name="name" maxlength="128" placeholder="Например: Индексатор RAG" required>
+                        <label class="form-check form-check--inline"><input type="checkbox" name="include_internal" value="1"><span>включая внутренние документы</span></label>
+                        <button type="submit" class="btn btn--pill btn--small">Создать ключ</button>
+                    </div>
+                    <div class="form-help">Ключ видит только опубликованные документы; черновики через API недоступны. Без флажка внешней системе отдаются лишь <b>открытые</b> документы (как гостям портала).</div>
+                </div>
+            </form>
+        </div>
+    </div>
+    <div class="card card--info">
+        <h2 class="h-section">API для выгрузки в RAG</h2>
+        <p>Базовый адрес: <code>{{ api_base }}</code>. Ключ передаётся заголовком <code>Authorization: Bearer &lt;ключ&gt;</code> или <code>X-Api-Key: &lt;ключ&gt;</code>. Ответы — JSON в UTF-8; ошибки — <code>{"error": {"code", "message"}}</code>.</p>
+        <table class="api-table">
+            <tbody>
+            <tr><td><code>GET /sections</code></td><td>дерево разделов (плоский список с <code>parent_id</code>)</td></tr>
+            <tr><td><code>GET /documents</code></td><td>список документов: <code>updated_since</code>, <code>section</code>, <code>type</code>, <code>status=published|archived|all</code>, <code>tag</code>, <code>q</code>, <code>page</code>, <code>per_page</code> (до 200)</td></tr>
+            <tr><td><code>GET /documents/{id}</code></td><td>карточка, версии и извлечённый текст (<code>text=0</code> — без текста)</td></tr>
+            <tr><td><code>GET /documents/{id}/text</code></td><td>текст версии (<code>version=N</code>) — для эмбеддингов</td></tr>
+            <tr><td><code>GET /documents/{id}/content</code></td><td>исходный файл или HTML страницы</td></tr>
+            <tr><td><code>GET /changes?since=…</code></td><td>изменившиеся, скрытые и удалённые документы с момента <code>since</code> — для инкрементальной синхронизации</td></tr>
+            <tr><td><code>GET /search?q=…</code></td><td>поиск как на портале</td></tr>
+            </tbody>
+        </table>
+        <p class="form-help">Текст извлекается из страниц, txt/md/csv/html, {{ extraction.pdf ? 'PDF (pdftotext установлен)' : 'PDF — <b>pdftotext не установлен</b> (пакет poppler-utils)' }}, docx/xlsx/pptx и odt/ods/odp. Обращения через API не учитываются в статистике просмотров. Подробнее — в руководстве, раздел «Интеграции».</p>
+    </div>
+</div>
+
+<div class="grid grid--two" id="webhook">
+    <div class="card card--form">
+        <div class="card__head"><h2 class="h-section">Webhook об изменениях</h2>
+            {% if webhook.enabled %}<span class="badge badge--done"><span class="badge__dot"></span>Включён</span>{% else %}<span class="badge badge--none"><span class="badge__dot"></span>Выключен</span>{% endif %}</div>
+        <p>После каждого изменения документов (создание, новая версия, публикация, архив, перемещение, удаление) портал отправляет на указанный адрес POST-запрос с JSON <code>{"event": "documents.changed", "changes": [...], "deleted": [...]}</code>. Внешняя система по нему запускает синхронизацию через <code>/changes</code>.</p>
+        <form method="post" action="{{ path('admin_integrations_webhook') }}" class="form">
+            <input type="hidden" name="_token" value="{{ csrf_token('integrations') }}">
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="enabled" value="1" {{ webhook.enabled ? 'checked' }}><span>Отправлять webhook при изменениях документов</span></label>
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="webhook-url">Адрес (URL)</label>
+                <input class="form-control" id="webhook-url" name="url" type="url" placeholder="https://rag.example.local/hooks/docportal" value="{{ webhook.url }}">
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="webhook-secret">Секрет для подписи</label>
+                <input class="form-control" id="webhook-secret" name="secret" type="password" autocomplete="new-password" placeholder="{{ webhook.secret ? 'сохранён (' ~ webhook.secret_masked ~ ') — введите новый, чтобы заменить' : 'не задан' }}">
+                <div class="form-help">Если задан, запрос содержит заголовок <code>X-Docportal-Signature: sha256=HMAC-SHA256(тело, секрет)</code>.{% if webhook.secret %} <label class="form-check form-check--inline"><input type="checkbox" name="clear_secret" value="1"><span>удалить секрет</span></label>{% endif %}</div>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn--pill btn--small">Сохранить</button>
+            </div>
+        </form>
+        {% if webhook.url %}
+        <form method="post" action="{{ path('admin_integrations_webhook_test') }}" class="form-actions">
+            <input type="hidden" name="_token" value="{{ csrf_token('integrations') }}">
+            <button type="submit" class="btn btn--ghost btn--small">Отправить пробный запрос</button>
+        </form>
+        {% endif %}
+    </div>
+    <div class="card card--info">
+        <h2 class="h-section">Как синхронизировать индекс</h2>
+        <p><b>Первичная загрузка.</b> Пройдите <code>GET /documents?per_page=200&amp;page=1…N</code>, для каждого документа возьмите <code>text</code> из карточки или <code>/documents/{id}/text</code>, разбейте на фрагменты и сохраните эмбеддинги вместе с <code>id</code>, <code>version.number</code>, <code>section.full_name</code>, <code>links.web</code>.</p>
+        <p><b>Обновления.</b> Периодически (или по webhook) вызывайте <code>GET /changes?since=&lt;next_since прошлого раза&gt;</code>: документы из <code>changed</code> переиндексируйте, из <code>removed</code> и <code>deleted</code> — удалите из индекса. Если в ответе <code>truncated: true</code>, повторите запрос с меньшим окном.</p>
+        <p>Webhook отправляется один раз без повторов (тайм-аут 10 с); при недоставке достаточно регулярного опроса <code>/changes</code>.</p>
+    </div>
+</div>
+
+<div class="grid grid--two" id="llm">
+    <div class="card card--form">
+        <div class="card__head"><h2 class="h-section">Описания документов через LLM</h2>
+            {% if llm.enabled %}<span class="badge badge--done"><span class="badge__dot"></span>Включено</span>{% else %}<span class="badge badge--none"><span class="badge__dot"></span>Выключено</span>{% endif %}</div>
+        <p>Портал может формировать краткие описания документов через внешнюю языковую модель по OpenAI-совместимому API (OpenAI, OpenRouter, Ollama, LM Studio, vLLM, LocalAI и др.). Модель получает название, раздел, теги, имя файла и начало текста документа.</p>
+        <form method="post" action="{{ path('admin_integrations_llm') }}" class="form">
+            <input type="hidden" name="_token" value="{{ csrf_token('integrations') }}">
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="enabled" value="1" {{ llm.enabled ? 'checked' }}><span>Включить описание через LLM</span></label>
+            </div>
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="auto_describe" value="1" {{ llm.auto_describe ? 'checked' }}><span>Автоматически описывать новые документы (при создании и импорте), если описание не заполнено</span></label>
+            </div>
+            <div class="form-grid">
+                <div class="form-row">
+                    <label class="form-label" for="llm-base-url">Адрес API</label>
+                    <input class="form-control" id="llm-base-url" name="base_url" type="url" value="{{ llm.base_url }}" placeholder="https://api.openai.com/v1">
+                    <div class="form-help">Запрос идёт на <code>&lt;адрес&gt;/chat/completions</code>. Ollama: <code>http://host:11434/v1</code>.</div>
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="llm-model">Модель</label>
+                    <input class="form-control" id="llm-model" name="model" value="{{ llm.model }}" placeholder="gpt-4o-mini" required>
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="llm-api-key">Ключ API</label>
+                    <input class="form-control" id="llm-api-key" name="api_key" type="password" autocomplete="new-password" placeholder="{{ llm.api_key ? 'сохранён (' ~ llm.api_key_masked ~ ') — введите новый, чтобы заменить' : 'не задан (для локальных серверов не нужен)' }}">
+                    {% if llm.api_key %}<div class="form-help"><label class="form-check form-check--inline"><input type="checkbox" name="clear_api_key" value="1"><span>удалить сохранённый ключ</span></label></div>{% endif %}
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="llm-max-chars">Передавать текста, символов</label>
+                    <input class="form-control" id="llm-max-chars" name="max_input_chars" type="number" min="500" max="400000" step="500" value="{{ llm.max_input_chars }}">
+                    <div class="form-help">Начало текста документа, которое видит модель (≈ {{ (llm.max_input_chars / 3.5)|round }} токенов).</div>
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="llm-timeout">Тайм-аут, с</label>
+                    <input class="form-control" id="llm-timeout" name="timeout" type="number" min="5" max="600" value="{{ llm.timeout }}">
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="llm-temperature">Температура</label>
+                    <input class="form-control" id="llm-temperature" name="temperature" type="number" min="0" max="2" step="0.1" value="{{ llm.temperature }}">
+                </div>
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="llm-prompt">Инструкция для модели (системный промпт)</label>
+                <textarea class="form-control" id="llm-prompt" name="prompt" rows="5">{{ llm.prompt }}</textarea>
+                <div class="form-help">{% if llm.is_default_prompt %}Используется инструкция по умолчанию.{% else %}Инструкция изменена; очистите поле, чтобы вернуть вариант по умолчанию.{% endif %}</div>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn--pill btn--small">Сохранить</button>
+            </div>
+        </form>
+        <div class="form-actions">
+            <form method="post" action="{{ path('admin_integrations_llm_test') }}" class="inline-form">
+                <input type="hidden" name="_token" value="{{ csrf_token('integrations') }}">
+                <button type="submit" class="btn btn--ghost btn--small" {{ not llm.enabled ? 'disabled' }}>Проверить подключение</button>
+            </form>
+            <form method="post" action="{{ path('admin_integrations_llm_describe') }}" class="inline-form" data-confirm="Сформировать описания для документов без описания (до {{ describe_limit }} за раз)? Это займёт до минуты.">
+                <input type="hidden" name="_token" value="{{ csrf_token('integrations') }}">
+                <button type="submit" class="btn btn--ghost btn--small" {{ not llm.enabled or descriptions.without == 0 ? 'disabled' }}>Описать документы без описания (до {{ describe_limit }})</button>
+            </form>
+        </div>
+    </div>
+    <div class="card">
+        <h2 class="h-section">Описания документов</h2>
+        <div class="grid grid--stats grid--stats-compact">
+            <div class="stat"><div class="stat__label">Без описания</div><div class="stat__value {{ descriptions.without > 0 ? 'text-warning' }}">{{ descriptions.without }}</div></div>
+            <div class="stat"><div class="stat__label">Сформировано LLM</div><div class="stat__value">{{ descriptions.llm }}</div></div>
+            <div class="stat"><div class="stat__label">Написано вручную</div><div class="stat__value">{{ descriptions.with_description - descriptions.llm }}</div></div>
+        </div>
+        <p class="form-help">Без учёта архива. Сгенерированное описание помечается в карточке документа значком «ИИ»; если модератор отредактирует его, пометка снимается и модель такое описание больше не трогает.</p>
+        <h3 class="h-sub">Массовая обработка</h3>
+        <p>Для всех документов без описания: <code>docportal console app:documents:describe --missing</code> (порциями по <code>--limit=50</code>; в cron добавлен ежечасный запуск). Переформировать сгенерированные ранее: <code>--regenerate</code>; переписать и ручные: <code>--force</code>. Предпросмотр без записи: <code>--dry-run</code>.</p>
+        <p>При импорте из каталога есть флажок «Сформировать описания через LLM» (в консоли — <code>--describe</code>). В карточке документа модераторам доступна кнопка «Описать через ИИ».</p>
+    </div>
+</div>
+{% endblock %}

@@ -1,7 +1,7 @@
 """
 Сквозная проверка портала через браузер (Playwright) и снятие скриншотов для документации.
 Перед запуском: загрузите демо-данные (php bin/console app:demo:load --force) и запустите сервер
-(./scripts/dev-server.sh). Запуск: python3 tests/e2e_screens.py http://127.0.0.1:8080 docs/images
+(./scripts/dev-server.sh). Запуск: python3 tests/e2e_screens.py http://127.0.0.1:8080 docs/images [var/import] [http://127.0.0.1:8090/v1]
 """
 import pathlib
 import re
@@ -17,6 +17,8 @@ OUT.mkdir(parents=True, exist_ok=True)
 # Каталог импорта того сервера, который проверяется (IMPORT_DIR); нужен для шага «Импорт из каталога».
 IMPORT_DIR = pathlib.Path(sys.argv[3] if len(sys.argv) > 3 else 'var/import')
 PASSWORD = 'Demo12345'
+# Адрес заглушки OpenAI-совместимого API (tests/mock_llm_server.py), например http://127.0.0.1:8090/v1; пусто — шаги LLM пропускаются.
+LLM_MOCK = sys.argv[4] if len(sys.argv) > 4 else ''
 # Имя тестового пользователя уникально: демо-данные (app:demo:load --force) пользователей не удаляют.
 TEST_USER = 'test%d' % (int(time.time()) % 1000000)
 
@@ -263,6 +265,14 @@ with sync_playwright() as p:
     assert page.locator('.doc-table tbody tr').count() >= 2
     page.goto(BASE + '/admin/statistics')
     shot(page, '37-admin-statistics')
+    page.goto(BASE + '/admin/statistics/validity')
+    expect(page.locator('.validity-table tbody tr').first).to_be_visible()
+    assert page.locator('.outdated-table__group').count() >= 3, 'outdated documents must be grouped by section'
+    shot(page, '37-admin-statistics-validity')
+    page.check('input[name=only_problems]')
+    expect(page).to_have_url(re.compile(r'only_problems=1'))
+    expect(page.locator('.validity-table tbody tr.is-inactive')).to_have_count(0)
+    print('validity by section ok')
     page.goto(BASE + '/admin/events')
     shot(page, '38-admin-events', full=False)
     page.goto(BASE + '/admin/settings')
@@ -281,6 +291,40 @@ with sync_playwright() as p:
     page.click('form[action$="/expiry-run"] button')
     expect(page.locator('.alert--success').first).to_contain_text('Проверка сроков выполнена')
     shot(page, '40-admin-expiry-run', full=False)
+    # 4б. Интеграции: ключ API, LLM (заглушка на LLM_MOCK), webhook
+    page.goto(BASE + '/admin/integrations')
+    expect(page.locator('h1')).to_contain_text('Интеграции')
+    page.fill('#key-name', 'Индексатор RAG')
+    page.click('form[action$="/integrations/keys"] button[type=submit]')
+    api_token = page.locator('#new-token-value').input_value()
+    assert api_token.startswith('dp_'), api_token
+    shot(page, '45-admin-integrations')
+    import urllib.request
+    req = urllib.request.Request(BASE + '/api/v1/documents?per_page=2', headers={'Authorization': 'Bearer ' + api_token})
+    with urllib.request.urlopen(req) as resp:
+        import json as _json
+        api_data = _json.loads(resp.read().decode('utf-8'))
+    assert api_data['total'] > 0 and api_data['items'][0]['links']['text'], api_data
+    print('api ok', api_data['total'])
+    if LLM_MOCK:
+        page.check('form[action$="/integrations/llm"] input[name=enabled]')
+        page.check('form[action$="/integrations/llm"] input[name=auto_describe]')
+        page.fill('#llm-base-url', LLM_MOCK)
+        page.fill('#llm-model', 'qwen2.5:7b-instruct')
+        page.fill('#llm-api-key', 'sk-demo-key-000000')
+        page.click('form[action$="/integrations/llm"] button[type=submit]')
+        expect(page.locator('.alert--success').first).to_contain_text('LLM сохранены')
+        page.click('form[action$="/llm/test"] button')
+        expect(page.locator('.alert--success').first).to_contain_text('ответила')
+        page.click('form[action$="/llm/describe"] button')
+        expect(page.locator('.alert--success').first).to_contain_text('Сформировано описаний')
+        page.goto(BASE + '/admin/integrations#llm')
+        shot(page, '46-admin-integrations-llm')
+        # карточка документа с описанием от ИИ
+        page.goto(BASE + '/search?q=ПОЛ-003')
+        page.goto(BASE + page.locator('.doc-table__title').first.get_attribute('href'))
+        expect(page.locator('.ai-badge')).to_be_visible()
+        shot(page, '47-document-ai-description', full=False)
     # 4а. Импорт из каталога: папки → разделы, файлы → документы
     make_import_tree(IMPORT_DIR / 'Архив ОТК')
     page.goto(BASE + '/admin/import')

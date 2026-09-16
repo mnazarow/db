@@ -51,6 +51,7 @@ final class ImportDirectoryCommand extends Command
             ->addOption('no-update', null, InputOption::VALUE_NONE, 'Не загружать новые версии для изменившихся файлов, которые уже есть в разделе')
             ->addOption('delete-source', null, InputOption::VALUE_NONE, 'Удалять исходные файлы после успешного импорта (перенос) и опустевшие папки')
             ->addOption('any-extension', null, InputOption::VALUE_NONE, 'Импортировать файлы с любыми расширениями, не только из ALLOWED_EXTENSIONS')
+            ->addOption('describe', null, InputOption::VALUE_NONE, 'Сформировать описания новых документов через LLM (интеграция должна быть включена)')
             ->addOption('dry-run', null, InputOption::VALUE_NONE, 'Только показать план (что будет создано, обновлено, пропущено), ничего не менять')
             ->addOption('yes', 'y', InputOption::VALUE_NONE, 'Не спрашивать подтверждения')
             ->setHelp(<<<'HELP'
@@ -113,7 +114,11 @@ HELP);
             deleteSource: (bool) $input->getOption('delete-source'),
             anyExtension: (bool) $input->getOption('any-extension'),
             publicAccess: !$input->getOption('internal'),
+            describe: (bool) $input->getOption('describe'),
         );
+        if ($options->describe && !$this->importer->canDescribe()) {
+            $io->warning('Описание через LLM выключено в настройках интеграций — документы будут импортированы без описаний.');
+        }
 
         try {
             $plan = $this->importer->preview($this->importer->scan($dir, $options), $options);
@@ -135,6 +140,7 @@ HELP);
             ['Срок актуальности' => $options->validityMonths > 0 ? $options->validityMonths.' мес.' : 'бессрочно'],
             ['Изменившиеся файлы' => $options->updateExisting ? 'новая версия' : 'пропускаются'],
             ['Исходные файлы' => $options->deleteSource ? 'удаляются после импорта' : 'остаются на месте'],
+            ['Описания через LLM' => $options->describe && $this->importer->canDescribe() ? 'да' : 'нет'],
             ['Папок → разделов' => \sprintf('%d (пропущено %d)', $summary['dirs'], $summary['dirsSkipped'])],
             ['Файлов → документов' => \sprintf('%d, %s (пропущено %d)', $summary['files'], FileStorage::humanSize($summary['bytes']), $summary['filesSkipped'])],
         );

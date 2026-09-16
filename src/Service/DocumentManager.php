@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Service;
 
 use App\Entity\Document;
+use App\Entity\DocumentDeletion;
 use App\Entity\DocumentEvent;
 use App\Entity\DocumentVersion;
 use App\Entity\Section;
@@ -276,15 +277,22 @@ final class DocumentManager
         $this->auditLogger->info('Документ перенесён в архив', ['document' => $document->getId(), 'by' => $actor->getUsername()]);
     }
 
-    /** Удаляет документ со всеми версиями, файлами и событиями. */
+    /** Удаляет документ со всеми версиями, файлами и событиями; оставляет отметку об удалении для API. */
     public function delete(Document $document, User $actor): void
     {
         $id = (int) $document->getId();
         $title = $document->getTitle();
-        $this->auditLogger->info('Удалён документ', ['document' => $id, 'title' => $title, 'section' => $document->getSection()->getFullName(), 'versions' => $document->getVersionCount(), 'by' => $actor->getUsername()]);
+        $sectionPath = $document->getSection()->getFullName();
+        $this->auditLogger->info('Удалён документ', ['document' => $id, 'title' => $title, 'section' => $sectionPath, 'versions' => $document->getVersionCount(), 'by' => $actor->getUsername()]);
         $document->setCurrentVersion(null);
         $this->em->flush();
         $this->em->remove($document);
+        $existing = $this->em->find(DocumentDeletion::class, $id);
+        if (null !== $existing) {
+            $this->em->remove($existing);
+            $this->em->flush();
+        }
+        $this->em->persist(new DocumentDeletion($id, $title, $sectionPath, $actor->getDisplayName()));
         $this->em->flush();
         $this->storage->deleteDocumentDir($id);
     }

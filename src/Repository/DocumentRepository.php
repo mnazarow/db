@@ -284,6 +284,28 @@ final class DocumentRepository extends ServiceEntityRepository
     }
 
     /**
+     * Раздел и дата «актуален до» каждого опубликованного документа (для сводки актуальности по дереву разделов).
+     *
+     * @return list<array{sid: int, vu: ?\DateTimeImmutable}>
+     */
+    public function publishedValidity(): array
+    {
+        $rows = $this->createQueryBuilder('d')->select('IDENTITY(d.section) AS sid, d.validUntil AS vu')
+            ->andWhere('d.status = :st')->setParameter('st', Document::STATUS_PUBLISHED)
+            ->getQuery()->getArrayResult();
+        $out = [];
+        foreach ($rows as $row) {
+            $vu = $row['vu'];
+            if (null !== $vu && !$vu instanceof \DateTimeImmutable) {
+                $vu = new \DateTimeImmutable($vu instanceof \DateTimeInterface ? $vu->format('Y-m-d') : (string) $vu);
+            }
+            $out[] = ['sid' => (int) $row['sid'], 'vu' => $vu];
+        }
+
+        return $out;
+    }
+
+    /**
      * Число документов по разделам (прямое вхождение), сгруппировано по статусам.
      *
      * @return array<int, array<string, int>> section_id => [status => count]
@@ -301,6 +323,119 @@ final class DocumentRepository extends ServiceEntityRepository
         }
 
         return $out;
+    }
+
+    /**
+     * Выборка для REST API (индексация в RAG): постраничный список видимых документов с фильтрами.
+     *
+     * @param array{statuses: list<string>, public_only: bool, section?: ?Section, subtree?: bool, type?: ?string, updated_since?: ?\DateTimeImmutable, tag?: ?string, q?: ?string} $filters
+     *
+     * @return array{items: list<Document>, total: int}
+     */
+    public function findForApi(array $filters, int $page, int $perPage): array
+    {
+        $qb = $this->apiQb($filters);
+        $count = (clone $qb)->select('COUNT(d.id)')->resetDQLPart('orderBy');
+        $total = (int) $count->getQuery()->getSingleScalarResult();
+        $items = $qb->orderBy('d.updatedAt', 'ASC')->addOrderBy('d.id', 'ASC')
+            ->setFirstResult(($page - 1) * $perPage)->setMaxResults($perPage)
+            ->getQuery()->getResult();
+
+        return ['items' => $items, 'total' => $total];
+    }
+
+    /**
+     * Документы, которые изменились после $since, но внешней системе больше не видны
+     * (сняты с публикации, в архиве или стали внутренними при ключе «только открытые»).
+     *
+     * @return list<Document>
+     */
+    public function findHiddenSinceForApi(\DateTimeImmutable $since, bool $publicOnly, bool $includeArchived, int $limit = 1000): array
+    {
+        $visibleStatuses = $includeArchived ? [Document::STATUS_PUBLISHED, Document::STATUS_ARCHIVED] : [Document::STATUS_PUBLISHED];
+        $qb = $this->baseQb()->andWhere('d.updatedAt > :since')->setParameter('since', $since);
+        $hidden = 'd.status NOT IN (:visible)';
+        $qb->setParameter('visible', $visibleStatuses);
+        if ($publicOnly) {
+            $hidden = '('.$hidden.' OR d.isPublic = false)';
+        }
+
+        return $qb->andWhere($hidden)->orderBy('d.updatedAt', 'ASC')->setMaxResults($limit)->getQuery()->getResult();
+    }
+
+    /** @param array{statuses: list<string>, public_only: bool, section?: ?Section, subtree?: bool, type?: ?string, updated_since?: ?\DateTimeImmutable, tag?: ?string, q?: ?string} $filters */
+    private function apiQb(array $filters): QueryBuilder
+    {
+        $qb = $this->baseQb()->andWhere('d.status IN (:st)')->setParameter('st', $filters['statuses']);
+        if ($filters['public_only']) {
+            $qb->andWhere('d.isPublic = true');
+        }
+        if (!empty($filters['section'])) {
+            if ($filters['subtree'] ?? true) {
+                $qb->andWhere('s.path LIKE :path')->setParameter('path', $filters['section']->getPath().'%');
+            } else {
+                $qb->andWhere('d.section = :section')->setParameter('section', $filters['section']);
+            }
+        }
+        if (!empty($filters['type'])) {
+            $qb->andWhere('d.type = :type')->setParameter('type', $filters['type']);
+        }
+        if (!empty($filters['updated_since'])) {
+            $qb->andWhere('d.updatedAt > :since')->setParameter('since', $filters['updated_since']);
+        }
+        if (!empty($filters['tag'])) {
+            // Теги хранятся в JSON в нижнем регистре с \u-экранированием — ищем точное вхождение элемента массива.
+            $encoded = json_encode(mb_strtolower(trim((string) $filters['tag'])), \JSON_THROW_ON_ERROR);
+            $qb->andWhere('d.tags LIKE :tag')->setParameter('tag', '%'.addcslashes($encoded, '%_\\').'%');
+        }
+        if (!empty($filters['q'])) {
+            $terms = array_values(array_filter(preg_split('/\s+/u', mb_strtolower(trim($filters['q']))) ?: [], static fn ($t) => mb_strlen($t) >= 2));
+            foreach (\array_slice($terms, 0, 6) as $i => $term) {
+                $qb->andWhere(\sprintf('(LOWER(d.title) LIKE :t%1$d OR LOWER(d.code) LIKE :t%1$d OR LOWER(d.description) LIKE :t%1$d OR LOWER(d.tags) LIKE :t%1$d OR LOWER(cv.content) LIKE :t%1$d OR LOWER(cv.originalName) LIKE :t%1$d)', $i))
+                    ->setParameter('t'.$i, '%'.addcslashes($term, '%_').'%');
+            }
+        }
+
+        return $qb;
+    }
+
+    /**
+     * Документы для формирования описаний через LLM.
+     * $mode: missing — без описания; regenerate — без описания или с описанием от LLM; force — все.
+     *
+     * @return list<Document>
+     */
+    public function findForDescribing(string $mode, int $limit, ?Section $section = null, bool $includeArchived = false): array
+    {
+        $qb = $this->baseQb()->andWhere('d.currentVersion IS NOT NULL');
+        if (!$includeArchived) {
+            $qb->andWhere('d.status <> :archived')->setParameter('archived', Document::STATUS_ARCHIVED);
+        }
+        if ('missing' === $mode) {
+            $qb->andWhere("d.description IS NULL OR d.description = ''");
+        } elseif ('regenerate' === $mode) {
+            $qb->andWhere("d.description IS NULL OR d.description = '' OR d.descriptionSource = :llm")->setParameter('llm', Document::DESCRIPTION_LLM);
+        }
+        if (null !== $section) {
+            $qb->andWhere('s.path LIKE :path')->setParameter('path', $section->getPath().'%');
+        }
+
+        return $qb->orderBy('d.id', 'ASC')->setMaxResults($limit)->getQuery()->getResult();
+    }
+
+    /** @return array{total: int, with_description: int, llm: int, without: int} сводка по описаниям (без архива) */
+    public function countDescriptions(): array
+    {
+        $rows = $this->createQueryBuilder('d')
+            ->select("CASE WHEN d.description IS NULL OR d.description = '' THEN 'none' WHEN d.descriptionSource = 'llm' THEN 'llm' ELSE 'manual' END AS src, COUNT(d.id) AS cnt")
+            ->andWhere('d.status <> :archived')->setParameter('archived', Document::STATUS_ARCHIVED)
+            ->groupBy('src')->getQuery()->getArrayResult();
+        $out = ['none' => 0, 'llm' => 0, 'manual' => 0];
+        foreach ($rows as $row) {
+            $out[$row['src']] = (int) $row['cnt'];
+        }
+
+        return ['total' => $out['none'] + $out['llm'] + $out['manual'], 'with_description' => $out['llm'] + $out['manual'], 'llm' => $out['llm'], 'without' => $out['none']];
     }
 
     /** @return list<Document> самые просматриваемые опубликованные документы */

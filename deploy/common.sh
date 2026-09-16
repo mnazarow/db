@@ -202,6 +202,18 @@ pkg_install() {
     esac
 }
 
+# Необязательные пакеты: при неудаче — предупреждение, а не остановка.
+pkg_install_optional() {
+    [[ $# -eq 0 ]] && return 0
+    [[ -n "${PKG}" ]] || detect_os
+    info "Установка пакетов (необязательных): $*"
+    case "${PKG}" in
+        apt) apt_update_once; env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends "$@" >>"${LOG_FILE}" 2>&1 ;;
+        dnf) dnf install -y -q "$@" >>"${LOG_FILE}" 2>&1 ;;
+        *) return 1 ;;
+    esac
+}
+
 pkg_installed() {
     case "${PKG}" in
         apt) dpkg -s "$1" >/dev/null 2>&1 ;;
@@ -434,6 +446,20 @@ banner() {
 }
 
 # Команда управления /usr/local/bin/docportal (создаётся при установке и обновляется при обновлении).
+# Дополняет /etc/cron.d/<app> заданиями, появившимися в новых версиях (вызывается при обновлении native-установки).
+ensure_cron_entries() {
+    local cron_file="/etc/cron.d/${APP_ID}"
+    [[ -f "${cron_file}" ]] || return 0
+    if ! grep -q 'app:documents:describe' "${cron_file}"; then
+        cat >> "${cron_file}" <<EOF
+#  - ежечасно — описания документов через LLM (работает только если интеграция включена в панели администратора).
+20 * * * * root /usr/local/bin/${APP_ID} console app:documents:describe --missing --limit=50 --quiet-if-disabled --no-interaction >> ${LOG_DIR}/describe-cron.log 2>&1
+EOF
+        chmod 644 "${cron_file}"
+        info "В cron добавлено задание формирования описаний через LLM (app:documents:describe)."
+    fi
+}
+
 install_cli_wrapper() {
     cat > "/usr/local/bin/${APP_ID}" <<EOF
 #!/usr/bin/env bash
@@ -472,6 +498,14 @@ case "\${cmd}" in
         SRC=\$(cd "\${SRC}" && pwd)
         # Пользователь службы должен читать каталог: при необходимости скопируйте его в \${APP_DIR}/shared/import.
         exec runuser -u "\${SERVICE_USER}" -- php "\${APP_DIR}/current/bin/console" app:import:directory "\${SRC}" --root-as-section "\$@" ;;
+    api-key|describe)
+        # api-key list|create|disable|enable|delete — ключи REST API; describe — описания документов через LLM.
+        SUB="app:api-key"; [[ "\${cmd}" == "describe" ]] && SUB="app:documents:describe"
+        if [[ "\${INSTALL_MODE}" == "docker" ]]; then
+            cd "\${APP_DIR}/docker" && exec docker compose exec app php bin/console "\${SUB}" "\$@"
+        else
+            exec runuser -u "\${SERVICE_USER}" -- php "\${APP_DIR}/current/bin/console" "\${SUB}" "\$@"
+        fi ;;
     logs)
         if [[ "\${INSTALL_MODE}" == "docker" ]]; then cd "\${APP_DIR}/docker" && exec docker compose logs -f --tail=200 "\$@";
         else
@@ -488,7 +522,9 @@ case "\${cmd}" in
   restore ARCHIVE     Восстановление из резервной копии
   console <команда>   Консоль Symfony (например: console app:user:create ivanov --admin, console app:documents:expiry, console app:ldap:test)
   import [КАТАЛОГ]    Импорт документов из каталога: папки → разделы, файлы → документы
-                      (без каталога — импорт каталога IMPORT_DIR; параметры: --section=ID --dry-run --draft --delete-source …)
+                      (без каталога — импорт каталога IMPORT_DIR; параметры: --section=ID --dry-run --draft --delete-source --describe …)
+  api-key <действие>  Ключи REST API для внешних систем (RAG): list | create "Название" [--internal] | disable ID | enable ID | delete ID
+  describe            Сформировать описания документов через LLM (параметры: --missing --regenerate --force --limit=N --dry-run)
   logs                Журнал приложения
   uninstall           Удаление портала
 HELP

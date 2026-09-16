@@ -11,7 +11,7 @@
 {% block admin_body %}
 <div class="grid grid--stats">
     <div class="card"><div class="stat__label">Документов</div><div class="stat__value">{{ overview.documents_total }}</div><div class="stat__hint">опубликовано {{ overview.documents_by_status.published }}, черновиков {{ overview.documents_by_status.draft }}, в архиве {{ overview.documents_by_status.archived }}</div></div>
-    <div class="card"><div class="stat__label">Просрочено</div><div class="stat__value {{ overview.validity.expired > 0 ? 'text-danger' }}">{{ overview.validity.expired }}</div><div class="stat__hint">истекает в ближайшие {{ expiry_soon_days }} дн.: {{ overview.validity.soon }}</div></div>
+    <div class="card"><div class="stat__label">Просрочено</div><div class="stat__value {{ overview.validity.expired > 0 ? 'text-danger' }}">{{ overview.validity.expired }}</div><div class="stat__hint">истекает в ближайшие {{ expiry_soon_days }} дн.: {{ overview.validity.soon }} · <a href="{{ path('admin_statistics_validity') }}">по разделам →</a></div></div>
     <div class="card"><div class="stat__label">Просмотры за 30 дней</div><div class="stat__value">{{ overview.views_30d }}</div><div class="stat__hint">скачиваний: {{ overview.downloads_30d }}</div></div>
     <div class="card"><div class="stat__label">Новых версий за 30 дней</div><div class="stat__value">{{ overview.new_versions_30d }}</div><div class="stat__hint">всего версий: {{ overview.versions }}, файлов на {{ overview.storage_bytes|filesize }}</div></div>
     <div class="card"><div class="stat__label">Разделы и люди</div><div class="stat__value">{{ overview.sections }}</div><div class="stat__hint">пользователей {{ overview.users }} (домен: {{ overview.users_by_source.ldap }}), назначений модераторов {{ overview.moderators }}</div></div>
@@ -24,7 +24,7 @@
 
 <div class="grid grid--two">
     <div class="card table-card">
-        <div class="card__head card__head--padded"><h2 class="h-section">Требуют внимания</h2><a class="link-action" href="{{ path('admin_documents', {validity: 'expired'}) }}">Все просроченные</a></div>
+        <div class="card__head card__head--padded"><h2 class="h-section">Требуют внимания</h2><span><a class="link-action" href="{{ path('admin_statistics_validity') }}">Актуальность по разделам</a> · <a class="link-action" href="{{ path('admin_documents', {validity: 'expired'}) }}">Все просроченные</a></span></div>
         {% if expiring|length == 0 %}<div class="table-card__empty">Просроченных и истекающих документов нет.</div>{% else %}
         <div class="table-scroll"><table class="admin-table">
             <thead><tr><th>Документ</th><th>Раздел</th><th>Срок</th></tr></thead>

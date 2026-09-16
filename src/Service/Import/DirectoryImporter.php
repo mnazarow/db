@@ -11,6 +11,8 @@ use App\Repository\DocumentRepository;
 use App\Repository\SectionRepository;
 use App\Repository\UserRepository;
 use App\Service\DocumentManager;
+use App\Service\Llm\DocumentDescriber;
+use App\Service\Llm\LlmException;
 use App\Service\SectionManager;
 use App\Service\Validity;
 use Doctrine\ORM\EntityManagerInterface;
@@ -42,7 +44,14 @@ final class DirectoryImporter
         private readonly DocumentManager $documentManager,
         private readonly Validity $validity,
         private readonly LoggerInterface $auditLogger,
+        private readonly DocumentDescriber $describer,
     ) {
+    }
+
+    /** Можно ли формировать описания через LLM (интеграция включена в настройках). */
+    public function canDescribe(): bool
+    {
+        return $this->describer->isEnabled();
     }
 
     public function getScanner(): DirectoryScanner
@@ -269,6 +278,15 @@ final class DirectoryImporter
             ->setPublic($options->publicAccess)
             ->setValidUntil($options->validityMonths > 0 ? $this->validity->today()->modify('+'.$options->validityMonths.' months') : null);
         $this->documentManager->createFromPath($document, $abs, $entry['name'], 'Импорт из каталога: '.$source, $actor, $options->publish, $options->deleteSource, $options->anyExtension, ['import' => $abs]);
+        if ($options->describe && $this->describer->isEnabled()) {
+            try {
+                $this->describer->describe($document, $actor);
+            } catch (LlmException $e) {
+                $this->auditLogger->warning('Импорт: описание через LLM не сформировано', ['document' => $document->getId(), 'error' => $e->getMessage()]);
+
+                return [ImportPlan::RESULT_DOC_NEW, $document->getTitle().' (описание не сформировано: '.$e->getMessage().')'];
+            }
+        }
 
         return [ImportPlan::RESULT_DOC_NEW, $document->getTitle()];
     }

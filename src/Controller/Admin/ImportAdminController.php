@@ -61,6 +61,7 @@ final class ImportAdminController extends AbstractController
             'extensions' => $this->storage->getAllowedExtensions(),
             'max_mb' => $this->storage->getUploadMaxMb(),
             'recent_jobs' => $this->jobs->recent(5),
+            'can_describe' => $this->importer->canDescribe(),
         ]);
     }
 
@@ -186,6 +187,7 @@ final class ImportAdminController extends AbstractController
             'delete_source' => $defaults ? (bool) $bag->get('delete_source', false) : $bag->has('delete_source'),
             'any_extension' => $defaults ? (bool) $bag->get('any_extension', false) : $bag->has('any_extension'),
             'public' => $defaults ? (bool) $bag->get('public', true) : $bag->has('public'),
+            'describe' => $defaults ? (bool) $bag->get('describe', false) : $bag->has('describe'),
         ];
     }
 
@@ -231,6 +233,7 @@ final class ImportAdminController extends AbstractController
             anyExtension: (bool) $values['any_extension'],
             removeRootIfEmpty: (bool) $values['delete_source'] && '' !== $folder,
             publicAccess: (bool) $values['public'],
+            describe: (bool) $values['describe'] && $this->importer->canDescribe(),
         )];
     }
 

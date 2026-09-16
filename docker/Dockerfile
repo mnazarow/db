@@ -9,7 +9,7 @@ ARG TZ=Europe/Moscow
 
 # Системные библиотеки и расширения PHP, необходимые Symfony, Doctrine и входу через LDAP.
 RUN set -eux; \
-    apk add --no-cache icu-libs libzip libpng libjpeg-turbo freetype tzdata bash curl mysql-client su-exec libldap; \
+    apk add --no-cache icu-libs libzip libpng libjpeg-turbo freetype tzdata bash curl mysql-client su-exec libldap poppler-utils; \
     apk add --no-cache --virtual .build-deps $PHPIZE_DEPS icu-dev libzip-dev libpng-dev libjpeg-turbo-dev freetype-dev openldap-dev; \
     docker-php-ext-configure gd --with-freetype --with-jpeg; \
     docker-php-ext-install -j"$(nproc)" intl zip gd pdo_mysql opcache ldap; \

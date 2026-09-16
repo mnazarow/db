@@ -64,8 +64,14 @@
         <div class="doc-main">
             {% if document.description %}
                 <div class="card">
-                    <h2 class="h-section">Описание</h2>
+                    <div class="card__head"><h2 class="h-section">Описание</h2>{% if document.descriptionGenerated %}<span class="ai-badge" title="Сформировано языковой моделью {{ document.descriptionGeneratedAt ? document.descriptionGeneratedAt|date('d.m.Y H:i') }}">ИИ</span>{% endif %}</div>
                     <p class="doc-description">{{ document.description|nl2br }}</p>
+                    {% if document.descriptionGenerated %}<p class="form-help">Описание сформировано языковой моделью{% if document.descriptionGeneratedAt %} {{ document.descriptionGeneratedAt|date('d.m.Y') }}{% endif %} и может содержать неточности.{% if can_manage %} Отредактируйте его в карточке, если нужно — тогда пометка снимется.{% endif %}</p>{% endif %}
+                </div>
+            {% elseif llm_enabled|default(false) %}
+                <div class="card">
+                    <div class="card__head"><h2 class="h-section">Описание</h2></div>
+                    <p class="text-muted">Описания пока нет. Его можно написать в карточке документа или сформировать языковой моделью.</p>
                 </div>
             {% endif %}
 
@@ -166,6 +172,12 @@
                             <form method="post" action="{{ path('app_document_archive', {id: document.id}) }}" class="inline-form" data-confirm="Перенести документ в архив?">
                                 <input type="hidden" name="_token" value="{{ csrf_token('document_' ~ document.id) }}">
                                 <button type="submit" class="btn btn--ghost btn--block">В архив</button>
+                            </form>
+                        {% endif %}
+                        {% if llm_enabled|default(false) and current %}
+                            <form method="post" action="{{ path('app_document_describe', {id: document.id}) }}" class="inline-form" {% if document.description %}data-confirm="{{ document.descriptionGenerated ? 'Сформировать описание заново?' : 'Заменить описание, написанное вручную, на сформированное языковой моделью?' }}"{% endif %}>
+                                <input type="hidden" name="_token" value="{{ csrf_token('document_' ~ document.id) }}">
+                                <button type="submit" class="btn btn--ghost btn--block">{{ document.description ? 'Описать через ИИ заново' : 'Описать через ИИ' }}</button>
                             </form>
                         {% endif %}
                         <a class="btn btn--ghost btn--block" href="{{ path('app_document_stats', {id: document.id}) }}">Статистика документа</a>

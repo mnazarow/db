@@ -28,6 +28,8 @@ final class ImportOptions
         public readonly bool $removeRootIfEmpty = false,
         /** Создавать документы открытыми (читаются без входа) — иначе внутренними (только после входа). */
         public readonly bool $publicAccess = true,
+        /** Формировать описания новых документов через LLM (если интеграция включена). */
+        public readonly bool $describe = false,
     ) {
     }
 
@@ -44,6 +46,7 @@ final class ImportOptions
             'anyExtension' => $this->anyExtension,
             'removeRootIfEmpty' => $this->removeRootIfEmpty,
             'publicAccess' => $this->publicAccess,
+            'describe' => $this->describe,
         ];
     }
 
@@ -60,6 +63,7 @@ final class ImportOptions
             anyExtension: (bool) ($a['anyExtension'] ?? false),
             removeRootIfEmpty: (bool) ($a['removeRootIfEmpty'] ?? false),
             publicAccess: (bool) ($a['publicAccess'] ?? true),
+            describe: (bool) ($a['describe'] ?? false),
         );
     }
 }
