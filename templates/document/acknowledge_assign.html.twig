@@ -1,0 +1,73 @@
+{% extends 'base.html.twig' %}
+{% import '_macros.html.twig' as m %}
+
+{% block title %}Назначить ознакомление — {{ document.title }}{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        <div class="eyebrow">Ознакомление</div>
+        <div class="hero__row">
+            <h1 class="h-display">{{ document.title }}</h1>
+            <div class="hero__actions">
+                <a class="btn btn--ghost" href="{{ path('app_document_show', {id: document.id}) }}">← К документу</a>
+                <a class="btn btn--ghost" href="{{ path('app_document_acknowledgements', {id: document.id}) }}">Отчёт</a>
+            </div>
+        </div>
+    </div>
+</section>
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+    <div class="grid grid--two">
+        <div class="card card--form">
+            <h2 class="h-section">Кому назначить</h2>
+            <p>Ознакомление назначается с <b>текущей редакцией {{ version }}</b>. Сотрудник увидит документ в разделе «Мне на ознакомление» и подтвердит прочтение кнопкой «Ознакомлен»; портал запишет дату, время, адрес и номер редакции.</p>
+            <form method="post" class="form" data-ack-form>
+                <input type="hidden" name="_token" value="{{ csrf_token('acknowledge_' ~ document.id) }}">
+                <div class="form-row">
+                    <label class="form-label" for="ack-due">Срок ознакомления</label>
+                    <input class="form-control form-control--inline" id="ack-due" type="date" name="due" value="{{ default_due }}">
+                    <div class="form-help">Пустое поле — без срока. По сроку рассылаются напоминания, просрочка видна в отчёте.</div>
+                </div>
+                <div class="form-row form-row--check">
+                    <label class="form-check"><input type="checkbox" name="silent" value="1"><span>Не отправлять письма (назначить молча)</span></label>
+                </div>
+                <div class="form-row">
+                    <div class="toolbar__row toolbar__row--compact">
+                        <span class="form-label">Сотрудники</span>
+                        <button type="button" class="btn btn--ghost btn--small" data-ack-all>Выбрать всех</button>
+                        <button type="button" class="btn btn--ghost btn--small" data-ack-none>Снять выбор</button>
+                        <span class="hints" data-ack-counter>выбрано: 0</span>
+                    </div>
+                    <div class="ack-people">
+                        {% for department, users in by_department %}
+                            <div class="ack-people__group">
+                                <label class="form-check form-check--dept"><input type="checkbox" data-ack-group><span>{{ department }}</span></label>
+                                {% for u in users %}
+                                    <label class="form-check ack-people__person {{ assigned[u.id] is defined ? 'is-assigned' }}">
+                                        <input type="checkbox" name="users[]" value="{{ u.id }}" {{ assigned[u.id] is defined ? 'disabled' }}>
+                                        <span>{{ u.displayName }}
+                                            {% if assigned[u.id] is defined %}
+                                                <span class="hints">{{ assigned[u.id].confirmed ? 'ознакомлен ' ~ assigned[u.id].confirmedAt|date('d.m.Y') : 'уже назначено' }}</span>
+                                            {% endif %}
+                                        </span>
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="btn btn--pill">Назначить ознакомление</button>
+                </div>
+            </form>
+        </div>
+        <div class="card card--info">
+            <h2 class="h-section">Как это работает</h2>
+            <p>Подтверждение привязано к номеру редакции: после выпуска новой версии документа ознакомление назначается заново, а прежние подтверждения остаются в отчёте как история по той редакции.</p>
+            <p>Сотрудникам с указанным e-mail уходит письмо со ссылкой; напоминания рассылаются командой <code>app:documents:acknowledge-remind</code> (в cron — ежедневно) не чаще раза в {{ constant('App\\Service\\AcknowledgementService::REMINDER_INTERVAL_DAYS') }} дня.</p>
+            <p>Отчёт и «Лист ознакомления» для печати доступны по кнопке «Отчёт»: лист можно распечатать и подшить, если помимо электронного подтверждения нужна бумажная подпись.</p>
+        </div>
+    </div>
+</section>
+{% endblock %}

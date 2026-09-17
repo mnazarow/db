@@ -1,0 +1,41 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}Лист ознакомления — {{ document.title }}{% endblock %}
+{% block body_class %}page-print{% endblock %}
+
+{% block body %}
+<section class="container section">
+    <div class="print-actions no-print">
+        <button type="button" class="btn btn--pill btn--small" onclick="window.print()">Печать</button>
+        <a class="btn btn--ghost btn--small" href="{{ path('app_document_acknowledgements', {id: document.id, version: report.version}) }}">← К отчёту</a>
+    </div>
+    <div class="print-sheet">
+        <h1 class="print-sheet__title">Лист ознакомления с документом</h1>
+        <table class="print-sheet__head">
+            <tr><th>Документ</th><td><b>{{ document.title }}</b>{% if document.code %} ({{ document.code }}){% endif %}</td></tr>
+            <tr><th>Раздел</th><td>{{ document.section.fullName }}</td></tr>
+            <tr><th>Редакция</th><td>{{ report.version }}{% if document.currentVersion and document.currentVersion.number == report.version %} от {{ document.currentVersion.createdAt|date('d.m.Y') }}{% endif %}</td></tr>
+            <tr><th>Ответственный</th><td>{{ document.owner ? document.owner.displayName : '—' }}</td></tr>
+            {% if document.validUntil %}<tr><th>Актуален до</th><td>{{ document.validUntil|date('d.m.Y') }}</td></tr>{% endif %}
+            <tr><th>Лист сформирован</th><td>{{ printed_at|date('d.m.Y H:i') }}</td></tr>
+        </table>
+        <table class="print-sheet__table">
+            <thead><tr><th style="width:36px">№</th><th>Фамилия, имя, отчество</th><th>Подразделение</th><th style="width:130px">Дата ознакомления</th><th style="width:150px">Подпись</th></tr></thead>
+            <tbody>
+            {% for row in report.rows %}
+                <tr>
+                    <td>{{ loop.index }}</td>
+                    <td>{{ row.user.displayName }}</td>
+                    <td>{{ row.user.department ?: '' }}</td>
+                    <td>{% if row.confirmed %}{{ row.confirmedAt|date('d.m.Y') }}{% endif %}</td>
+                    <td>{% if row.confirmed %}<span class="print-sheet__mark">подтверждено в портале<br>{{ row.confirmedAt|date('d.m.Y H:i') }}</span>{% endif %}</td>
+                </tr>
+            {% else %}
+                <tr><td colspan="5">Ознакомление никому не назначено.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        <p class="print-sheet__note">Строки с отметкой «подтверждено в портале» заполнены автоматически: сотрудник подтвердил ознакомление с указанной редакцией документа в портале «{{ app_name }}» (зафиксированы дата, время и адрес). Пустые строки заполняются от руки.</p>
+    </div>
+</section>
+{% endblock %}

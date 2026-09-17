@@ -6,6 +6,8 @@ namespace App\Command;
 
 use App\Repository\UserRepository;
 use App\Repository\ApiKeyRepository;
+use App\Repository\DocumentAcknowledgementRepository;
+use App\Repository\DocumentTextRepository;
 use App\Security\Ldap\LdapSettings;
 use App\Service\PortalSettings;
 use App\Service\Text\TextExtractor;
@@ -30,6 +32,8 @@ final class CheckCommand extends Command
         private readonly TextExtractor $extractor,
         private readonly PortalSettings $settings,
         private readonly ApiKeyRepository $apiKeys,
+        private readonly DocumentTextRepository $texts,
+        private readonly DocumentAcknowledgementRepository $acknowledgements,
         private readonly string $projectDir,
         private readonly string $importDir,
     ) {
@@ -132,6 +136,27 @@ final class CheckCommand extends Command
             }
         } catch (\Throwable $e) {
             $io->warning('Не удалось проверить пользователей: '.$e->getMessage());
+        }
+
+        $io->section('Поиск');
+        try {
+            $index = $this->texts->summary();
+            $pending = \count($this->texts->findOutdatedDocumentIds(100000));
+            $io->writeln(\sprintf('Индекс содержимого: <info>%d из %d</info> документов (с текстом %d)%s', $index['indexed'], $index['documents'], $index['with_text'],
+                $pending > 0 ? \sprintf(', ожидают индексации: <comment>%d</comment> — запустите app:search:reindex', $pending) : ''));
+        } catch (\Throwable $e) {
+            $io->writeln('<comment>Индекс содержимого недоступен: '.$e->getMessage().'</comment>');
+        }
+
+        try {
+            $totals = $this->acknowledgements->totals();
+            if ($totals['assigned'] > 0) {
+                $io->section('Ознакомление');
+                $io->writeln(\sprintf('Назначено: <info>%d</info> по %d документам, подтвердили %d%s', $totals['assigned'], $totals['documents'], $totals['confirmed'],
+                    $totals['overdue'] > 0 ? \sprintf(', просрочено: <comment>%d</comment>', $totals['overdue']) : ''));
+            }
+        } catch (\Throwable $e) {
+            $io->writeln('<comment>Сводка ознакомлений недоступна: '.$e->getMessage().'</comment>');
         }
 
         $io->section('Интеграции');

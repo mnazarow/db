@@ -7,16 +7,20 @@ namespace App\Repository;
 use App\Entity\Document;
 use App\Entity\Section;
 use App\Entity\User;
+use App\Service\Text\SearchQuery;
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
+use Doctrine\DBAL\ArrayParameterType;
+use Doctrine\DBAL\Exception as DbalException;
 use Doctrine\ORM\QueryBuilder;
 use Doctrine\Persistence\ManagerRegistry;
+use Psr\Log\LoggerInterface;
 
 /**
  * @extends ServiceEntityRepository<Document>
  */
 final class DocumentRepository extends ServiceEntityRepository
 {
-    public function __construct(ManagerRegistry $registry)
+    public function __construct(ManagerRegistry $registry, private readonly ?LoggerInterface $logger = null)
     {
         parent::__construct($registry, Document::class);
     }
@@ -320,6 +324,63 @@ final class DocumentRepository extends ServiceEntityRepository
         $out = [];
         foreach ($rows as $row) {
             $out[(int) $row['sid']][$row['st']] = (int) $row['cnt'];
+        }
+
+        return $out;
+    }
+
+    /**
+     * Полнотекстовый поиск по содержимому файлов (таблица document_text, индекс FULLTEXT).
+     * Возвращает документы, отсортированные по релевантности, вместе с индексом их текста.
+     *
+     * @param list<string> $statuses
+     *
+     * @return list<array{document: Document, score: float, text: ?string}>
+     */
+    public function searchContent(SearchQuery $query, array $statuses, ?Section $section = null, int $limit = 30, bool $publicOnly = false): array
+    {
+        $boolean = $query->booleanMode();
+        if ('' === $boolean || [] === $statuses) {
+            return [];
+        }
+        $sql = 'SELECT t.document_id AS id, t.content AS content, MATCH (t.content) AGAINST (:q IN BOOLEAN MODE) AS score
+                FROM document_text t
+                JOIN document d ON d.id = t.document_id
+                JOIN section s ON s.id = d.section_id
+                WHERE MATCH (t.content) AGAINST (:q IN BOOLEAN MODE) AND d.status IN (:statuses)';
+        $params = ['q' => $boolean, 'statuses' => $statuses];
+        $types = ['statuses' => ArrayParameterType::STRING];
+        if ($publicOnly) {
+            $sql .= ' AND d.is_public = 1';
+        }
+        if (null !== $section) {
+            $sql .= ' AND s.path LIKE :path';
+            $params['path'] = $section->getPath().'%';
+        }
+        $sql .= ' ORDER BY score DESC LIMIT '.max(1, $limit);
+        try {
+            $rows = $this->getEntityManager()->getConnection()->executeQuery($sql, $params, $types)->fetchAllAssociative();
+        } catch (DbalException $e) {
+            // Поиск по содержимому — дополнение к поиску по реквизитам: ошибка индекса (например,
+            // необычный запрос или отсутствующий FULLTEXT) не должна ронять страницу поиска.
+            $this->logger?->warning('Полнотекстовый поиск не выполнен', ['query' => $boolean, 'error' => $e->getMessage()]);
+
+            return [];
+        }
+        if ([] === $rows) {
+            return [];
+        }
+        $documents = $this->baseQb()->andWhere('d.id IN (:ids)')->setParameter('ids', array_column($rows, 'id'))->getQuery()->getResult();
+        $byId = [];
+        foreach ($documents as $document) {
+            $byId[$document->getId()] = $document;
+        }
+        $out = [];
+        foreach ($rows as $row) {
+            $document = $byId[(int) $row['id']] ?? null;
+            if (null !== $document) {
+                $out[] = ['document' => $document, 'score' => (float) $row['score'], 'text' => (string) $row['content']];
+            }
         }
 
         return $out;

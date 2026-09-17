@@ -60,6 +60,22 @@
         <div class="alert alert--danger">Файл текущей версии не найден в хранилище. Сообщите администратору.</div>
     {% endif %}
 
+    {% if acknowledgement %}
+        <div class="ack-box">
+            <p class="ack-box__title">Требуется ознакомление</p>
+            <p>Вам назначено ознакомление с редакцией {{ acknowledgement.versionNumber }} этого документа{% if acknowledgement.dueAt %} — срок до <b>{{ acknowledgement.dueAt|date('d.m.Y') }}</b>{% if acknowledgement.isOverdue() %} <span class="text-danger">(просрочено)</span>{% endif %}{% endif %}. Прочитайте документ и подтвердите ознакомление — портал зафиксирует дату, время и номер редакции.</p>
+            <form method="post" action="{{ path('app_document_acknowledge', {id: document.id}) }}" class="inline-form">
+                <input type="hidden" name="_token" value="{{ csrf_token('document_' ~ document.id) }}">
+                <button type="submit" class="btn btn--pill">Ознакомлен</button>
+            </form>
+        </div>
+    {% elseif acknowledged %}
+        <div class="ack-box ack-box--done">
+            <p class="ack-box__title">Вы ознакомлены с этим документом</p>
+            <p>Подтверждено {{ acknowledged|date('d.m.Y H:i') }} (редакция {{ document.currentVersion ? document.currentVersion.number : '' }}). Запись сохранена в журнале и в отчёте по ознакомлению.</p>
+        </div>
+    {% endif %}
+
     <div class="grid grid--doc">
         <div class="doc-main">
             {% if document.description %}
@@ -179,6 +195,9 @@
                                 <input type="hidden" name="_token" value="{{ csrf_token('document_' ~ document.id) }}">
                                 <button type="submit" class="btn btn--ghost btn--block">{{ document.description ? 'Описать через ИИ заново' : 'Описать через ИИ' }}</button>
                             </form>
+                        {% endif %}
+                        {% if document.published and current %}
+                            <a class="btn btn--ghost btn--block" href="{{ path(acknowledgement_summary and acknowledgement_summary.assigned > 0 ? 'app_document_acknowledgements' : 'app_document_acknowledge_assign', {id: document.id}) }}">Ознакомление{% if acknowledgement_summary and acknowledgement_summary.assigned > 0 %} ({{ acknowledgement_summary.confirmed }}/{{ acknowledgement_summary.assigned }}){% endif %}</a>
                         {% endif %}
                         <a class="btn btn--ghost btn--block" href="{{ path('app_document_stats', {id: document.id}) }}">Статистика документа</a>
                         <form method="post" action="{{ path('app_document_delete', {id: document.id}) }}" class="inline-form" data-confirm="Удалить документ «{{ document.title }}» со всеми {{ versions|length }} версиями? Действие необратимо.">

@@ -8,7 +8,10 @@ use App\Entity\User;
 use App\Security\Ldap\LdapClient;
 use App\Service\ExpiryNotifier;
 use App\Service\FileStorage;
+use App\Repository\DocumentTextRepository;
 use App\Service\PortalSettings;
+use App\Service\Text\TextExtractor;
+use App\Service\Text\TextIndexer;
 use App\Service\Validity;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\Request;
@@ -23,6 +26,9 @@ use Symfony\Component\Security\Http\Attribute\CurrentUser;
 #[Route('/admin/settings')]
 final class SettingsController extends AbstractController
 {
+    /** Сколько документов индексируется за одно нажатие кнопки в панели (остальное — командой или по cron). */
+    private const REINDEX_LIMIT = 200;
+
     public function __construct(
         private readonly LdapClient $ldap,
         private readonly FileStorage $storage,
@@ -34,6 +40,9 @@ final class SettingsController extends AbstractController
         private readonly string $timezone,
         private readonly string $importDir,
         private readonly PortalSettings $settings,
+        private readonly DocumentTextRepository $texts,
+        private readonly TextIndexer $indexer,
+        private readonly TextExtractor $extractor,
     ) {
     }
 
@@ -65,6 +74,11 @@ final class SettingsController extends AbstractController
             'validity' => ['soon_days' => $this->validity->getSoonDays(), 'default_months' => $this->defaultValidityMonths, 'timezone' => $this->timezone],
             'mail' => ['from' => $this->mailFrom, 'notify_admins' => $this->notifyAdmins, 'dsn_set' => 'null://null' !== ($_SERVER['MAILER_DSN'] ?? $_ENV['MAILER_DSN'] ?? 'null://null')],
             'php' => ['version' => \PHP_VERSION, 'ldap_ext' => \extension_loaded('ldap'), 'memory_limit' => \ini_get('memory_limit')],
+            'search' => $this->texts->summary() + [
+                'pending' => \count($this->texts->findOutdatedDocumentIds(100000)),
+                'pdf' => $this->extractor->hasPdftotext(),
+                'extensions' => $this->extractor->supportedExtensions(),
+            ],
         ]);
     }
 
@@ -119,6 +133,20 @@ final class SettingsController extends AbstractController
         } catch (\InvalidArgumentException $e) {
             $this->addFlash('danger', $e->getMessage());
         }
+
+        return $this->redirectToRoute('admin_settings');
+    }
+
+    /** Переиндексация содержимого документов для полнотекстового поиска (порция за один запрос). */
+    #[Route('/reindex', name: 'admin_settings_reindex', methods: ['POST'])]
+    public function reindex(Request $request): Response
+    {
+        $this->checkToken($request);
+        $stats = $this->indexer->reindex(self::REINDEX_LIMIT, (bool) $request->request->get('all', false));
+        $left = \count($this->texts->findOutdatedDocumentIds(100000));
+        $this->addFlash('success', \sprintf('Проиндексировано документов: %d (с текстом %d, без текста %d). Осталось: %d%s.',
+            $stats['processed'], $stats['indexed'], $stats['empty'], $left,
+            $left > 0 ? ' — нажмите ещё раз или запустите app:search:reindex' : ''));
 
         return $this->redirectToRoute('admin_settings');
     }

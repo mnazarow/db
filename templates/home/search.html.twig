@@ -23,7 +23,7 @@
             </select>
             <button class="btn btn--pill" type="submit">Найти</button>
         </form>
-        <p class="form-help">Ищет по названию, обозначению, описанию, тегам, имени файла и тексту страниц. Черновики находят только модераторы своих разделов.</p>
+        <p class="form-help">Ищет по названию, обозначению, описанию, тегам, имени файла, тексту страниц и <b>содержимому файлов</b> (PDF, Word, Excel, PowerPoint, текстовые файлы). Черновики находят только модераторы своих разделов.</p>
     </div>
 
     {% if q|length >= 2 %}
@@ -31,8 +31,32 @@
             <div class="card__head card__head--padded">
                 <h2 class="h-section">Найдено: {{ results|length }}</h2>
             </div>
-            {{ m.document_table(results, {show_section: true, show_status: is_granted('MODERATOR'), empty: 'Ничего не найдено. Попробуйте другие слова или уберите фильтр по разделу.'}) }}
+            {{ m.document_table(results, {show_section: true, show_status: is_granted('MODERATOR'), empty: content_results|length > 0 ? 'По названию и реквизитам ничего не найдено — смотрите совпадения в тексте файлов ниже.' : 'Ничего не найдено. Попробуйте другие слова или уберите фильтр по разделу.'}) }}
         </div>
+
+        {% if content_results|length > 0 %}
+        <div class="card table-card">
+            <div class="card__head card__head--padded">
+                <h2 class="h-section">Найдено в тексте файлов: {{ content_results|length }}</h2>
+                <span class="text-muted">совпадения в содержимом документов</span>
+            </div>
+            <ul class="snippet-list">
+                {% for hit in content_results %}
+                    <li class="snippet">
+                        <div class="snippet__head">
+                            {{ m.file_icon(hit.document) }}
+                            <a class="snippet__title" href="{{ path('app_document_show', {id: hit.document.id}) }}">{{ hit.document.title }}</a>
+                            {% if hit.document.code %}<span class="doc-table__code">{{ hit.document.code }}</span>{% endif %}
+                            {{ m.validity_badge(hit.document) }}
+                            {% if not hit.document.public %}<span class="tag tag--internal">внутренний</span>{% endif %}
+                        </div>
+                        <div class="snippet__section">{{ hit.document.section.fullName }}</div>
+                        {% if hit.snippet %}<p class="snippet__text">{{ hit.snippet|raw }}</p>{% endif %}
+                    </li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
     {% elseif q %}
         <div class="alert alert--info">Введите не менее двух символов.</div>
     {% endif %}

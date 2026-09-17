@@ -740,3 +740,56 @@ a.chip { text-decoration: none; }
 .card > .card__head--padded { padding-top: 0; }
 .card > .card__padded { padding-bottom: 0; padding-top: 16px; }
 .table-card__empty { padding: 12px 0 4px; color: var(--muted); }
+
+/* Поиск: совпадения в тексте файлов */
+.snippet-list { list-style: none; margin: 0; padding: 0; }
+.snippet { padding: 16px 0; border-bottom: 1px solid var(--border-light); }
+.snippet:last-child { border-bottom: 0; padding-bottom: 0; }
+.snippet__head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.snippet__title { font-weight: 700; color: var(--blue); }
+.snippet__section { font-size: 13px; color: var(--muted); margin-top: 4px; }
+.snippet__text { margin: 8px 0 0; font-size: 14px; line-height: 1.6; color: var(--text); }
+.snippet__text mark { background: #FFF0A8; color: inherit; padding: 0 2px; border-radius: 3px; }
+
+/* Ознакомление под подпись */
+.card--acknowledge { border-color: var(--blue); background: var(--blue-bg); margin-bottom: 28px; }
+.attention-list { list-style: none; margin: 12px 0 0; padding: 0; }
+.attention-item { padding: 8px 0; border-top: 1px solid rgba(15, 67, 130, .12); }
+.attention-item:first-child { border-top: 0; }
+.attention-item a { font-weight: 600; color: var(--blue); }
+.attention-item__meta { display: block; font-size: 13px; color: var(--muted); margin-top: 2px; }
+.attention-item.is-expired a { color: var(--red); }
+.ack-box { border: 1px solid var(--blue); border-radius: var(--radius-md); background: var(--blue-bg); padding: 16px 18px; margin-bottom: 18px; }
+.ack-box--done { border-color: var(--green); background: var(--green-bg); }
+.ack-box__title { font-family: var(--font-head); font-size: 17px; font-weight: 700; margin: 0 0 6px; }
+.ack-box p { margin: 0 0 10px; font-size: 14px; }
+.ack-box .btn { margin-top: 2px; }
+.ack-people { max-height: 420px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-md); padding: 12px 14px; }
+.ack-people__group { margin-bottom: 12px; }
+.ack-people__person { margin-left: 22px; }
+.ack-people__person.is-assigned { opacity: .6; }
+.form-check--dept { font-weight: 700; color: var(--blue); }
+.ack-summary { display: flex; gap: 16px; flex-wrap: wrap; font-size: 14px; margin-top: 6px; }
+
+/* Печатные формы (лист ознакомления) */
+.print-actions { display: flex; gap: 10px; margin-bottom: 18px; }
+.print-sheet { background: #fff; border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 28px 30px; }
+.print-sheet__title { font-family: var(--font-head); font-size: 22px; text-align: center; margin: 0 0 18px; }
+.print-sheet__head { width: 100%; border-collapse: collapse; margin-bottom: 18px; font-size: 14px; }
+.print-sheet__head th { text-align: left; font-weight: 400; color: var(--muted); width: 190px; padding: 4px 8px 4px 0; vertical-align: top; }
+.print-sheet__head td { padding: 4px 0; }
+.print-sheet__table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.print-sheet__table th, .print-sheet__table td { border: 1px solid #9AA1AD; padding: 7px 8px; text-align: left; vertical-align: top; height: 26px; }
+.print-sheet__table th { background: var(--gray-bg); font-weight: 700; }
+.print-sheet__mark { font-size: 11px; color: var(--muted); }
+.print-sheet__note { font-size: 12px; color: var(--muted); margin-top: 14px; }
+@media print {
+    .no-print, .site-header, .site-footer, .hero { display: none !important; }
+    .print-sheet { border: 0; padding: 0; }
+    .section { padding: 0 !important; }
+    body { background: #fff; }
+}
+.ack-chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; background: var(--blue); color: #fff; font-size: 13px; font-weight: 600; margin-right: 12px; }
+.ack-chip:hover { background: #0B3568; color: #fff; }
+.ack-chip__count { display: inline-flex; min-width: 22px; height: 22px; align-items: center; justify-content: center; border-radius: 999px; background: #fff; color: var(--blue); font-weight: 700; }
+@media (max-width: 720px) { .ack-chip__text { display: none; } }

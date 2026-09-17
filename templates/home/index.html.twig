@@ -28,6 +28,24 @@
 <section class="container section">
     {% include '_flashes.html.twig' %}
 
+    {% if to_acknowledge|default([])|length > 0 %}
+        <div class="card card--acknowledge">
+            <div class="card__head">
+                <h2 class="h-section">Вам на ознакомление</h2>
+                <a class="link-action" href="{{ path('app_profile_acknowledgements') }}">Все мои ознакомления →</a>
+            </div>
+            <p>Прочитайте документы и нажмите в карточке кнопку «Ознакомлен» — портал зафиксирует дату и редакцию.</p>
+            <ul class="attention-list">
+                {% for a in to_acknowledge %}
+                    <li class="attention-item {{ a.isOverdue(today) ? 'is-expired' }}">
+                        <a href="{{ path('app_document_show', {id: a.document.id}) }}">{{ a.document.title }}</a>
+                        <span class="attention-item__meta">{{ a.document.section.fullName }}{% if a.dueAt %} · до {{ a.dueAt|date('d.m.Y') }}{% if a.isOverdue(today) %} <span class="text-danger">просрочено</span>{% endif %}{% endif %}</span>
+                    </li>
+                {% endfor %}
+            </ul>
+        </div>
+    {% endif %}
+
     {% if is_moderator and (expiring|length > 0 or drafts|length > 0) %}
         <div class="grid grid--two attention">
             <div class="card card--attention">

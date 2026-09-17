@@ -9,6 +9,7 @@ import re
 import sys
 import time
 import tempfile
+import urllib.parse
 import urllib.request
 
 from playwright.sync_api import expect, sync_playwright
@@ -150,6 +151,32 @@ with sync_playwright() as p:
     shot(page, '10-forbidden', full=False)
     page.goto(BASE + '/profile/password')
     shot(page, '11-password', full=False)
+
+    # полнотекстовый поиск по содержимому файлов: слова нет в реквизитах, документ находится по тексту
+    page.goto(BASE + '/search?q=' + urllib.parse.quote('испытательный срок'))
+    expect(page.locator('.snippet')).to_have_count(1)
+    expect(page.locator('.snippet__text mark').first).to_be_visible()
+    assert page.locator('.doc-table__title').count() == 0, 'по реквизитам ничего не должно находиться'
+    shot(page, '12-search-content')
+
+    # ознакомление под подпись: карточка на главной, счётчик в шапке, «Мои ознакомления», подтверждение
+    page.goto(BASE + '/')
+    expect(page.locator('.card--acknowledge')).to_be_visible()
+    expect(page.locator('.ack-chip')).to_be_visible()
+    page.goto(BASE + '/profile/acknowledgements')
+    expect(page.locator('.h-display')).to_contain_text('Мои ознакомления')
+    shot(page, '13-my-acknowledgements')
+    page.click('.doc-table__title >> nth=0')
+    expect(page.locator('.ack-box__title')).to_contain_text('Требуется ознакомление')
+    shot(page, '14-acknowledge-required', full=False)
+    page.click('.ack-box button[type=submit]')
+    expect(page.locator('.ack-box--done')).to_be_visible()
+    expect(page.locator('.alert--success').first).to_contain_text('Ознакомление подтверждено')
+    assert page.locator('.ack-chip').count() == 0, 'после подтверждения счётчик исчезает'
+    shot(page, '15-acknowledge-done', full=False)
+    ack_doc_url = page.url.replace(BASE, '')
+    r = page.goto(BASE + ack_doc_url + '/acknowledgements'); assert r.status == 403, r.status
+    page.goto(BASE + ack_doc_url)
     logout(page)
 
     # 3. Модератор
@@ -293,6 +320,32 @@ with sync_playwright() as p:
     page.click('form[action$="/expiry-run"] button')
     expect(page.locator('.alert--success').first).to_contain_text('Проверка сроков выполнена')
     shot(page, '40-admin-expiry-run', full=False)
+    # 4б. Ознакомление под подпись: назначение по подразделениям, отчёт, лист для печати, CSV и сводка
+    page.goto(BASE + ack_doc_url + '/acknowledgements/assign')
+    assert page.locator('input[name="users[]"]:disabled').count() >= 1, 'уже назначенным повторно не назначаем'
+    page.goto(BASE + '/search?q=ПОЛ-003')
+    page.click('.doc-table__title >> nth=0')
+    rules_url = page.url.replace(BASE, '')
+    page.goto(BASE + rules_url + '/acknowledgements/assign')
+    expect(page.locator('.h-display')).to_be_visible()
+    for department in ('ИТ-отдел', 'Отдел кадров', 'Служба качества'):
+        page.click('label.form-check--dept:has-text("%s") input' % department)
+    shot(page, '16-acknowledge-assign')
+    page.click('form[data-ack-form] button[type=submit]')
+    expect(page.locator('.alert--success').first).to_contain_text('назначено')
+    expect(page.locator('.stat__label').first).to_contain_text('Назначено')
+    shot(page, '17-acknowledge-report')
+    with page.expect_download() as dl:
+        page.click('a:has-text("Выгрузить CSV")')
+    assert dl.value.suggested_filename.startswith('acknowledgements-'), dl.value.suggested_filename
+    page.goto(BASE + rules_url + '/acknowledgements/sheet')
+    expect(page.locator('.print-sheet__title')).to_contain_text('Лист ознакомления')
+    assert page.locator('.print-sheet__table tbody tr').count() >= 3
+    shot(page, '18-acknowledge-sheet')
+    page.goto(BASE + '/admin/acknowledgements')
+    expect(page.locator('.h-display')).to_contain_text('Ознакомление')
+    expect(page.locator('.stat__value').first).to_be_visible()
+    shot(page, '48-admin-acknowledgements')
     # 4б. Интеграции: ключ API, LLM (заглушка на LLM_MOCK), webhook
     page.goto(BASE + '/admin/integrations')
     expect(page.locator('h1')).to_contain_text('Интеграции')

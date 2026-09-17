@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="ru">
+<body style="font-family: Arial, Helvetica, sans-serif; color: #1D1E1E; line-height: 1.5;">
+<p>Здравствуйте, {{ user.displayName }}!</p>
+{% if reminder %}
+    <p><b>Напоминание:</b> вы ещё не подтвердили ознакомление со следующими документами:</p>
+{% else %}
+    <p>Вам назначено ознакомление с документом:</p>
+{% endif %}
+<ul>
+{% for d in documents %}
+    <li><a href="{{ urls[d.id] }}">{{ d.title }}</a>{% if d.code %} ({{ d.code }}){% endif %} — раздел «{{ d.section.fullName }}»</li>
+{% endfor %}
+</ul>
+{% if due %}
+    <p>Срок ознакомления: <b{% if due < date('today') %} style="color:#D00024;"{% endif %}>{{ due|date('d.m.Y') }}</b>{% if due < date('today') %} (просрочено){% endif %}.</p>
+{% endif %}
+<p>Откройте документ по ссылке, прочитайте его и нажмите кнопку <b>«Ознакомлен»</b> в карточке документа. Портал зафиксирует дату, время и номер редакции — это заменяет подпись в бумажном листе ознакомления.</p>
+<p style="color:#6E7480; font-size: 12px;">Письмо отправлено автоматически порталом «{{ app_name }}». Отвечать на него не нужно.</p>
+</body>
+</html>

@@ -10,6 +10,7 @@ use App\Entity\Section;
 use App\Entity\User;
 use App\Repository\SectionRepository;
 use App\Repository\UserRepository;
+use App\Service\AcknowledgementService;
 use App\Service\DocumentManager;
 use App\Service\SectionManager;
 use App\Service\UserManager;
@@ -40,6 +41,7 @@ final class DemoLoadCommand extends Command
         private readonly UserManager $userManager,
         private readonly SectionManager $sectionManager,
         private readonly DocumentManager $documentManager,
+        private readonly AcknowledgementService $acknowledgements,
         private readonly string $projectDir,
     ) {
         parent::__construct();
@@ -106,7 +108,14 @@ final class DemoLoadCommand extends Command
             ['Актуализированы сроки согласования', $this->pdf($tmp, 'POL-001 v2', 'Polozhenie o dokumentooborote (rev. 2)')],
         ]);
         $docs[] = $this->fileDoc($policies, $ivanov, 'Политика управления качеством', 'ПОЛ-002', 'Цели и принципы системы менеджмента качества.', ['качество', 'смк'], $today->modify('+40 days'), $this->pdf($tmp, 'POL-002', 'Politika kachestva'), true);
-        $docs[] = $this->fileDoc($policies, $ivanov, 'Правила внутреннего трудового распорядка', 'ПОЛ-003', null, ['птр', 'кадры'], $today->modify('-12 days'), $this->docx($tmp, 'PVTR'), true);
+        $docs[] = $this->fileDoc($policies, $ivanov, 'Правила внутреннего трудового распорядка', 'ПОЛ-003', null, ['птр', 'кадры'], $today->modify('-12 days'), $this->docx($tmp, 'PVTR', [
+            'Правила внутреннего трудового распорядка',
+            '1. Рабочее время: начало в 9:00, окончание в 18:00, перерыв на обед — один час в промежутке с 12:00 до 15:00.',
+            '2. Пропускной режим: вход в здание по электронному пропуску, гостей сопровождает принимающий сотрудник.',
+            '3. Для вновь принятых работников устанавливается испытательный срок продолжительностью до трёх месяцев.',
+            '4. Работник обязан сообщить непосредственному руководителю о невыходе на работу не позднее первого часа рабочего дня.',
+            '5. Дисциплинарные взыскания применяются в порядке, предусмотренном Трудовым кодексом Российской Федерации.',
+        ]), true);
         $docs[] = $this->pageDoc($security, $petrova, 'Политика паролей', 'ИБ-001', 'Требования к паролям учётных записей сотрудников.', ['пароли', 'безопасность'], $today->modify('+9 months'), <<<'HTML'
 <h2>Требования к паролям</h2>
 <p>Пароль учётной записи должен содержать <strong>не менее 12 символов</strong> и включать буквы разного регистра, цифры и специальные символы.</p>
@@ -129,7 +138,14 @@ HTML, true, [
             ['Обновлены адреса серверов', $this->pdf($tmp, 'IT-RM-002 v3', 'VPN connection guide (servers updated)')],
         ]);
         $docs[] = $this->fileDoc($workplace, $petrova, 'Схема сетевых розеток офиса', 'ИТ-РМ-003', null, ['сеть', 'офис'], $today->modify('+3 years'), $this->png($tmp, 'office-network.png'), true);
-        $docs[] = $this->fileDoc($mail, $petrova, 'Настройка корпоративной почты в Outlook', 'ИТ-ПТ-001', 'Параметры серверов, настройка подписи и автоответа.', ['outlook', 'почта'], $today->modify('+2 months'), $this->docx($tmp, 'Outlook-setup'), true);
+        $docs[] = $this->fileDoc($mail, $petrova, 'Настройка корпоративной почты в Outlook', 'ИТ-ПТ-001', 'Параметры серверов, настройка подписи и автоответа.', ['outlook', 'почта'], $today->modify('+2 months'), $this->docx($tmp, 'Outlook-setup', [
+            'Настройка корпоративной почты в Outlook',
+            'Сервер входящей почты: imap.vodokomfort.local, порт 993, шифрование SSL/TLS.',
+            'Сервер исходящей почты: smtp.vodokomfort.local, порт 587, обязательная проверка подлинности.',
+            'Логин — доменная учётная запись, пароль тот же, что и при входе в компьютер. Двухфакторная проверка включается в личном кабинете.',
+            'Подпись в письме оформляется по образцу: фамилия и имя, должность, подразделение, рабочий телефон.',
+            'Автоответ на время отпуска включается в меню «Файл» → «Автоответы» с указанием даты возвращения и контактов замещающего сотрудника.',
+        ]), true);
         $docs[] = $this->pageDoc($mail, $petrova, 'Телефонный справочник: короткие номера', 'ИТ-ПТ-002', null, ['телефония'], $today->modify('-3 days'), '<h2>Короткие номера служб</h2><table><tr><th>Служба</th><th>Номер</th></tr><tr><td>ИТ-поддержка</td><td>1234</td></tr><tr><td>Приёмная</td><td>1000</td></tr><tr><td>Охрана</td><td>1111</td></tr><tr><td>Склад</td><td>1500</td></tr></table>', true);
 
         $docs[] = $this->fileDoc($safety, $ivanov, 'Инструкция по охране труда для офисных работников', 'ОТ-001', 'Вводный инструктаж, требования безопасности на рабочем месте.', ['охрана труда', 'инструктаж'], $today->modify('+20 days'), $this->pdf($tmp, 'OT-001', 'Okhrana truda - ofis'), true);
@@ -147,11 +163,41 @@ HTML, true, [
         $archivedDoc = $this->fileDoc($orders, $kuznetsova, 'Приказ о графике отпусков на 2025 год', 'ПР-2025-01', null, ['отпуска', '2025'], $today->modify('-8 months'), $this->pdf($tmp, 'PR-2025-01', 'Prikaz o grafike otpuskov 2025'), true);
         $this->documentManager->archive($archivedDoc, $kuznetsova);
         $docs[] = $archivedDoc;
-        $docs[] = $this->fileDoc($templates, $kuznetsova, 'Заявление на отпуск (шаблон)', 'ШБ-001', 'Шаблон заявления на ежегодный оплачиваемый отпуск.', ['шаблон', 'отпуск'], null, $this->docx($tmp, 'Zayavlenie-otpusk'), true);
-        $docs[] = $this->fileDoc($templates, $kuznetsova, 'Заявление на удалённую работу (шаблон)', 'ШБ-002', null, ['шаблон', 'удалённая работа'], null, $this->docx($tmp, 'Zayavlenie-udalenka'), true);
+        $docs[] = $this->fileDoc($templates, $kuznetsova, 'Заявление на отпуск (шаблон)', 'ШБ-001', 'Шаблон заявления на ежегодный оплачиваемый отпуск.', ['шаблон', 'отпуск'], null, $this->docx($tmp, 'Zayavlenie-otpusk', [
+            'Заявление на ежегодный оплачиваемый отпуск',
+            'Руководителю ООО «Водокомфорт» от _____________________ (должность, подразделение, фамилия и инициалы).',
+            'Прошу предоставить мне ежегодный оплачиваемый отпуск продолжительностью ____ календарных дней с «___» __________ 20__ г.',
+            'Заявление подаётся не позднее чем за две недели до начала отпуска и согласовывается с непосредственным руководителем.',
+            'Дата _______________   Подпись _______________',
+        ]), true);
+        $docs[] = $this->fileDoc($templates, $kuznetsova, 'Заявление на удалённую работу (шаблон)', 'ШБ-002', null, ['шаблон', 'удалённая работа'], null, $this->docx($tmp, 'Zayavlenie-udalenka', [
+            'Заявление о переводе на дистанционную (удалённую) работу',
+            'Прошу перевести меня на дистанционную работу с «___» __________ 20__ г. на срок ____ месяцев.',
+            'Рабочее место по адресу проживания оборудовано персональным компьютером и каналом связи; для доступа к корпоративным ресурсам используется VPN-клиент.',
+            'Обязуюсь соблюдать требования по защите персональных данных и коммерческой тайны, быть на связи в рабочее время и участвовать в совещаниях по видеосвязи.',
+            'Дата _______________   Подпись _______________',
+        ]), true);
         $docs[] = $this->pageDoc($templates, $kuznetsova, 'Памятка новому сотруднику', null, 'Черновик памятки — на согласовании.', ['онбординг'], null, '<h2>Добро пожаловать!</h2><p>Эта памятка поможет освоиться в первые дни. Черновик, на согласовании у руководителя отдела кадров.</p>', false);
 
         $io->writeln(\sprintf('Документов создано: %d.', \count($docs)));
+
+        // --- Ознакомление под подпись ----------------------------------------------------
+        // Инструкция по охране труда: назначена всем, часть сотрудников уже ознакомилась.
+        $safetyDoc = null;
+        foreach ($docs as $doc) {
+            if ('ОТ-001' === $doc->getCode()) {
+                $safetyDoc = $doc;
+                break;
+            }
+        }
+        if (null !== $safetyDoc) {
+            $everyone = [$smirnov, $sidorov, $kuznetsova, $petrova, $ivanov];
+            $this->acknowledgements->assign($safetyDoc, $everyone, $today->modify('+10 days'), $admin, false);
+            foreach ([$sidorov, $kuznetsova, $ivanov] as $reader) {
+                $this->acknowledgements->confirm($safetyDoc, $reader, '10.10.0.'.mt_rand(2, 250));
+            }
+            $io->writeln('Назначено ознакомление с инструкцией по охране труда (часть сотрудников уже подтвердила).');
+        }
         $this->rrmdir($tmp);
 
         // --- История событий -------------------------------------------------------------
@@ -270,15 +316,24 @@ HTML, true, [
         return $dir.'/'.$name;
     }
 
-    /** Минимальный DOCX (zip с обязательными частями). */
-    private function docx(string $dir, string $name): string
+    /**
+     * Минимальный DOCX (zip с обязательными частями).
+     * $paragraphs — текст документа: он попадает в индекс и позволяет показать полнотекстовый поиск.
+     *
+     * @param list<string> $paragraphs
+     */
+    private function docx(string $dir, string $name, array $paragraphs = []): string
     {
         $path = $dir.'/'.$name.'.docx';
         $zip = new \ZipArchive();
         $zip->open($path, \ZipArchive::CREATE | \ZipArchive::OVERWRITE);
         $zip->addFromString('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');
         $zip->addFromString('_rels/.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');
-        $zip->addFromString('word/document.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Демонстрационный документ '.htmlspecialchars($name).' (портал документации).</w:t></w:r></w:p></w:body></w:document>');
+        $body = '';
+        foreach ([] === $paragraphs ? ['Демонстрационный документ '.$name.' (портал документации).'] : $paragraphs as $paragraph) {
+            $body .= '<w:p><w:r><w:t xml:space="preserve">'.htmlspecialchars($paragraph, \ENT_XML1 | \ENT_QUOTES, 'UTF-8').'</w:t></w:r></w:p>';
+        }
+        $zip->addFromString('word/document.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'.$body.'</w:body></w:document>');
         $zip->close();
 
         return $path;
@@ -379,9 +434,10 @@ HTML, true, [
     private function wipe(): void
     {
         $this->connection->executeStatement('SET FOREIGN_KEY_CHECKS = 0');
-        // document_deletion тоже очищаем: иначе отметки об удалении остались бы от прежних демо-данных
-        // и относились бы к идентификаторам, которые после перезагрузки принадлежат другим документам.
-        foreach (['document_event', 'document_version', 'document', 'document_deletion', 'section_moderator', 'section'] as $table) {
+        // document_deletion, document_text и document_acknowledgement тоже очищаем: иначе записи остались бы
+        // от прежних демо-данных и относились бы к идентификаторам, которые после перезагрузки
+        // принадлежат другим документам (TRUNCATE сбрасывает счётчик, и номера выдаются заново).
+        foreach (['document_event', 'document_version', 'document_text', 'document_acknowledgement', 'document', 'document_deletion', 'section_moderator', 'section'] as $table) {
             $this->connection->executeStatement('TRUNCATE TABLE '.$table);
         }
         $this->connection->executeStatement('SET FOREIGN_KEY_CHECKS = 1');

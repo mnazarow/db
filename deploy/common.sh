@@ -478,6 +478,22 @@ EOF
         chmod 644 "${cron_file}"
         info "В cron добавлено задание формирования описаний через LLM (app:documents:describe)."
     fi
+    if ! grep -q 'acknowledge-remind' "${cron_file}"; then
+        cat >> "${cron_file}" <<EOF
+#  - ежедневно — напоминания сотрудникам о документах, с которыми они не ознакомились.
+30 8 * * * root /usr/local/bin/${APP_ID} console app:documents:acknowledge-remind --no-interaction >> ${LOG_DIR}/acknowledge-cron.log 2>&1
+EOF
+        chmod 644 "${cron_file}"
+        info "В cron добавлено задание напоминаний об ознакомлении (app:documents:acknowledge-remind)."
+    fi
+    if ! grep -q 'app:search:reindex' "${cron_file}"; then
+        cat >> "${cron_file}" <<EOF
+#  - ежечасно — индексация содержимого документов для полнотекстового поиска (документы без индекса).
+40 * * * * root /usr/local/bin/${APP_ID} console app:search:reindex --limit=500 --no-interaction >> ${LOG_DIR}/reindex-cron.log 2>&1
+EOF
+        chmod 644 "${cron_file}"
+        info "В cron добавлено задание индексации содержимого (app:search:reindex)."
+    fi
 }
 
 install_cli_wrapper() {
@@ -518,9 +534,13 @@ case "\${cmd}" in
         SRC=\$(cd "\${SRC}" && pwd)
         # Пользователь службы должен читать каталог: при необходимости скопируйте его в \${APP_DIR}/shared/import.
         exec runuser -u "\${SERVICE_USER}" -- php "\${APP_DIR}/current/bin/console" app:import:directory "\${SRC}" --root-as-section "\$@" ;;
-    api-key|describe)
-        # api-key list|create|disable|enable|delete — ключи REST API; describe — описания документов через LLM.
-        SUB="app:api-key"; [[ "\${cmd}" == "describe" ]] && SUB="app:documents:describe"
+    api-key|describe|reindex|acknowledge-remind)
+        # api-key — ключи REST API; describe — описания через LLM; reindex — индекс поиска по содержимому;
+        # acknowledge-remind — напоминания сотрудникам о неподтверждённом ознакомлении.
+        SUB="app:api-key"
+        [[ "\${cmd}" == "describe" ]] && SUB="app:documents:describe"
+        [[ "\${cmd}" == "reindex" ]] && SUB="app:search:reindex"
+        [[ "\${cmd}" == "acknowledge-remind" ]] && SUB="app:documents:acknowledge-remind"
         if [[ "\${INSTALL_MODE}" == "docker" ]]; then
             cd "\${APP_DIR}/docker" && exec docker compose exec app php bin/console "\${SUB}" "\$@"
         else
@@ -545,6 +565,8 @@ case "\${cmd}" in
                       (без каталога — импорт каталога IMPORT_DIR; параметры: --section=ID --dry-run --draft --delete-source --describe …)
   api-key <действие>  Ключи REST API для внешних систем (RAG): list | create "Название" [--internal] | disable ID | enable ID | delete ID
   describe            Сформировать описания документов через LLM (параметры: --missing --regenerate --force --limit=N --dry-run)
+  reindex             Индекс полнотекстового поиска по содержимому файлов (--all — всё заново, --status — состояние)
+  acknowledge-remind  Напоминания о неподтверждённом ознакомлении (--days=N, --dry-run)
   logs                Журнал приложения
   uninstall           Удаление портала
 HELP

@@ -10,6 +10,7 @@ use App\Entity\DocumentEvent;
 use App\Entity\DocumentVersion;
 use App\Entity\Section;
 use App\Entity\User;
+use App\Service\Text\TextIndexer;
 use Doctrine\ORM\EntityManagerInterface;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\HtmlSanitizer\HtmlSanitizerInterface;
@@ -26,6 +27,7 @@ final class DocumentManager
         private readonly FileStorage $storage,
         private readonly HtmlSanitizerInterface $documentPage,
         private readonly LoggerInterface $auditLogger,
+        private readonly TextIndexer $indexer,
     ) {
     }
 
@@ -108,6 +110,7 @@ final class DocumentManager
         }
         $this->em->flush();
 
+        $this->indexer->index($document);
         $this->auditLogger->info('Создан документ', ['document' => $document->getId(), 'title' => $document->getTitle(), 'section' => $document->getSection()->getFullName(), 'published' => $publish, 'by' => $actor->getUsername()]);
 
         return $document;
@@ -178,6 +181,7 @@ final class DocumentManager
         $document->setCurrentVersion($version)->setUpdatedAt(new \DateTimeImmutable());
         $this->em->persist(new DocumentEvent($document, DocumentEvent::NEW_VERSION, $actor, $version, $ip, ['number' => $version->getNumber(), 'file' => $version->getOriginalName()]));
         $this->em->flush();
+        $this->indexer->index($document);
         $this->auditLogger->info('Загружена новая версия файла', ['document' => $document->getId(), 'version' => $version->getNumber(), 'by' => $actor->getUsername()]);
 
         return $version;
@@ -209,6 +213,7 @@ final class DocumentManager
         $document->setCurrentVersion($version)->setUpdatedAt(new \DateTimeImmutable());
         $this->em->persist(new DocumentEvent($document, DocumentEvent::NEW_VERSION, $actor, $version, $ip, ['number' => $version->getNumber()]));
         $this->em->flush();
+        $this->indexer->index($document);
         $this->auditLogger->info('Сохранена новая версия страницы', ['document' => $document->getId(), 'version' => $version->getNumber(), 'by' => $actor->getUsername()]);
 
         return $version;
@@ -235,6 +240,7 @@ final class DocumentManager
         $document->setCurrentVersion($version)->setUpdatedAt(new \DateTimeImmutable());
         $this->em->persist(new DocumentEvent($document, DocumentEvent::RESTORE, $actor, $version, $ip, ['from' => $source->getNumber(), 'number' => $version->getNumber()]));
         $this->em->flush();
+        $this->indexer->index($document);
         $this->auditLogger->info('Восстановлена версия документа', ['document' => $document->getId(), 'from' => $source->getNumber(), 'version' => $version->getNumber(), 'by' => $actor->getUsername()]);
 
         return $version;

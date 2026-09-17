@@ -51,6 +51,12 @@
 
         {% if app.user %}
             <div class="site-header__user">
+                {% if acknowledgements_pending() > 0 %}
+                    <a class="ack-chip" href="{{ path('app_profile_acknowledgements') }}" title="Документы, с которыми нужно ознакомиться">
+                        <span class="ack-chip__count">{{ acknowledgements_pending() }}</span>
+                        <span class="ack-chip__text">на ознакомление</span>
+                    </a>
+                {% endif %}
                 {% if app.user.local %}
                     <a class="user-chip" href="{{ path('app_password_change') }}" title="Сменить пароль">
                 {% else %}
@@ -101,6 +107,7 @@
             {% if app.user %}
                 <a href="{{ path('app_home') }}">Разделы и документы</a>
                 <a href="{{ path('app_search') }}">Поиск</a>
+                <a href="{{ path('app_profile_acknowledgements') }}">Мои ознакомления</a>
                 {% if app.user.local %}<a href="{{ path('app_password_change') }}">Сменить пароль</a>{% endif %}
                 {% if is_granted('ROLE_ADMIN') %}<a href="{{ path('admin_dashboard') }}">Панель администратора</a>{% endif %}
             {% else %}

@@ -31,6 +31,39 @@
             });
         }
 
+        /* Назначение ознакомления: выбрать всех / по подразделению / снять выбор */
+        var ackForm = document.querySelector('[data-ack-form]');
+        if (ackForm) {
+            var boxes = function () { return ackForm.querySelectorAll('input[name="users[]"]:not([disabled])'); };
+            var counter = ackForm.querySelector('[data-ack-counter]');
+            var recount = function () {
+                if (!counter) { return; }
+                var n = ackForm.querySelectorAll('input[name="users[]"]:checked').length;
+                counter.textContent = 'выбрано: ' + n;
+            };
+            var setAll = function (value) {
+                Array.prototype.forEach.call(boxes(), function (b) { b.checked = value; });
+                Array.prototype.forEach.call(ackForm.querySelectorAll('[data-ack-group]'), function (g) { g.checked = value; });
+                recount();
+            };
+            var allBtn = ackForm.querySelector('[data-ack-all]');
+            var noneBtn = ackForm.querySelector('[data-ack-none]');
+            if (allBtn) { allBtn.addEventListener('click', function () { setAll(true); }); }
+            if (noneBtn) { noneBtn.addEventListener('click', function () { setAll(false); }); }
+            Array.prototype.forEach.call(ackForm.querySelectorAll('[data-ack-group]'), function (group) {
+                group.addEventListener('change', function () {
+                    var box = group.closest('.ack-people__group');
+                    if (!box) { return; }
+                    Array.prototype.forEach.call(box.querySelectorAll('input[name="users[]"]:not([disabled])'), function (b) { b.checked = group.checked; });
+                    recount();
+                });
+            });
+            ackForm.addEventListener('change', function (e) {
+                if (e.target && e.target.name === 'users[]') { recount(); }
+            });
+            recount();
+        }
+
         /* Копирование в буфер обмена (data-copy="селектор или текст") */
         Array.prototype.forEach.call(document.querySelectorAll('[data-copy]'), function (btn) {
             btn.addEventListener('click', function () {

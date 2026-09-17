@@ -70,6 +70,8 @@ services:
       IMPORT_DIR: /var/www/html/var/import
       EXPIRY_CRON: ${EXPIRY_CRON:-0 8 * * *}
       DESCRIBE_CRON: ${DESCRIBE_CRON:-20 * * * *}
+      REINDEX_CRON: ${REINDEX_CRON:-40 * * * *}
+      ACKNOWLEDGE_CRON: ${ACKNOWLEDGE_CRON:-30 8 * * *}
     command: ["cron"]
     volumes:
       - storage:/var/www/html/var/storage

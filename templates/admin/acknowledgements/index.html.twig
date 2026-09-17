@@ -1,0 +1,46 @@
+{% extends 'admin/_layout.html.twig' %}
+
+{% block title %}Ознакомление{% endblock %}
+{% block admin_title %}Ознакомление{% endblock %}
+
+{% block admin_body %}
+<div class="grid grid--stats">
+    <div class="card"><div class="stat__label">Документов</div><div class="stat__value">{{ totals.documents }}</div><div class="stat__hint">с назначенным ознакомлением</div></div>
+    <div class="card"><div class="stat__label">Назначено</div><div class="stat__value">{{ totals.assigned }}</div><div class="stat__hint">записей ознакомления</div></div>
+    <div class="card"><div class="stat__label">Подтверждено</div><div class="stat__value text-success">{{ totals.confirmed }}</div><div class="stat__hint">{{ totals.assigned > 0 ? (totals.confirmed * 100 / totals.assigned)|round : 0 }}%</div></div>
+    <div class="card"><div class="stat__label">Просрочено</div><div class="stat__value {{ totals.overdue > 0 ? 'text-danger' }}">{{ totals.overdue }}</div><div class="stat__hint">срок прошёл, подтверждения нет</div></div>
+</div>
+
+<div class="card table-card">
+    <div class="card__head card__head--padded">
+        <h2 class="h-section">По документам</h2>
+        <form method="get" class="toolbar__row toolbar__row--compact">
+            <label class="form-check form-check--inline"><input type="checkbox" name="pending" value="1" {{ only_pending ? 'checked' }} data-autosubmit><span>только с неподтверждёнными</span></label>
+        </form>
+    </div>
+    {% if rows|length == 0 %}
+        <div class="table-card__empty">{{ only_pending ? 'Все назначенные ознакомления подтверждены.' : 'Ознакомление пока никому не назначено. Откройте документ и нажмите «Ознакомление» в блоке управления.' }}</div>
+    {% else %}
+    <div class="table-scroll"><table class="admin-table">
+        <thead><tr><th>Документ</th><th>Раздел</th><th class="col-num">Редакция</th><th class="col-num">Назначено</th><th class="col-num">Ознакомились</th><th class="col-num">Просрочено</th><th>Последнее назначение</th><th class="col-actions"></th></tr></thead>
+        <tbody>
+        {% for row in rows %}
+            <tr class="{{ row.overdue > 0 ? 'is-expired' : (row.assigned > row.confirmed ? 'is-soon') }}">
+                <td><a class="doc-table__title" href="{{ path('app_document_show', {id: row.document.id}) }}">{{ row.document.title }}</a>{% if row.document.code %} <span class="doc-table__code">{{ row.document.code }}</span>{% endif %}</td>
+                <td>{{ row.document.section.fullName }}</td>
+                <td class="col-num">{{ row.version }}</td>
+                <td class="col-num">{{ row.assigned }}</td>
+                <td class="col-num {{ row.confirmed == row.assigned ? 'text-success' }}">{{ row.confirmed }}</td>
+                <td class="col-num {{ row.overdue > 0 ? 'text-danger' }}">{{ row.overdue }}</td>
+                <td class="col-nowrap">{{ row.last_assigned|date('d.m.Y') }}</td>
+                <td class="col-actions"><a class="btn btn--ghost btn--small" href="{{ path('app_document_acknowledgements', {id: row.document.id, version: row.version}) }}">Отчёт</a></td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table></div>
+    {% endif %}
+    <div class="card__padded">
+        <p class="form-help">Ознакомление назначается в карточке документа (кнопка «Ознакомление» в блоке «Управление») модератором раздела или администратором. Напоминания рассылаются ежедневно командой <code>app:documents:acknowledge-remind</code>.</p>
+    </div>
+</div>
+{% endblock %}

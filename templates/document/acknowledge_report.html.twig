@@ -1,0 +1,68 @@
+{% extends 'base.html.twig' %}
+{% import '_macros.html.twig' as m %}
+
+{% block title %}Ознакомление — {{ document.title }}{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        <div class="eyebrow">Ознакомление · редакция {{ report.version }}</div>
+        <div class="hero__row">
+            <h1 class="h-display">{{ document.title }}</h1>
+            <div class="hero__actions">
+                <a class="btn btn--ghost" href="{{ path('app_document_show', {id: document.id}) }}">← К документу</a>
+                <a class="btn btn--ghost" href="{{ path('app_document_acknowledgements_sheet', {id: document.id, version: report.version}) }}" target="_blank" rel="noopener">Лист ознакомления</a>
+                <a class="btn btn--ghost" href="{{ path('app_document_acknowledgements_csv', {id: document.id, version: report.version}) }}">Выгрузить CSV</a>
+                <a class="btn btn--pill" href="{{ path('app_document_acknowledge_assign', {id: document.id}) }}">Назначить ещё</a>
+            </div>
+        </div>
+    </div>
+</section>
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+    <div class="grid grid--stats">
+        <div class="card"><div class="stat__label">Назначено</div><div class="stat__value">{{ report.summary.assigned }}</div><div class="stat__hint">сотрудников</div></div>
+        <div class="card"><div class="stat__label">Ознакомились</div><div class="stat__value text-success">{{ report.summary.confirmed }}</div><div class="stat__hint">{{ report.summary.assigned > 0 ? (report.summary.confirmed * 100 / report.summary.assigned)|round : 0 }}% от назначенных</div></div>
+        <div class="card"><div class="stat__label">Не ознакомились</div><div class="stat__value {{ report.summary.assigned - report.summary.confirmed > 0 ? 'text-warning' }}">{{ report.summary.assigned - report.summary.confirmed }}</div><div class="stat__hint">ожидают подтверждения</div></div>
+        <div class="card"><div class="stat__label">Просрочено</div><div class="stat__value {{ report.summary.overdue > 0 ? 'text-danger' }}">{{ report.summary.overdue }}</div><div class="stat__hint">срок ознакомления прошёл</div></div>
+    </div>
+
+    {% if report.versions|length > 1 %}
+        <div class="card toolbar">
+            <form method="get" class="toolbar__row toolbar__row--compact">
+                <span class="form-label">Редакция</span>
+                <select class="form-control form-control--inline" name="version" data-autosubmit>
+                    {% for v in report.versions %}<option value="{{ v }}" {{ v == report.version ? 'selected' }}>редакция {{ v }}</option>{% endfor %}
+                </select>
+                <span class="hints">история подтверждений по прежним редакциям сохраняется</span>
+            </form>
+        </div>
+    {% endif %}
+
+    <div class="card table-card">
+        <div class="card__head card__head--padded"><h2 class="h-section">Сотрудники</h2></div>
+        {% if report.rows|length == 0 %}
+            <div class="table-card__empty">Ознакомление ещё никому не назначено. Нажмите «Назначить ещё».</div>
+        {% else %}
+        <div class="table-scroll"><table class="admin-table">
+            <thead><tr><th>Сотрудник</th><th>Подразделение</th><th>Назначено</th><th>Срок</th><th>Ознакомлен</th><th>Адрес</th></tr></thead>
+            <tbody>
+            {% for row in report.rows %}
+                <tr class="{{ row.confirmed ? '' : (row.isOverdue(today) ? 'is-expired' : 'is-soon') }}">
+                    <td>{{ row.user.displayName }}</td>
+                    <td>{{ row.user.department ?: '—' }}</td>
+                    <td class="col-nowrap">{{ row.assignedAt|date('d.m.Y') }}</td>
+                    <td class="col-nowrap">{% if row.dueAt %}{{ row.dueAt|date('d.m.Y') }}{% if not row.confirmed and row.isOverdue(today) %} <span class="text-danger">просрочено</span>{% endif %}{% else %}—{% endif %}</td>
+                    <td class="col-nowrap">{% if row.confirmed %}<span class="text-success">{{ row.confirmedAt|date('d.m.Y H:i') }}</span>{% else %}<span class="text-muted">не ознакомлен</span>{% endif %}</td>
+                    <td class="col-nowrap"><span class="hints">{{ row.confirmedIp ?: '' }}</span></td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table></div>
+        {% endif %}
+        <div class="card__padded">
+            <p class="form-help">Подтверждение относится к редакции {{ report.version }} документа. Электронное подтверждение в собственной информационной системе работодателя приравнивается к ознакомлению под подпись, если порядок закреплён приказом по предприятию (ст. 22.1–22.3 ТК РФ); при необходимости распечатайте «Лист ознакомления» и подшейте его.</p>
+        </div>
+    </div>
+</section>
+{% endblock %}

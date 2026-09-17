@@ -8,6 +8,7 @@ use App\Entity\Document;
 use App\Entity\DocumentVersion;
 use App\Entity\User;
 use App\Form\DocumentType;
+use App\Repository\DocumentAcknowledgementRepository;
 use App\Repository\DocumentEventRepository;
 use App\Repository\SectionRepository;
 use App\Security\Access;
@@ -42,6 +43,7 @@ final class DocumentController extends AbstractController
         private readonly DocumentManager $manager,
         private readonly SectionRepository $sections,
         private readonly DocumentEventRepository $events,
+        private readonly DocumentAcknowledgementRepository $acknowledgements,
         private readonly Access $access,
         private readonly StatsService $stats,
         private readonly DiffService $diff,
@@ -130,6 +132,10 @@ final class DocumentController extends AbstractController
             'file_exists' => null !== $current && $current->isFile() ? $this->manager->getStorage()->exists($current) : true,
             'recent_events' => $canManage ? $this->events->findForDocument($document, 10) : [],
             'llm_enabled' => $canManage && $this->describer->isEnabled(),
+            // Ознакомление: что назначено текущему сотруднику и сводка для модератора.
+            'acknowledgement' => null !== $user ? $this->acknowledgements->findPending($document, $user) : null,
+            'acknowledged' => null !== $user && null !== $current ? $this->acknowledgements->findOneFor($document, $user, $current->getNumber())?->getConfirmedAt() : null,
+            'acknowledgement_summary' => $canManage && null !== $current ? $this->acknowledgements->summaryForDocument($document, $current->getNumber()) : null,
         ]);
     }
 

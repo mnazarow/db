@@ -91,6 +91,22 @@
         </dl>
     </div>
     <div class="card">
+        <div class="card__head"><h2 class="h-section">Полнотекстовый поиск</h2>
+            {% if search.pending > 0 %}<span class="badge badge--soon"><span class="badge__dot"></span>ожидают индексации: {{ search.pending }}</span>
+            {% else %}<span class="badge badge--done"><span class="badge__dot"></span>индекс актуален</span>{% endif %}</div>
+        <dl class="meta meta--stack">
+            <div><dt>Проиндексировано</dt><dd>{{ search.indexed }} из {{ search.documents }} документов, с текстом — {{ search.with_text }}</dd></div>
+            <div><dt>Объём текста в индексе</dt><dd>{{ (search.chars / 1000)|round }} тыс. символов</dd></div>
+            <div><dt>Форматы</dt><dd>страницы, {{ search.extensions|join(', ') }}{% if not search.pdf %} <span class="text-danger">(PDF недоступен — нет pdftotext, пакет poppler-utils)</span>{% endif %}</dd></div>
+        </dl>
+        <form method="post" action="{{ path('admin_settings_reindex') }}" class="form-actions">
+            <input type="hidden" name="_token" value="{{ csrf_token('settings') }}">
+            <button type="submit" class="btn btn--ghost btn--small">Проиндексировать изменившиеся</button>
+            <button type="submit" name="all" value="1" class="btn btn--ghost btn--small" formnovalidate>Переиндексировать всё</button>
+        </form>
+        <p class="form-help">Индекс обновляется автоматически при загрузке версий; по cron раз в час выполняется <code>app:documents:describe</code> и <code>app:search:reindex</code> для документов, которые остались без индекса (например, после восстановления из резервной копии).</p>
+    </div>
+    <div class="card">
         <h2 class="h-section">Система</h2>
         <dl class="meta meta--stack">
             <div><dt>Версия портала</dt><dd>{{ app_version }}</dd></div>

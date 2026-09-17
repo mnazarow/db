@@ -1,0 +1,60 @@
+{% extends 'base.html.twig' %}
+{% import '_macros.html.twig' as m %}
+
+{% block title %}Мои ознакомления{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        <div class="eyebrow">Личный кабинет</div>
+        <h1 class="h-display">Мои ознакомления</h1>
+    </div>
+</section>
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+    <div class="card table-card">
+        <div class="card__head card__head--padded"><h2 class="h-section">Требуется ознакомиться</h2>
+            <span class="badge {{ pending|length > 0 ? 'badge--soon' : 'badge--done' }}"><span class="badge__dot"></span>{{ pending|length }}</span></div>
+        {% if pending|length == 0 %}
+            <div class="table-card__empty">Всё прочитано — новых документов на ознакомление нет.</div>
+        {% else %}
+        <div class="table-scroll"><table class="admin-table">
+            <thead><tr><th></th><th>Документ</th><th>Раздел</th><th>Редакция</th><th>Срок</th><th class="col-actions"></th></tr></thead>
+            <tbody>
+            {% for a in pending %}
+                <tr class="{{ a.isOverdue(today) ? 'is-expired' }}">
+                    <td class="col-icon">{{ m.file_icon(a.document) }}</td>
+                    <td><a class="doc-table__title" href="{{ path('app_document_show', {id: a.document.id}) }}">{{ a.document.title }}</a>{% if a.document.code %} <span class="doc-table__code">{{ a.document.code }}</span>{% endif %}</td>
+                    <td>{{ a.document.section.fullName }}</td>
+                    <td class="col-nowrap">{{ a.versionNumber }}</td>
+                    <td class="col-nowrap">{% if a.dueAt %}{{ a.dueAt|date('d.m.Y') }}{% if a.isOverdue(today) %} <span class="text-danger">просрочено</span>{% endif %}{% else %}—{% endif %}</td>
+                    <td class="col-actions"><a class="btn btn--ghost btn--small" href="{{ path('app_document_show', {id: a.document.id}) }}">Открыть и ознакомиться</a></td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table></div>
+        {% endif %}
+    </div>
+
+    <div class="card table-card">
+        <div class="card__head card__head--padded"><h2 class="h-section">История ознакомлений</h2></div>
+        {% if confirmed|length == 0 %}
+            <div class="table-card__empty">Подтверждённых ознакомлений пока нет.</div>
+        {% else %}
+        <div class="table-scroll"><table class="admin-table">
+            <thead><tr><th>Документ</th><th>Раздел</th><th>Редакция</th><th>Ознакомлен</th></tr></thead>
+            <tbody>
+            {% for a in confirmed %}
+                <tr>
+                    <td><a class="doc-table__title" href="{{ path('app_document_show', {id: a.document.id}) }}">{{ a.document.title }}</a></td>
+                    <td>{{ a.document.section.fullName }}</td>
+                    <td class="col-nowrap">{{ a.versionNumber }}</td>
+                    <td class="col-nowrap">{{ a.confirmedAt|date('d.m.Y H:i') }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table></div>
+        {% endif %}
+    </div>
+</section>
+{% endblock %}

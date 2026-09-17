@@ -8,6 +8,7 @@ use App\Entity\Document;
 use App\Entity\DocumentEvent;
 use App\Entity\Section;
 use App\Entity\User;
+use App\Repository\DocumentAcknowledgementRepository;
 use App\Security\Access;
 use App\Service\FileStorage;
 use App\Service\Validity;
@@ -36,7 +37,16 @@ final class AppExtension extends AbstractExtension
         private readonly Validity $validity,
         private readonly Access $access,
         private readonly Security $security,
+        private readonly DocumentAcknowledgementRepository $acknowledgements,
     ) {
+    }
+
+    /** Сколько документов ждут ознакомления у текущего пользователя (значок в шапке). */
+    public function pendingAcknowledgements(): int
+    {
+        $user = $this->security->getUser();
+
+        return $user instanceof User ? $this->acknowledgements->countPendingForUser($user) : 0;
     }
 
     public function getFilters(): array
@@ -61,6 +71,7 @@ final class AppExtension extends AbstractExtension
             new TwigFunction('can_manage', [$this, 'canManage']),
             new TwigFunction('is_moderator', [$this, 'isModerator']),
             new TwigFunction('validity_today', fn (): \DateTimeImmutable => $this->validity->today()),
+            new TwigFunction('acknowledgements_pending', [$this, 'pendingAcknowledgements']),
         ];
     }
 
