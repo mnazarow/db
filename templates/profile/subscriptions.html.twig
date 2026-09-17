@@ -1,0 +1,117 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}Подписки и уведомления{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        <div class="eyebrow">Профиль</div>
+        <h1 class="h-display">Подписки и уведомления</h1>
+        <p class="hero__meta">Портал сообщает о новых редакциях документов, публикациях и сообщениях в обсуждении.</p>
+    </div>
+</section>
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+
+    <div class="grid grid--two">
+        <div class="card card--form">
+            <h2 class="h-section">Каналы</h2>
+            <form method="post" action="{{ path('app_profile_notifications') }}" class="form">
+                <input type="hidden" name="_token" value="{{ csrf_token('subscriptions') }}">
+                <div class="form-row form-row--check">
+                    <label><input type="checkbox" name="notify_email" value="1" {{ app.user.notifyEmail ? 'checked' }}> Письма на {{ app.user.email ?: 'адрес не указан' }}</label>
+                    {% if not app.user.email %}<p class="hints">Без адреса электронной почты письма отправить некуда — попросите администратора заполнить его.</p>{% endif %}
+                </div>
+                <div class="form-row form-row--check">
+                    <label><input type="checkbox" name="notify_telegram" value="1" {{ app.user.notifyTelegram ? 'checked' }}> Сообщения в Telegram</label>
+                </div>
+                <div class="form-actions"><button type="submit" class="btn btn--pill">Сохранить</button></div>
+            </form>
+        </div>
+
+        <div class="card card--form">
+            <div class="card__head">
+                <h2 class="h-section">Telegram</h2>
+                {% if app.user.hasTelegram %}<span class="badge badge--done"><span class="badge__dot"></span>привязан</span>{% endif %}
+            </div>
+            {% if not telegram_enabled %}
+                <p class="hints">Уведомления в Telegram не настроены администратором портала.</p>
+            {% elseif app.user.hasTelegram %}
+                <p>Сообщения приходят в чат с ботом{% if app.user.telegramName %} ({{ app.user.telegramName }}){% endif %}. Команда <code>/stop</code> в чате отключает их.</p>
+                <form method="post" action="{{ path('app_profile_telegram') }}" class="form" data-confirm="Отвязать Telegram? Уведомления перестанут приходить.">
+                    <input type="hidden" name="_token" value="{{ csrf_token('subscriptions') }}">
+                    <input type="hidden" name="unlink" value="1">
+                    <div class="form-actions"><button type="submit" class="btn btn--ghost">Отвязать</button></div>
+                </form>
+            {% else %}
+                {% if telegram_code %}
+                    <p>Код привязки (действует {{ code_ttl }} минут):</p>
+                    <pre class="code-block" id="telegram-code">{{ telegram_code }}</pre>
+                    <p class="hints">Откройте чат с ботом портала и отправьте этот код одним сообщением.</p>
+                    {% if telegram_link %}<p><a class="btn btn--pill" href="{{ telegram_link }}" target="_blank" rel="noopener">Открыть чат с ботом</a></p>{% endif %}
+                {% else %}
+                    <p>Получите код и отправьте его боту портала — после этого уведомления будут приходить в Telegram.</p>
+                {% endif %}
+                <form method="post" action="{{ path('app_profile_telegram') }}" class="form">
+                    <input type="hidden" name="_token" value="{{ csrf_token('subscriptions') }}">
+                    <div class="form-actions"><button type="submit" class="btn {{ telegram_code ? 'btn--ghost' : 'btn--pill' }}">{{ telegram_code ? 'Получить новый код' : 'Получить код привязки' }}</button></div>
+                </form>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card table-card">
+        <div class="card__head card__head--padded"><h2 class="h-section">Мои подписки <span class="tag">{{ subscriptions|length }}</span></h2></div>
+        {% if not subscriptions_enabled %}
+            <p class="empty">Подписка на изменения выключена администратором портала.</p>
+        {% elseif subscriptions|length == 0 %}
+            <p class="empty">Подписок пока нет. Кнопка «Подписаться» есть в карточке документа и на странице раздела.</p>
+        {% else %}
+            <div class="table-scroll">
+                <table class="admin-table">
+                    <thead><tr><th>Что отслеживается</th><th>Тип</th><th>С какого дня</th><th class="col-actions"></th></tr></thead>
+                    <tbody>
+                    {% for s in subscriptions %}
+                        <tr>
+                            <td>
+                                {% if s.forSection %}
+                                    <a href="{{ path('app_section_show', {id: s.section.id}) }}">{{ s.section.fullName }}</a>
+                                {% else %}
+                                    <a href="{{ path('app_document_show', {id: s.document.id}) }}">{{ s.document.title }}</a>
+                                    {% if s.document.code %}<div class="hints">{{ s.document.code }}</div>{% endif %}
+                                {% endif %}
+                            </td>
+                            <td>{{ s.forSection ? 'раздел и подразделы' : 'документ' }}</td>
+                            <td class="col-nowrap">{{ s.createdAt|date('d.m.Y') }}</td>
+                            <td class="col-actions">
+                                <form method="post" action="{{ path('app_profile_subscription_remove', {id: s.id}) }}" class="inline-form">
+                                    <input type="hidden" name="_token" value="{{ csrf_token('subscriptions') }}">
+                                    <button type="submit" class="btn btn--ghost btn--small">Отписаться</button>
+                                </form>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% endif %}
+    </div>
+
+    {% if comments|length > 0 %}
+        <div class="card">
+            <h2 class="h-section">Мои сообщения в обсуждениях</h2>
+            <ul class="comments">
+                {% for c in comments %}
+                    <li class="comments__item">
+                        <div class="comments__head">
+                            <a class="comments__author" href="{{ path('app_document_show', {id: c.document.id, _fragment: 'comment-' ~ c.id}) }}">{{ c.document.title }}</a>
+                            <span class="comments__when">{{ c.createdAt|date('d.m.Y H:i') }}</span>
+                        </div>
+                        <p class="comments__body">{{ c.excerpt(300) }}</p>
+                    </li>
+                {% endfor %}
+            </ul>
+        </div>
+    {% endif %}
+</section>
+{% endblock %}

@@ -39,7 +39,8 @@ final class HomeController extends AbstractController
     {
         $guest = null === $user;
         $tree = $this->sections->findAllTree();
-        $counts = self::subtreeCounts($tree, $this->documents->countPerSection($guest));
+        $viewer = $this->access->viewer($user);
+        $counts = self::subtreeCounts($tree, $this->documents->countPerSection($guest, $viewer));
         $managedIds = $guest ? [] : $this->access->managedSectionIds($user);
         $isModerator = !$guest && $this->access->isModerator($user);
 
@@ -47,11 +48,11 @@ final class HomeController extends AbstractController
             'roots' => array_values(array_filter($tree, static fn (Section $s) => null === $s->getParent())),
             'tree' => $tree,
             'counts' => $counts,
-            'recent' => $this->documents->findRecentPublished(8, $guest),
+            'recent' => $this->documents->findRecentPublished(8, $guest, $viewer),
             'expiring' => $isModerator ? $this->stats->expiring($managedIds, 8) : [],
             'drafts' => $isModerator ? $this->documents->findDrafts($managedIds, 6) : [],
             'is_moderator' => $isModerator,
-            'total_published' => $this->documents->countByStatus(null, $guest)[Document::STATUS_PUBLISHED],
+            'total_published' => $this->documents->countByStatus(null, $guest, $viewer)[Document::STATUS_PUBLISHED],
             // Что сотруднику нужно прочитать под подпись.
             'to_acknowledge' => $guest ? [] : $this->acknowledgements->findPendingForUser($user, 6),
             'today' => new \DateTimeImmutable('today'),
@@ -69,13 +70,14 @@ final class HomeController extends AbstractController
         $query = SearchQuery::parse($q);
         if (mb_strlen($q) >= 2) {
             $statuses = null !== $user && $this->access->isModerator($user) ? Document::STATUSES : [Document::STATUS_PUBLISHED];
-            $results = $this->documents->search($q, $statuses, $section, 100, null === $user);
+            $viewer = $this->access->viewer($user);
+            $results = $this->documents->search($q, $statuses, $section, 100, null === $user, $viewer);
             // Черновики и архив видны только тем, кто управляет разделом; гостям — только открытые документы.
             $results = array_values(array_filter($results, fn (Document $d) => $this->access->canViewDocument($user, $d)));
             // Дополнительно — поиск по содержимому файлов (индекс document_text): документы, которые
             // не нашлись по названию и реквизитам, показываем отдельным блоком с фрагментом текста.
             $found = array_map(static fn (Document $d): int => (int) $d->getId(), $results);
-            foreach ($this->documents->searchContent($query, $statuses, $section, 30, null === $user) as $hit) {
+            foreach ($this->documents->searchContent($query, $statuses, $section, 30, null === $user, $viewer) as $hit) {
                 if (\in_array((int) $hit['document']->getId(), $found, true) || !$this->access->canViewDocument($user, $hit['document'])) {
                     continue;
                 }

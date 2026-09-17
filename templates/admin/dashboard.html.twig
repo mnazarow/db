@@ -10,7 +10,7 @@
 
 {% block admin_body %}
 <div class="grid grid--stats">
-    <div class="card"><div class="stat__label">Документов</div><div class="stat__value">{{ overview.documents_total }}</div><div class="stat__hint">опубликовано {{ overview.documents_by_status.published }}, черновиков {{ overview.documents_by_status.draft }}, в архиве {{ overview.documents_by_status.archived }}</div></div>
+    <div class="card"><div class="stat__label">Документов</div><div class="stat__value">{{ overview.documents_total }}</div><div class="stat__hint">опубликовано {{ overview.documents_by_status.published }}, черновиков {{ overview.documents_by_status.draft }}{% if overview.documents_by_status.review > 0 %}, на согласовании {{ overview.documents_by_status.review }}{% endif %}, в архиве {{ overview.documents_by_status.archived }}</div></div>
     <div class="card"><div class="stat__label">Просрочено</div><div class="stat__value {{ overview.validity.expired > 0 ? 'text-danger' }}">{{ overview.validity.expired }}</div><div class="stat__hint">истекает в ближайшие {{ expiry_soon_days }} дн.: {{ overview.validity.soon }} · <a href="{{ path('admin_statistics_validity') }}">по разделам →</a></div></div>
     <div class="card"><div class="stat__label">Просмотры за 30 дней</div><div class="stat__value">{{ overview.views_30d }}</div><div class="stat__hint">скачиваний: {{ overview.downloads_30d }}</div></div>
     <div class="card"><div class="stat__label">Новых версий за 30 дней</div><div class="stat__value">{{ overview.new_versions_30d }}</div><div class="stat__hint">всего версий: {{ overview.versions }}, файлов на {{ overview.storage_bytes|filesize }}</div></div>

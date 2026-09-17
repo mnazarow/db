@@ -9,6 +9,9 @@ use App\Entity\User;
 use App\Repository\ApiKeyRepository;
 use App\Repository\DocumentRepository;
 use App\Service\Integration\WebhookNotifier;
+use App\Service\Notification\TelegramNotifier;
+use App\Repository\UserRepository;
+use App\Repository\DocumentSubscriptionRepository;
 use App\Service\Llm\DocumentDescriber;
 use App\Service\Llm\LlmClient;
 use App\Service\Llm\LlmException;
@@ -44,6 +47,9 @@ final class IntegrationsController extends AbstractController
         private readonly LlmClient $llm,
         private readonly DocumentDescriber $describer,
         private readonly TextExtractor $extractor,
+        private readonly TelegramNotifier $telegram,
+        private readonly UserRepository $users,
+        private readonly DocumentSubscriptionRepository $subscriptions,
         private readonly LoggerInterface $auditLogger,
     ) {
     }
@@ -63,6 +69,11 @@ final class IntegrationsController extends AbstractController
             'llm' => $llm + ['api_key_masked' => PortalSettings::mask($llm['api_key']), 'default_prompt' => PortalSettings::LLM_DEFAULT_PROMPT, 'is_default_prompt' => $llm['prompt'] === PortalSettings::LLM_DEFAULT_PROMPT],
             'descriptions' => $this->documents->countDescriptions(),
             'describe_limit' => self::DESCRIBE_NOW_LIMIT,
+            // Обсуждение, подписки и Telegram.
+            'comments_enabled' => $this->settings->commentsEnabled(),
+            'subscriptions_enabled' => $this->settings->subscriptionsEnabled(),
+            'subscription_summary' => $this->subscriptions->summary(),
+            'telegram' => $this->settings->telegram() + ['token_masked' => PortalSettings::mask($this->settings->telegram()['token']), 'linked' => \count($this->users->findWithTelegram()), 'default_api' => PortalSettings::TELEGRAM_DEFAULT_API_URL],
         ]);
     }
 
@@ -113,6 +124,60 @@ final class IntegrationsController extends AbstractController
         $this->addFlash('success', \sprintf('Ключ «%s» удалён.', $name));
 
         return $this->redirectToRoute('admin_integrations', ['_fragment' => 'api-keys']);
+    }
+
+    // ---- Обсуждение, подписки и Telegram ----------------------------------------------------------------
+
+    #[Route('/discussion', name: 'admin_integrations_discussion', methods: ['POST'])]
+    public function saveDiscussion(Request $request, #[CurrentUser] User $user): Response
+    {
+        $this->checkToken($request);
+        $this->settings->setDiscussion($request->request->getBoolean('comments'), $request->request->getBoolean('subscriptions'), $user);
+        $this->addFlash('success', 'Настройки обсуждения и подписок сохранены.');
+
+        return $this->redirectToRoute('admin_integrations', ['_fragment' => 'discussion']);
+    }
+
+    #[Route('/telegram', name: 'admin_integrations_telegram', methods: ['POST'])]
+    public function saveTelegram(Request $request, #[CurrentUser] User $user): Response
+    {
+        $this->checkToken($request);
+        $token = trim((string) $request->request->get('token', ''));
+        $this->settings->setTelegram([
+            'enabled' => $request->request->getBoolean('enabled'),
+            'token' => '' !== $token ? $token : null,
+            'bot_name' => (string) $request->request->get('bot_name', ''),
+            'api_url' => (string) $request->request->get('api_url', ''),
+            'admin_chat' => (string) $request->request->get('admin_chat', ''),
+        ], $user);
+        if ($request->request->getBoolean('clear_token')) {
+            $this->settings->set(PortalSettings::TELEGRAM_TOKEN, '', $user);
+        }
+        $this->addFlash('success', 'Настройки Telegram сохранены.');
+
+        return $this->redirectToRoute('admin_integrations', ['_fragment' => 'telegram']);
+    }
+
+    #[Route('/telegram/test', name: 'admin_integrations_telegram_test', methods: ['POST'])]
+    public function testTelegram(Request $request): Response
+    {
+        $this->checkToken($request);
+        $result = $this->telegram->check();
+        $this->addFlash($result['ok'] ? 'success' : 'danger', $result['message']);
+
+        return $this->redirectToRoute('admin_integrations', ['_fragment' => 'telegram']);
+    }
+
+    #[Route('/telegram/poll', name: 'admin_integrations_telegram_poll', methods: ['POST'])]
+    public function pollTelegram(Request $request): Response
+    {
+        $this->checkToken($request);
+        $stats = $this->telegram->poll();
+        $this->addFlash([] === $stats['messages'] ? 'success' : 'danger', [] !== $stats['messages']
+            ? implode(' ', $stats['messages'])
+            : \sprintf('Разобрано сообщений: %d, привязано чатов: %d.', $stats['updates'], $stats['linked']));
+
+        return $this->redirectToRoute('admin_integrations', ['_fragment' => 'telegram']);
     }
 
     // ---- Webhook --------------------------------------------------------------------------------------

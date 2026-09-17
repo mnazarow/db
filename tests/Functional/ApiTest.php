@@ -6,6 +6,7 @@ namespace App\Tests\Functional;
 
 use App\Entity\ApiKey;
 use App\Entity\Document;
+use App\Security\Access;
 use App\Repository\ApiKeyRepository;
 use App\Repository\DocumentRepository;
 use App\Repository\SectionRepository;
@@ -125,8 +126,10 @@ final class ApiTest extends PortalTestCase
         self::assertIsArray($data['children']);
 
         // Списки документов: открытые / все, статусы, пагинация.
-        $publicCount = $documents->countByStatus(null, true)[Document::STATUS_PUBLISHED];
-        $allCount = $documents->countByStatus()[Document::STATUS_PUBLISHED];
+        // Документы с ограниченным доступом через API не отдаются — считаем так же, как их видит ключ.
+        $open = static::getContainer()->get(Access::class)->viewer(null);
+        $publicCount = $documents->countByStatus(null, true, $open)[Document::STATUS_PUBLISHED];
+        $allCount = $documents->countByStatus(null, false, $open)[Document::STATUS_PUBLISHED];
         self::assertGreaterThan($publicCount, $allCount, 'в демо-данных есть внутренние документы');
 
         $data = $this->api('/documents', self::$publicToken);
@@ -148,9 +151,9 @@ final class ApiTest extends PortalTestCase
         $data = $this->api('/documents', self::$internalToken);
         self::assertSame($allCount, $data['total']);
         $data = $this->api('/documents?status=all', self::$internalToken);
-        self::assertSame($allCount + $documents->countByStatus()[Document::STATUS_ARCHIVED], $data['total']);
+        self::assertSame($allCount + $documents->countByStatus(null, false, $open)[Document::STATUS_ARCHIVED], $data['total']);
         $data = $this->api('/documents?status=archived', self::$internalToken);
-        self::assertSame($documents->countByStatus()[Document::STATUS_ARCHIVED], $data['total']);
+        self::assertSame($documents->countByStatus(null, false, $open)[Document::STATUS_ARCHIVED], $data['total']);
         $this->api('/documents?status=draft', self::$internalToken);
         self::assertResponseStatusCodeSame(400);
 

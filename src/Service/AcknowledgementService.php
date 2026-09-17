@@ -99,18 +99,23 @@ final class AcknowledgementService
 
     /**
      * Подтверждение ознакомления сотрудником. Возвращает запись или null, если ознакомление не назначалось.
+     *
+     * @param array{correct: int, total: int}|null $quiz результат проверки знаний, если она настроена
      */
-    public function confirm(Document $document, User $user, ?string $ip = null): ?DocumentAcknowledgement
+    public function confirm(Document $document, User $user, ?string $ip = null, ?array $quiz = null): ?DocumentAcknowledgement
     {
         $acknowledgement = $this->acknowledgements->findPending($document, $user);
         if (null === $acknowledgement) {
             return null;
         }
         $acknowledgement->confirm($ip);
+        if (null !== $quiz) {
+            $acknowledgement->setQuizResult((int) ($quiz['correct'] ?? 0), (int) ($quiz['total'] ?? 0));
+        }
         $this->em->persist(new DocumentEvent($document, DocumentEvent::UPDATE, $user, null, $ip, [
             'acknowledgement' => 'confirmed',
             'version' => $acknowledgement->getVersionNumber(),
-        ]));
+        ] + (null !== $quiz ? ['quiz' => \sprintf('%d/%d', $quiz['correct'] ?? 0, $quiz['total'] ?? 0), 'attempts' => $acknowledgement->getQuizAttempts()] : [])));
         $this->em->flush();
         $this->auditLogger->info('Сотрудник ознакомился с документом', ['document' => $document->getId(), 'version' => $acknowledgement->getVersionNumber(), 'user' => $user->getUsername(), 'ip' => $ip]);
 

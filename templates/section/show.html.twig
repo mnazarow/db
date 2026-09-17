@@ -13,14 +13,21 @@
                 <h1 class="h-display">{{ section.name }}</h1>
                 {% if section.description %}<p class="hero__meta">{{ section.description|nl2br }}</p>{% endif %}
             </div>
-            {% if can_manage %}
             <div class="hero__actions">
-                <a class="btn btn--pill" href="{{ path('app_document_new', {section: section.id}) }}">Добавить документ</a>
-                <a class="btn btn--ghost" href="{{ path('app_section_new', {id: section.id}) }}">Новый подраздел</a>
-                <a class="btn btn--ghost" href="{{ path('app_section_edit', {id: section.id}) }}">Изменить раздел</a>
-                {% if is_granted('ROLE_ADMIN') %}<a class="btn btn--ghost" href="{{ path('admin_section_moderators', {id: section.id}) }}">Модераторы</a>{% endif %}
+                {% if can_manage %}
+                    <a class="btn btn--pill" href="{{ path('app_document_new', {section: section.id}) }}">Добавить документ</a>
+                    {% if templates|default([])|length > 0 %}<a class="btn btn--ghost" href="{{ path('app_document_new', {section: section.id, template: templates[0].id}) }}" title="Шаблон «{{ templates[0].name }}»">Создать по шаблону</a>{% endif %}
+                    <a class="btn btn--ghost" href="{{ path('app_section_new', {id: section.id}) }}">Новый подраздел</a>
+                    <a class="btn btn--ghost" href="{{ path('app_section_edit', {id: section.id}) }}">Изменить раздел</a>
+                    {% if is_granted('ROLE_ADMIN') %}<a class="btn btn--ghost" href="{{ path('admin_section_moderators', {id: section.id}) }}">Модераторы</a>{% endif %}
+                {% endif %}
+                {% if app.user and subscriptions_enabled|default(false) %}
+                    <form method="post" action="{{ path('app_section_subscribe', {id: section.id}) }}" class="inline-form">
+                        <input type="hidden" name="_token" value="{{ csrf_token('section_' ~ section.id) }}">
+                        <button type="submit" class="btn btn--ghost" title="Уведомления об изменениях в разделе и его подразделах">{{ subscribed|default(false) ? 'Отписаться от раздела' : 'Подписаться на раздел' }}</button>
+                    </form>
+                {% endif %}
             </div>
-            {% endif %}
         </div>
     </div>
 </section>
@@ -58,9 +65,10 @@
                 {% if can_manage %}
                     <div class="chips">
                         {% set base = {id: section.id, sort: sort} %}
-                        <a class="chip" aria-pressed="{{ filter == 'all' ? 'true' : 'false' }}" href="{{ path('app_section_show', base|merge({status: 'all'})) }}">Все <span class="chip__count">{{ by_status.draft + by_status.published + by_status.archived }}</span></a>
+                        <a class="chip" aria-pressed="{{ filter == 'all' ? 'true' : 'false' }}" href="{{ path('app_section_show', base|merge({status: 'all'})) }}">Все <span class="chip__count">{{ by_status.draft + by_status.review + by_status.published + by_status.archived }}</span></a>
                         <a class="chip chip--done" aria-pressed="{{ filter == 'published' ? 'true' : 'false' }}" href="{{ path('app_section_show', base|merge({status: 'published'})) }}"><span class="chip__dot"></span>Опубликованные <span class="chip__count">{{ by_status.published }}</span></a>
                         <a class="chip chip--shifted" aria-pressed="{{ filter == 'draft' ? 'true' : 'false' }}" href="{{ path('app_section_show', base|merge({status: 'draft'})) }}"><span class="chip__dot"></span>Черновики <span class="chip__count">{{ by_status.draft }}</span></a>
+                        {% if by_status.review > 0 %}<a class="chip chip--soon" aria-pressed="{{ filter == 'review' ? 'true' : 'false' }}" href="{{ path('app_section_show', base|merge({status: 'review'})) }}"><span class="chip__dot"></span>На согласовании <span class="chip__count">{{ by_status.review }}</span></a>{% endif %}
                         <a class="chip chip--none" aria-pressed="{{ filter == 'archived' ? 'true' : 'false' }}" href="{{ path('app_section_show', base|merge({status: 'archived'})) }}"><span class="chip__dot"></span>Архив <span class="chip__count">{{ by_status.archived }}</span></a>
                     </div>
                 {% endif %}
@@ -104,7 +112,7 @@
                     <a class="btn btn--ghost btn--small" href="{{ path('app_section_edit', {id: section.id}) }}">Изменить название и описание</a>
                     <form method="post" action="{{ path('app_section_delete', {id: section.id}) }}" class="inline-form" data-confirm="Удалить раздел «{{ section.name }}»?">
                         <input type="hidden" name="_token" value="{{ csrf_token('section_' ~ section.id) }}">
-                        <button type="submit" class="btn btn--danger btn--small" {{ children|length > 0 or (by_status.draft + by_status.published + by_status.archived) > 0 ? 'disabled' }}>Удалить раздел</button>
+                        <button type="submit" class="btn btn--danger btn--small" {{ children|length > 0 or (by_status.draft + by_status.review + by_status.published + by_status.archived) > 0 ? 'disabled' }}>Удалить раздел</button>
                     </form>
                 </div>
             </div>

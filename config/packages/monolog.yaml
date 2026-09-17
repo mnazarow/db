@@ -6,6 +6,10 @@ monolog:
 when@dev:
     monolog:
         handlers:
+            audit_db:
+                type: service
+                id: App\Service\Audit\DatabaseAuditHandler
+                channels: ['app_audit']
             main:
                 type: stream
                 path: '%kernel.logs_dir%/%kernel.environment%.log'
@@ -19,6 +23,10 @@ when@dev:
 when@test:
     monolog:
         handlers:
+            audit_db:
+                type: service
+                id: App\Service\Audit\DatabaseAuditHandler
+                channels: ['app_audit']
             main:
                 type: fingers_crossed
                 action_level: error
@@ -51,6 +59,11 @@ when@prod:
                 path: '%kernel.logs_dir%/audit.log'
                 level: info
                 max_files: 90
+                channels: ['app_audit']
+            # Те же записи — в таблицу audit_event: журнал в панели администратора и выгрузка в SIEM.
+            audit_db:
+                type: service
+                id: App\Service\Audit\DatabaseAuditHandler
                 channels: ['app_audit']
             console:
                 type: console

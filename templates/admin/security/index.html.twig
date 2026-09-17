@@ -1,0 +1,109 @@
+{% extends 'admin/_layout.html.twig' %}
+
+{% block title %}Вход и безопасность{% endblock %}
+{% block admin_title %}Вход и безопасность{% endblock %}
+
+{% block admin_body %}
+<div class="grid grid--two">
+    <div class="card card--form">
+        <div class="card__head"><h2 class="h-section">Вход через SSO (OpenID Connect)</h2>
+            {% if sso.enabled %}<span class="badge badge--done"><span class="badge__dot"></span>включён</span>
+            {% else %}<span class="badge badge--none"><span class="badge__dot"></span>выключен</span>{% endif %}</div>
+        <p>Единый вход через корпоративный провайдер: Keycloak, Blitz Identity Provider, AD FS, Authentik и другие,
+            поддерживающие OpenID Connect. Портал использует поток «код авторизации» с PKCE.</p>
+        <dl class="meta meta--stack">
+            <div><dt>Адрес возврата (redirect URI)</dt><dd><code id="sso-redirect">{{ redirect_uri }}</code>
+                <button type="button" class="btn btn--ghost btn--small" data-copy="#sso-redirect">Скопировать</button></dd></div>
+        </dl>
+        <form method="post" action="{{ path('admin_security_sso') }}" class="form">
+            <input type="hidden" name="_token" value="{{ csrf_token('security') }}">
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="enabled" value="1" {{ sso.enabled ? 'checked' }}><span>Разрешить вход через SSO</span></label>
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="sso-issuer">Адрес провайдера (issuer)</label>
+                <input class="form-control" id="sso-issuer" name="issuer" type="url" value="{{ sso.issuer }}" placeholder="https://sso.example.local/realms/company">
+                <div class="form-help">Портал сам запросит <code>{issuer}/.well-known/openid-configuration</code>.</div>
+            </div>
+            <div class="form-grid">
+                <div class="form-row">
+                    <label class="form-label" for="sso-client">Идентификатор клиента</label>
+                    <input class="form-control" id="sso-client" name="client_id" value="{{ sso.client_id }}" placeholder="docportal">
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="sso-secret">Секрет клиента</label>
+                    <input class="form-control" id="sso-secret" name="client_secret" type="password" autocomplete="new-password" placeholder="{{ sso.secret_set ? 'сохранён (' ~ sso.secret_masked ~ ') — введите новый, чтобы заменить' : 'не задан' }}">
+                    {% if sso.secret_set %}<div class="form-help"><label class="form-check form-check--inline"><input type="checkbox" name="clear_secret" value="1"><span>удалить секрет</span></label></div>{% endif %}
+                </div>
+            </div>
+            <div class="form-grid">
+                <div class="form-row">
+                    <label class="form-label" for="sso-scopes">Области (scopes)</label>
+                    <input class="form-control" id="sso-scopes" name="scopes" value="{{ sso.scopes }}" placeholder="openid profile email">
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="sso-button">Надпись на кнопке</label>
+                    <input class="form-control" id="sso-button" name="button" maxlength="64" value="{{ sso.button }}">
+                </div>
+            </div>
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="create_users" value="1" {{ sso.create_users ? 'checked' }}><span>Создавать учётные записи при первом входе</span></label>
+            </div>
+            <div class="form-grid">
+                <div class="form-row">
+                    <label class="form-label" for="sso-username">Утверждение с логином</label>
+                    <input class="form-control" id="sso-username" name="username_claim" value="{{ sso.username_claim }}" placeholder="preferred_username">
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="sso-name">Утверждение с именем</label>
+                    <input class="form-control" id="sso-name" name="name_claim" value="{{ sso.name_claim }}" placeholder="name">
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="sso-email">Утверждение с почтой</label>
+                    <input class="form-control" id="sso-email" name="email_claim" value="{{ sso.email_claim }}" placeholder="email">
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="sso-dept">Утверждение с подразделением</label>
+                    <input class="form-control" id="sso-dept" name="department_claim" value="{{ sso.department_claim }}" placeholder="department">
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="sso-admin-claim">Утверждение с ролями</label>
+                    <input class="form-control" id="sso-admin-claim" name="admin_claim" value="{{ sso.admin_claim }}" placeholder="groups">
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="sso-admin-value">Значение для администратора</label>
+                    <input class="form-control" id="sso-admin-value" name="admin_value" value="{{ sso.admin_value }}" placeholder="docportal-admins">
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn--pill btn--small">Сохранить</button>
+            </div>
+        </form>
+        <form method="post" action="{{ path('admin_security_sso_test') }}" class="form-actions">
+            <input type="hidden" name="_token" value="{{ csrf_token('security') }}">
+            <button type="submit" class="btn btn--ghost btn--small">Проверить подключение</button>
+        </form>
+        <p class="form-help">Пока утверждение с ролями не задано, права администратора в портале назначаются вручную — провайдер их не меняет.</p>
+    </div>
+
+    <div class="card card--form">
+        <div class="card__head"><h2 class="h-section">Двухфакторная аутентификация</h2>
+            {% if require_2fa_admins %}<span class="badge badge--done"><span class="badge__dot"></span>обязательна для администраторов</span>
+            {% else %}<span class="badge"><span class="badge__dot"></span>по желанию</span>{% endif %}</div>
+        <dl class="meta meta--stack">
+            <div><dt>Включили второй фактор</dt><dd>{{ two_factor.enabled }} из {{ two_factor.active }} активных сотрудников</dd></div>
+            <div><dt>Администраторы</dt><dd>{{ two_factor.admins }}, без второго фактора — {% if two_factor.admins_without > 0 %}<span class="text-warning">{{ two_factor.admins_without }}</span>{% else %}0{% endif %}</dd></div>
+        </dl>
+        <form method="post" action="{{ path('admin_security_two_factor') }}" class="form">
+            <input type="hidden" name="_token" value="{{ csrf_token('security') }}">
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="require_2fa_admins" value="1" {{ require_2fa_admins ? 'checked' }}><span>Требовать второй фактор от администраторов</span></label>
+            </div>
+            <div class="form-actions"><button type="submit" class="btn btn--pill btn--small">Сохранить</button></div>
+        </form>
+        <p class="form-help">Каждый сотрудник включает второй фактор сам: «Двухфакторная аутентификация» в подвале страницы.
+            Портал показывает QR-код для приложения-аутентификатора и восемь резервных кодов на случай утери телефона.
+            Если политика включена, администратор без второго фактора при входе попадёт на страницу настройки.</p>
+    </div>
+</div>
+{% endblock %}

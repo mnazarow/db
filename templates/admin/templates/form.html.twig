@@ -1,0 +1,81 @@
+{% extends 'admin/_layout.html.twig' %}
+{% import '_macros.html.twig' as m %}
+
+{% block title %}{{ is_new ? 'Новый шаблон' : template.name }}{% endblock %}
+{% block admin_title %}{{ is_new ? 'Новый шаблон документа' : 'Шаблон «' ~ template.name ~ '»' }}{% endblock %}
+{% block admin_actions %}
+    <a class="btn btn--ghost" href="{{ path('admin_templates') }}">К списку шаблонов</a>
+{% endblock %}
+
+{% block admin_body %}
+<div class="grid grid--two">
+    <div class="card card--form">
+        <form method="post" class="form">
+            <input type="hidden" name="_token" value="{{ csrf_token('templates') }}">
+            <div class="form-row">
+                <label class="form-label" for="t-name">Название шаблона</label>
+                <input class="form-control" id="t-name" name="name" type="text" maxlength="128" required value="{{ template.name }}" placeholder="Приказ по основной деятельности">
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="t-description">Пояснение для модератора</label>
+                <textarea class="form-control" id="t-description" name="description" rows="2" placeholder="Когда применять этот шаблон">{{ template.description }}</textarea>
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="t-section">Раздел по умолчанию</label>
+                <select class="form-control" id="t-section" name="section"><option value="">не задан</option>{{ m.section_option_tree(tree, template.section) }}</select>
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="t-type">Вид документа</label>
+                <select class="form-control" id="t-type" name="type">
+                    <option value="file" {{ not template.page ? 'selected' }}>файл (PDF, DOCX, скан)</option>
+                    <option value="page" {{ template.page ? 'selected' }}>страница портала</option>
+                </select>
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="t-title">Заготовка названия</label>
+                <input class="form-control" id="t-title" name="title_pattern" type="text" maxlength="200" value="{{ template.titlePattern }}" placeholder="Приказ от {ДАТА} №">
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="t-code">Образец обозначения</label>
+                <input class="form-control" id="t-code" name="code_pattern" type="text" maxlength="64" value="{{ template.codePattern }}" placeholder="ПР-{ГОД}-{NNN}">
+                <div class="form-help">Подстановки: {% for code in placeholders|keys %}<code>{{ code }}</code>{% if not loop.last %}, {% endif %}{% endfor %}.{% if preview %} Следующее обозначение: <b>{{ preview }}</b>.{% endif %}</div>
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="t-counter">Счётчик номеров</label>
+                <input class="form-control" id="t-counter" name="counter" type="number" min="0" value="{{ template.counter }}">
+                <div class="form-help">Последний выданный номер за {{ template.counterYear ?: 'текущий' }} год. Измените, чтобы продолжить нумерацию прежней системы.</div>
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="t-tags">Теги</label>
+                <input class="form-control" id="t-tags" name="tags" type="text" value="{{ template.tagsString }}" placeholder="приказ, основная деятельность">
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="t-validity">Срок актуальности, месяцев</label>
+                <input class="form-control" id="t-validity" name="validity_months" type="number" min="1" max="600" value="{{ template.validityMonths }}">
+                <div class="form-help">Пусто — без срока. Портал сам подставит дату «актуален до» при создании документа.</div>
+            </div>
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="public" value="1" {{ template.public ? 'checked' }}><span>Открытый документ — читается без входа в портал</span></label>
+            </div>
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="active" value="1" {{ template.active ? 'checked' }}><span>Шаблон доступен модераторам</span></label>
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="t-body">Заготовка текста страницы</label>
+                <textarea class="form-control" id="t-body" name="body" rows="10" placeholder="&lt;h2&gt;Общие положения&lt;/h2&gt;&lt;p&gt;…&lt;/p&gt;">{{ template.body }}</textarea>
+                <div class="form-help">Применяется к шаблонам вида «страница»: разметка HTML, которую модератор увидит в редакторе.</div>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn--pill">{{ is_new ? 'Создать шаблон' : 'Сохранить' }}</button>
+                <a class="btn btn--ghost" href="{{ path('admin_templates') }}">Отмена</a>
+            </div>
+        </form>
+    </div>
+    <div class="card card--info">
+        <h2 class="h-section">Как это выглядит у модератора</h2>
+        <p>В разделе и в реестре появляется кнопка «Создать по шаблону». Портал открывает обычную форму добавления документа с заполненными полями — модератор проверяет их, прикладывает файл (или правит текст страницы) и сохраняет.</p>
+        <p>Номер выдаётся в момент открытия формы и не повторяется: даже если документ не сохранить, следующий получит новый номер. Так нумерация остаётся сквозной, как в бумажном журнале регистрации.</p>
+        <p class="hints">Шаблон не ограничивает модератора: любое подставленное поле можно изменить перед сохранением.</p>
+    </div>
+</div>
+{% endblock %}

@@ -71,6 +71,9 @@ Docker:
 Прочее:
   --backup-dir DIR          Каталог резервных копий (по умолчанию ${DEFAULT_BACKUP_DIR}).
   --no-backup-cron          Не добавлять ежедневное резервное копирование в cron.
+  --with-preview            Установить LibreOffice: просмотр docx/xlsx/pptx прямо в браузере (~500 МБ).
+  --with-ocr                Установить tesseract: распознавание сканов для поиска.
+  --with-extras             И то, и другое.
   --yes, -y                 Не задавать вопросов (неинтерактивная установка).
   --verbose                 Подробный вывод.
   --help, -h                Эта справка.
@@ -113,6 +116,8 @@ DB_SERVER_VERSION="8.0"
 DOCKER_MIRROR=""
 BACKUP_DIR="${DEFAULT_BACKUP_DIR}"
 BACKUP_CRON="1"
+WITH_PREVIEW="0"
+WITH_OCR="0"
 ASSUME_YES="0"
 VERBOSE="0"
 SERVICE_USER=""
@@ -159,6 +164,9 @@ parse_args() {
             --docker-mirror) DOCKER_MIRROR="${2:-}"; shift 2 ;;
             --backup-dir) BACKUP_DIR="${2:-}"; shift 2 ;;
             --no-backup-cron) BACKUP_CRON="0"; shift ;;
+            --with-preview) WITH_PREVIEW="1"; shift ;;
+            --with-ocr) WITH_OCR="1"; shift ;;
+            --with-extras) WITH_PREVIEW="1"; WITH_OCR="1"; shift ;;
             --yes|-y) ASSUME_YES="1"; shift ;;
             --verbose) VERBOSE="1"; shift ;;
             --help|-h) usage; exit 0 ;;
@@ -379,12 +387,25 @@ install_php_rhel() {
     sed -i 's|^listen = .*|listen = /run/php-fpm/www.sock|; s|^;listen.owner = .*|listen.owner = nginx|; s|^;listen.group = .*|listen.group = nginx|; s|^listen.acl_users = .*|listen.acl_users = apache,nginx|' /etc/php-fpm.d/www.conf
 }
 
+# Необязательные инструменты ставятся только по запросу (--with-preview / --with-ocr / --with-extras).
+install_optional_tools() {
+    if [[ "${WITH_PREVIEW}" == "1" ]]; then
+        if install_preview_tools; then info "Установлен LibreOffice: просмотр офисных файлов в браузере."
+        else warn "Не удалось установить LibreOffice — предпросмотр docx/xlsx/pptx будет недоступен."; fi
+    fi
+    if [[ "${WITH_OCR}" == "1" ]]; then
+        if install_ocr_tools; then info "Установлен tesseract: распознавание сканов для поиска (включается в панели администратора)."
+        else warn "Не удалось установить tesseract — распознавание сканов будет недоступно."; fi
+    fi
+}
+
 install_packages_native() {
     step "Установка системных пакетов"
     case "${OS_FAMILY}" in
         debian)
             pkg_install ca-certificates curl gnupg rsync tar gzip unzip cron acl lsb-release git
             pkg_install_optional poppler-utils || warn "Пакет poppler-utils (pdftotext) не установлен — текст из PDF для API и LLM извлекаться не будет."
+            install_optional_tools
             install_php_debian
             pkg_install nginx
             if [[ "${DB_LOCAL}" == "1" ]]; then pkg_install mariadb-server mariadb-client; DB_SERVICE="mariadb"; else pkg_install mariadb-client; fi
@@ -392,6 +413,7 @@ install_packages_native() {
         rhel)
             pkg_install ca-certificates curl rsync tar gzip unzip cronie policycoreutils-python-utils git
             pkg_install_optional poppler-utils || warn "Пакет poppler-utils (pdftotext) не установлен — текст из PDF для API и LLM извлекаться не будет."
+            install_optional_tools
             install_php_rhel
             pkg_install nginx
             if [[ "${DB_LOCAL}" == "1" ]]; then pkg_install mariadb-server mariadb; DB_SERVICE="mariadb"; else pkg_install mariadb; fi
@@ -747,11 +769,13 @@ install_backup_cron() {
 #  - ежедневная проверка сроков актуальности документов и рассылка уведомлений в 08:00;
 #  - ежечасно — описания документов через LLM (работает только если интеграция включена в панели администратора);
 #  - ежечасно — индексация содержимого документов для полнотекстового поиска;
-#  - ежедневно — напоминания об ознакомлении с документами.
+#  - ежедневно — напоминания об ознакомлении с документами;
+#  - каждую минуту — разбор сообщений бота Telegram (работает только если уведомления включены в панели администратора).
 0 8 * * * root /usr/local/bin/${APP_ID} console app:documents:expiry --no-interaction >> ${LOG_DIR}/expiry-cron.log 2>&1
 20 * * * * root /usr/local/bin/${APP_ID} console app:documents:describe --missing --limit=50 --quiet-if-disabled --no-interaction >> ${LOG_DIR}/describe-cron.log 2>&1
 40 * * * * root /usr/local/bin/${APP_ID} console app:search:reindex --limit=500 --no-interaction >> ${LOG_DIR}/reindex-cron.log 2>&1
 30 8 * * * root /usr/local/bin/${APP_ID} console app:documents:acknowledge-remind --no-interaction >> ${LOG_DIR}/acknowledge-cron.log 2>&1
+* * * * * root /usr/local/bin/${APP_ID} console app:telegram:poll --no-interaction >> ${LOG_DIR}/telegram-cron.log 2>&1
 EOF
         chmod 644 "/etc/cron.d/${APP_ID}"
         return 0
@@ -762,12 +786,14 @@ EOF
 #  - ежедневная резервная копия в 03:15;
 #  - ежечасно — описания документов через LLM (работает только если интеграция включена в панели администратора);
 #  - ежечасно — индексация содержимого документов для полнотекстового поиска;
-#  - ежедневно — напоминания об ознакомлении с документами.
+#  - ежедневно — напоминания об ознакомлении с документами;
+#  - каждую минуту — разбор сообщений бота Telegram (работает только если уведомления включены в панели администратора).
 0 8 * * * root /usr/local/bin/${APP_ID} console app:documents:expiry --no-interaction >> ${LOG_DIR}/expiry-cron.log 2>&1
 15 3 * * * root /usr/local/bin/${APP_ID} backup --quiet >> ${LOG_DIR}/backup-cron.log 2>&1
 20 * * * * root /usr/local/bin/${APP_ID} console app:documents:describe --missing --limit=50 --quiet-if-disabled --no-interaction >> ${LOG_DIR}/describe-cron.log 2>&1
 40 * * * * root /usr/local/bin/${APP_ID} console app:search:reindex --limit=500 --no-interaction >> ${LOG_DIR}/reindex-cron.log 2>&1
 30 8 * * * root /usr/local/bin/${APP_ID} console app:documents:acknowledge-remind --no-interaction >> ${LOG_DIR}/acknowledge-cron.log 2>&1
+* * * * * root /usr/local/bin/${APP_ID} console app:telegram:poll --no-interaction >> ${LOG_DIR}/telegram-cron.log 2>&1
 EOF
     chmod 644 "/etc/cron.d/${APP_ID}"
     if has_systemd; then svc enable cron >/dev/null 2>&1 || svc enable crond >/dev/null 2>&1 || true; fi

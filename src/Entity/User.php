@@ -35,6 +35,9 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
 
     public const SOURCE_LOCAL = 'local';
     public const SOURCE_LDAP = 'ldap';
+    public const SOURCE_SSO = 'sso';
+
+    public const SOURCES = [self::SOURCE_LOCAL, self::SOURCE_LDAP, self::SOURCE_SSO];
 
     #[ORM\Id]
     #[ORM\GeneratedValue]
@@ -86,6 +89,38 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
 
     #[ORM\Column(type: Types::DATETIME_IMMUTABLE, nullable: true)]
     private ?\DateTimeImmutable $lastLoginAt = null;
+
+    /** Двухфакторная аутентификация: секрет TOTP, дата подтверждения и хэши резервных кодов. */
+    #[ORM\Column(name: 'totp_secret', length: 64, nullable: true)]
+    private ?string $totpSecret = null;
+
+    #[ORM\Column(name: 'totp_confirmed_at', type: Types::DATETIME_IMMUTABLE, nullable: true)]
+    private ?\DateTimeImmutable $totpConfirmedAt = null;
+
+    /** @var list<string> хэши резервных кодов (сами коды показываются один раз) */
+    #[ORM\Column(name: 'recovery_codes', type: Types::JSON)]
+    private array $recoveryCodes = [];
+
+    /** Уведомления об изменениях: почта включена по умолчанию, Telegram — после привязки чата. */
+    #[ORM\Column(name: 'notify_email', options: ['default' => true])]
+    private bool $notifyEmail = true;
+
+    #[ORM\Column(name: 'notify_telegram', options: ['default' => true])]
+    private bool $notifyTelegram = true;
+
+    /** Идентификатор чата с ботом: заполняется, когда сотрудник отправил боту код привязки. */
+    #[ORM\Column(name: 'telegram_chat_id', length: 32, nullable: true)]
+    private ?string $telegramChatId = null;
+
+    #[ORM\Column(name: 'telegram_name', length: 64, nullable: true)]
+    private ?string $telegramName = null;
+
+    /** Одноразовый код привязки Telegram (действует ограниченное время). */
+    #[ORM\Column(name: 'telegram_code', length: 16, nullable: true)]
+    private ?string $telegramCode = null;
+
+    #[ORM\Column(name: 'telegram_code_at', type: Types::DATETIME_IMMUTABLE, nullable: true)]
+    private ?\DateTimeImmutable $telegramCodeAt = null;
 
     /** @var Collection<int, SectionModerator> */
     #[ORM\OneToMany(targetEntity: SectionModerator::class, mappedBy: 'user', orphanRemoval: true)]
@@ -219,7 +254,7 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
 
     public function setAuthSource(string $authSource): static
     {
-        $this->authSource = self::SOURCE_LDAP === $authSource ? self::SOURCE_LDAP : self::SOURCE_LOCAL;
+        $this->authSource = \in_array($authSource, self::SOURCES, true) ? $authSource : self::SOURCE_LOCAL;
 
         return $this;
     }
@@ -287,6 +322,77 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
         return $this;
     }
 
+    // --- Двухфакторная аутентификация -------------------------------------------------
+
+    public function getTotpSecret(): ?string
+    {
+        return $this->totpSecret;
+    }
+
+    public function setTotpSecret(?string $secret): static
+    {
+        $this->totpSecret = $secret;
+        if (null === $secret) {
+            $this->totpConfirmedAt = null;
+            $this->recoveryCodes = [];
+        }
+
+        return $this;
+    }
+
+    /** Включена ли двухфакторная аутентификация (секрет задан и подтверждён кодом). */
+    public function isTotpEnabled(): bool
+    {
+        return null !== $this->totpSecret && null !== $this->totpConfirmedAt;
+    }
+
+    public function getTotpConfirmedAt(): ?\DateTimeImmutable
+    {
+        return $this->totpConfirmedAt;
+    }
+
+    public function confirmTotp(): static
+    {
+        $this->totpConfirmedAt = new \DateTimeImmutable();
+
+        return $this;
+    }
+
+    /** @return list<string> */
+    public function getRecoveryCodes(): array
+    {
+        return $this->recoveryCodes;
+    }
+
+    /** @param list<string> $codes открытые коды — хранятся только их хэши */
+    public function setRecoveryCodes(array $codes): static
+    {
+        $this->recoveryCodes = array_values(array_map(static fn (string $code): string => hash('sha256', $code), $codes));
+
+        return $this;
+    }
+
+    public function countRecoveryCodes(): int
+    {
+        return \count($this->recoveryCodes);
+    }
+
+    /** Сверяет резервный код и гасит его (каждый код одноразовый). */
+    public function useRecoveryCode(string $code): bool
+    {
+        $hash = hash('sha256', trim(mb_strtolower($code)));
+        foreach ($this->recoveryCodes as $index => $stored) {
+            if (hash_equals($stored, $hash)) {
+                unset($this->recoveryCodes[$index]);
+                $this->recoveryCodes = array_values($this->recoveryCodes);
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /** @return Collection<int, SectionModerator> */
     public function getModeratedSections(): Collection
     {
@@ -308,6 +414,84 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
         }
 
         return '' !== $initials ? $initials : mb_strtoupper(mb_substr($this->username, 0, 1));
+    }
+
+    public function isNotifyEmail(): bool
+    {
+        return $this->notifyEmail;
+    }
+
+    public function setNotifyEmail(bool $notifyEmail): static
+    {
+        $this->notifyEmail = $notifyEmail;
+
+        return $this;
+    }
+
+    public function isNotifyTelegram(): bool
+    {
+        return $this->notifyTelegram;
+    }
+
+    public function setNotifyTelegram(bool $notifyTelegram): static
+    {
+        $this->notifyTelegram = $notifyTelegram;
+
+        return $this;
+    }
+
+    public function getTelegramChatId(): ?string
+    {
+        return $this->telegramChatId;
+    }
+
+    public function hasTelegram(): bool
+    {
+        return null !== $this->telegramChatId && '' !== $this->telegramChatId;
+    }
+
+    public function getTelegramName(): ?string
+    {
+        return $this->telegramName;
+    }
+
+    /** Привязывает чат с ботом и гасит код привязки. */
+    public function linkTelegram(string $chatId, ?string $name): static
+    {
+        $this->telegramChatId = mb_substr(trim($chatId), 0, 32);
+        $this->telegramName = null !== $name ? mb_substr(trim($name), 0, 64) : null;
+        $this->telegramCode = null;
+        $this->telegramCodeAt = null;
+
+        return $this;
+    }
+
+    public function unlinkTelegram(): static
+    {
+        $this->telegramChatId = null;
+        $this->telegramName = null;
+        $this->telegramCode = null;
+        $this->telegramCodeAt = null;
+
+        return $this;
+    }
+
+    public function getTelegramCode(): ?string
+    {
+        return $this->telegramCode;
+    }
+
+    public function getTelegramCodeAt(): ?\DateTimeImmutable
+    {
+        return $this->telegramCodeAt;
+    }
+
+    public function setTelegramCode(?string $code): static
+    {
+        $this->telegramCode = null !== $code ? mb_substr($code, 0, 16) : null;
+        $this->telegramCodeAt = null !== $code ? new \DateTimeImmutable() : null;
+
+        return $this;
     }
 
     #[\Deprecated] // метод пустой: временные учётные данные в объекте не хранятся (требование Symfony 7.3+)

@@ -1,0 +1,69 @@
+{# Обсуждение документа: вопросы сотрудников и ответы ответственных. #}
+<div class="card" id="discussion">
+    <div class="card__head"><h2 class="h-section">Обсуждение{% if comments|length > 0 %} <span class="tag">{{ comment_count }}</span>{% endif %}</h2></div>
+
+    {% if comments|length == 0 %}
+        <p class="hints">Пока никто ничего не спрашивал. Задайте вопрос — его увидят ответственный за документ и модератор раздела.</p>
+    {% else %}
+        <ul class="comments">
+            {% for comment in comments %}
+                <li class="comments__item{{ comment.reply ? ' comments__item--reply' }}{{ comment.deleted ? ' comments__item--deleted' }}" id="comment-{{ comment.id }}">
+                    <div class="comments__head">
+                        <span class="comments__author">{{ comment.authorName }}</span>
+                        <span class="comments__when">{{ comment.createdAt|date('d.m.Y H:i') }}</span>
+                        {% if comment.versionNumber %}<span class="tag tag--quiet" title="Редакция документа на момент сообщения">v{{ comment.versionNumber }}</span>{% endif %}
+                        {% if comment.editedAt %}<span class="hints">изменено {{ comment.editedAt|date('d.m.Y H:i') }}</span>{% endif %}
+                    </div>
+                    {% if comment.deleted %}
+                        <p class="comments__body comments__body--deleted">Сообщение удалено{% if comment.deletedByName %} ({{ comment.deletedByName }}){% endif %}.</p>
+                    {% else %}
+                        <p class="comments__body">{{ comment.body|nl2br }}</p>
+                        {% if can_comment %}
+                            <div class="comments__actions">
+                                {% if not comment.reply %}
+                                    <button type="button" class="comments__action" data-reply-to="{{ comment.id }}" data-reply-name="{{ comment.authorName }}">Ответить</button>
+                                {% endif %}
+                                {% if comment_edit[comment.id]|default(false) %}
+                                    <button type="button" class="comments__action" data-edit-comment="{{ comment.id }}">Изменить</button>
+                                {% endif %}
+                                {% if comment_delete[comment.id]|default(false) %}
+                                    <form method="post" action="{{ path('app_document_comment_delete', {id: document.id, comment: comment.id}) }}" class="inline-form" data-confirm="Удалить сообщение?">
+                                        <input type="hidden" name="_token" value="{{ csrf_token('document_' ~ document.id) }}">
+                                        <button type="submit" class="comments__action comments__action--danger">Удалить</button>
+                                    </form>
+                                {% endif %}
+                            </div>
+                            {% if comment_edit[comment.id]|default(false) %}
+                                <form method="post" action="{{ path('app_document_comment_edit', {id: document.id, comment: comment.id}) }}" class="comments__form comments__form--edit" id="comment-edit-{{ comment.id }}" hidden>
+                                    <input type="hidden" name="_token" value="{{ csrf_token('document_' ~ document.id) }}">
+                                    <textarea name="body" rows="3" maxlength="{{ comment_max }}" class="form-control">{{ comment.body }}</textarea>
+                                    <div class="comments__form-actions">
+                                        <button type="submit" class="btn btn--pill btn--small">Сохранить</button>
+                                        <button type="button" class="btn btn--ghost btn--small" data-edit-cancel="{{ comment.id }}">Отмена</button>
+                                    </div>
+                                </form>
+                            {% endif %}
+                        {% endif %}
+                    {% endif %}
+                </li>
+            {% endfor %}
+        </ul>
+    {% endif %}
+
+    {% if can_comment %}
+        <form method="post" action="{{ path('app_document_comment', {id: document.id}) }}" class="comments__form" id="comment-form">
+            <input type="hidden" name="_token" value="{{ csrf_token('document_' ~ document.id) }}">
+            <input type="hidden" name="parent" value="" id="comment-parent">
+            <p class="comments__reply-to" id="comment-reply-to" hidden>Ответ для <b></b> <button type="button" class="comments__action" id="comment-reply-cancel">отменить</button></p>
+            <textarea name="body" id="comment-body" rows="3" maxlength="{{ comment_max }}" class="form-control" aria-label="Сообщение" placeholder="Вопрос по документу или уточнение для коллег…" required></textarea>
+            <div class="comments__form-actions">
+                <button type="submit" class="btn btn--pill">Отправить</button>
+                <span class="hints">Сообщение увидят все, кому открыт документ. Автор может изменить его в течение часа.</span>
+            </div>
+        </form>
+    {% elseif app.user %}
+        <p class="hints">Обсуждение документов выключено администратором портала.</p>
+    {% else %}
+        <p class="hints">Чтобы участвовать в обсуждении, войдите в портал.</p>
+    {% endif %}
+</div>

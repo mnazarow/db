@@ -107,6 +107,77 @@
         <p class="form-help">Индекс обновляется автоматически при загрузке версий; по cron раз в час выполняется <code>app:documents:describe</code> и <code>app:search:reindex</code> для документов, которые остались без индекса (например, после восстановления из резервной копии).</p>
     </div>
     <div class="card">
+        <div class="card__head"><h2 class="h-section">Согласование документов</h2>
+            {% if approval.required %}<span class="badge badge--done"><span class="badge__dot"></span>включено</span>
+            {% else %}<span class="badge"><span class="badge__dot"></span>выключено</span>{% endif %}</div>
+        <form method="post" action="{{ path('admin_settings_approval') }}" class="form">
+            <input type="hidden" name="_token" value="{{ csrf_token('settings') }}">
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="required" value="1" {{ approval.required ? 'checked' }}><span>Публиковать документы только после согласования</span></label>
+            </div>
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="auto_publish" value="1" {{ approval.auto_publish ? 'checked' }}><span>Публиковать документ сразу после согласования</span></label>
+            </div>
+            <div class="form-actions"><button type="submit" class="btn btn--pill btn--small">Сохранить</button></div>
+        </form>
+        <p class="form-help">Модератор отправляет черновик согласующему («Отправить на согласование» в карточке документа), тот согласует или отклоняет с комментарием. Решение относится к редакции: после новой версии согласование запрашивается заново. Импорт из каталога и консольные команды это правило не проверяют.</p>
+    </div>
+    <div class="card">
+        <div class="card__head"><h2 class="h-section">Предпросмотр офисных файлов</h2>
+            {% if preview.available %}<span class="badge badge--done"><span class="badge__dot"></span>доступен</span>
+            {% else %}<span class="badge badge--soon"><span class="badge__dot"></span>нет LibreOffice</span>{% endif %}</div>
+        {% if preview.available %}
+            <dl class="meta meta--stack">
+                <div><dt>Программа</dt><dd><code>{{ preview.binary }}</code></dd></div>
+                <div><dt>Форматы</dt><dd>{{ preview.extensions|join(', ') }}</dd></div>
+                <div><dt>Готовых предпросмотров</dt><dd>{{ preview.files }} ({{ preview.bytes|filesize }})</dd></div>
+            </dl>
+            <form method="post" action="{{ path('admin_settings_preview_clear') }}" class="form-actions">
+                <input type="hidden" name="_token" value="{{ csrf_token('settings') }}">
+                <button type="submit" class="btn btn--ghost btn--small">Очистить кэш предпросмотра</button>
+            </form>
+            <p class="form-help">Файл Word, Excel или PowerPoint открывается прямо в браузере: портал переводит его в PDF и запоминает результат. Отдельный сервер документов не нужен.</p>
+        {% else %}
+            <p class="text-muted">Установите LibreOffice, чтобы сотрудники открывали файлы Word, Excel и PowerPoint прямо в браузере, не скачивая их:</p>
+            <pre class="code-block">sudo apt-get install -y libreoffice-nogui</pre>
+            <p class="form-help">Путь к программе можно задать переменной <code>SOFFICE_BIN</code> в <code>.env.local</code>.</p>
+        {% endif %}
+    </div>
+    <div class="card">
+        <div class="card__head"><h2 class="h-section">Распознавание сканов (OCR)</h2>
+            {% if ocr.enabled %}<span class="badge badge--done"><span class="badge__dot"></span>включено</span>
+            {% elseif ocr.available %}<span class="badge"><span class="badge__dot"></span>выключено</span>
+            {% else %}<span class="badge badge--soon"><span class="badge__dot"></span>нет tesseract</span>{% endif %}</div>
+        {% if ocr.available %}
+            <form method="post" action="{{ path('admin_settings_ocr') }}" class="form">
+                <input type="hidden" name="_token" value="{{ csrf_token('settings') }}">
+                <div class="form-row form-row--check">
+                    <label class="form-check"><input type="checkbox" name="enabled" value="1" {{ ocr.enabled ? 'checked' }}><span>Распознавать текст на сканах и в изображениях</span></label>
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="ocr-languages">Языки</label>
+                    <input class="form-control" id="ocr-languages" type="text" name="languages" value="{{ ocr.languages }}" placeholder="rus+eng">
+                    <div class="form-help">Установлены: {{ ocr.installed|join(', ') ?: 'нет данных' }}. Недостающий язык ставится пакетом <code>tesseract-ocr-rus</code>.</div>
+                </div>
+                <div class="form-grid">
+                    <div class="form-row">
+                        <label class="form-label" for="ocr-pages">Страниц на документ</label>
+                        <input class="form-control" id="ocr-pages" type="number" name="max_pages" min="1" max="200" value="{{ ocr.max_pages }}">
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label" for="ocr-dpi">Разрешение, dpi</label>
+                        <input class="form-control" id="ocr-dpi" type="number" name="dpi" min="72" max="600" step="50" value="{{ ocr.dpi }}">
+                    </div>
+                </div>
+                <div class="form-actions"><button type="submit" class="btn btn--pill btn--small">Сохранить</button></div>
+            </form>
+            <p class="form-help">Распознавание выполняется при индексации (по cron), а не при открытии документа: страница скана обрабатывается несколько секунд. Текстовый слой, если он есть, всегда берётся из файла — распознавание включается только для сканов.</p>
+        {% else %}
+            <p class="text-muted">Сканы (PDF без текстового слоя и фотографии документов) не попадают в поиск. Чтобы это исправить, установите:</p>
+            <pre class="code-block">sudo apt-get install -y tesseract-ocr tesseract-ocr-rus poppler-utils</pre>
+        {% endif %}
+    </div>
+    <div class="card">
         <h2 class="h-section">Система</h2>
         <dl class="meta meta--stack">
             <div><dt>Версия портала</dt><dd>{{ app_version }}</dd></div>

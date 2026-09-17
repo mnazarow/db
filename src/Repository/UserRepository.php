@@ -18,9 +18,50 @@ final class UserRepository extends ServiceEntityRepository
         parent::__construct($registry, User::class);
     }
 
+    /**
+     * Сводка по двухфакторной аутентификации: сколько всего активных, сколько включили, сколько администраторов без неё.
+     *
+     * @return array{active: int, enabled: int, admins: int, admins_without: int}
+     */
+    public function twoFactorSummary(): array
+    {
+        $rows = $this->createQueryBuilder('u')
+            ->select('u.roles AS roles', 'u.totpConfirmedAt AS confirmed')
+            ->andWhere('u.active = true')
+            ->getQuery()->getArrayResult();
+        $summary = ['active' => 0, 'enabled' => 0, 'admins' => 0, 'admins_without' => 0];
+        foreach ($rows as $row) {
+            ++$summary['active'];
+            $enabled = null !== $row['confirmed'];
+            $admin = \in_array('ROLE_ADMIN', (array) $row['roles'], true);
+            $summary['enabled'] += $enabled ? 1 : 0;
+            $summary['admins'] += $admin ? 1 : 0;
+            $summary['admins_without'] += $admin && !$enabled ? 1 : 0;
+        }
+
+        return $summary;
+    }
+
     public function findOneByUsername(string $username): ?User
     {
         return $this->findOneBy(['username' => User::normalizeUsername($username)]);
+    }
+
+    /** Ищет сотрудника по коду привязки Telegram (код одноразовый, регистр не важен). */
+    public function findOneByTelegramCode(string $code): ?User
+    {
+        $code = strtoupper(trim($code));
+
+        return '' === $code ? null : $this->findOneBy(['telegramCode' => $code]);
+    }
+
+    /** @return list<User> активные сотрудники с привязанным Telegram */
+    public function findWithTelegram(): array
+    {
+        return $this->createQueryBuilder('u')
+            ->andWhere('u.active = true')->andWhere('u.telegramChatId IS NOT NULL')
+            ->orderBy('u.displayName', 'ASC')
+            ->getQuery()->getResult();
     }
 
     /** @return list<User> */

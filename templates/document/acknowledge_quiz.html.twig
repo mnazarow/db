@@ -1,0 +1,50 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}Проверка знаний — {{ document.title }}{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        <div class="eyebrow">Ознакомление · редакция {{ acknowledgement.versionNumber }}</div>
+        <div class="hero__row">
+            <h1 class="h-display">{{ document.title }}</h1>
+            <div class="hero__actions">
+                <a class="btn btn--ghost" href="{{ path('app_document_show', {id: document.id}) }}">← К документу</a>
+            </div>
+        </div>
+    </div>
+</section>
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+    <div class="card card--form quiz-card">
+        <h2 class="h-section">Проверка знаний</h2>
+        <p>Ответьте на {{ questions|length }} {{ questions|length|plural(['вопрос', 'вопроса', 'вопросов']) }} по документу.
+            Ознакомление подтверждается, когда все ответы верны; если ошиблись — прочитайте документ ещё раз и попробуйте снова.
+            {% if acknowledgement.quizAttempts > 0 %}<br>Попыток: {{ acknowledgement.quizAttempts }}.{% endif %}</p>
+        {% if result and not result.passed %}
+            <div class="alert alert--warning">Верных ответов: {{ result.correct }} из {{ result.total }}. Вопросы с ошибкой отмечены.</div>
+        {% endif %}
+        <form method="post" class="form">
+            <input type="hidden" name="_token" value="{{ csrf_token('quiz_' ~ document.id) }}">
+            {% for q in questions %}
+                {% set is_wrong = result and q.id in result.wrong %}
+                <fieldset class="quiz-question {{ is_wrong ? 'is-wrong' }}">
+                    <legend class="form-label">{{ loop.index }}. {{ q.text }}{% if is_wrong %} <span class="text-danger">— ответ неверный</span>{% endif %}</legend>
+                    <div class="choice-list">
+                        {% for option in q.options %}
+                            <label class="form-check">
+                                <input type="radio" name="answers[{{ q.id }}]" value="{{ loop.index0 }}" {{ answers[q.id] is defined and answers[q.id] == loop.index0 ? 'checked' }} required>
+                                <span>{{ option }}</span>
+                            </label>
+                        {% endfor %}
+                    </div>
+                </fieldset>
+            {% endfor %}
+            <div class="form-actions">
+                <button type="submit" class="btn btn--pill">Проверить и подтвердить ознакомление</button>
+                <a class="btn btn--ghost" href="{{ path('app_document_show', {id: document.id}) }}">Вернуться к документу</a>
+            </div>
+        </form>
+    </div>
+</section>
+{% endblock %}

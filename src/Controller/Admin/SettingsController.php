@@ -10,6 +10,8 @@ use App\Service\ExpiryNotifier;
 use App\Service\FileStorage;
 use App\Repository\DocumentTextRepository;
 use App\Service\PortalSettings;
+use App\Service\Preview\DocumentPreviewer;
+use App\Service\Text\OcrReader;
 use App\Service\Text\TextExtractor;
 use App\Service\Text\TextIndexer;
 use App\Service\Validity;
@@ -43,6 +45,8 @@ final class SettingsController extends AbstractController
         private readonly DocumentTextRepository $texts,
         private readonly TextIndexer $indexer,
         private readonly TextExtractor $extractor,
+        private readonly OcrReader $ocr,
+        private readonly DocumentPreviewer $previewer,
     ) {
     }
 
@@ -79,6 +83,16 @@ final class SettingsController extends AbstractController
                 'pdf' => $this->extractor->hasPdftotext(),
                 'extensions' => $this->extractor->supportedExtensions(),
             ],
+            'approval' => $this->settings->approval(),
+            'ocr' => $this->settings->ocr() + [
+                'available' => $this->ocr->isAvailable(),
+                'installed' => $this->ocr->isAvailable() ? $this->ocr->installedLanguages() : [],
+            ],
+            'preview' => [
+                'available' => $this->previewer->isAvailable(),
+                'binary' => $this->previewer->isAvailable() ? $this->previewer->binary() : '',
+                'extensions' => DocumentPreviewer::CONVERTIBLE,
+            ] + $this->previewer->usage(),
         ]);
     }
 
@@ -147,6 +161,63 @@ final class SettingsController extends AbstractController
         $this->addFlash('success', \sprintf('Проиндексировано документов: %d (с текстом %d, без текста %d). Осталось: %d%s.',
             $stats['processed'], $stats['indexed'], $stats['empty'], $left,
             $left > 0 ? ' — нажмите ещё раз или запустите app:search:reindex' : ''));
+
+        return $this->redirectToRoute('admin_settings');
+    }
+
+    /** Согласование документов перед публикацией. */
+    #[Route('/approval', name: 'admin_settings_approval', methods: ['POST'])]
+    public function approval(Request $request, #[CurrentUser] User $user): Response
+    {
+        $this->checkToken($request);
+        $this->settings->setApproval($request->request->has('required'), $request->request->has('auto_publish'), $user);
+        $this->addFlash('success', $request->request->has('required')
+            ? 'Публикация только после согласования включена.'
+            : 'Согласование перед публикацией выключено: модератор публикует документы сам.');
+
+        return $this->redirectToRoute('admin_settings');
+    }
+
+    /** Распознавание сканов (OCR): включение и параметры. */
+    #[Route('/ocr', name: 'admin_settings_ocr', methods: ['POST'])]
+    public function ocr(Request $request, #[CurrentUser] User $user): Response
+    {
+        $this->checkToken($request);
+        $languages = PortalSettings::normalizeLanguages((string) $request->request->get('languages', ''));
+        $enabled = $request->request->has('enabled');
+        if ($enabled && !$this->ocr->isAvailable()) {
+            $this->addFlash('danger', 'На сервере нет tesseract или pdftoppm — установите пакеты tesseract-ocr, tesseract-ocr-rus и poppler-utils.');
+
+            return $this->redirectToRoute('admin_settings');
+        }
+        $installed = $this->ocr->isAvailable() ? $this->ocr->installedLanguages() : [];
+        $missing = array_values(array_diff(array_filter(explode('+', $languages)), $installed));
+        if ($enabled && [] !== $installed && [] !== $missing) {
+            $this->addFlash('danger', \sprintf('В tesseract нет языков: %s. Установлены: %s. Нужный язык ставится пакетом tesseract-ocr-<язык>.', implode(', ', $missing), implode(', ', $installed)));
+
+            return $this->redirectToRoute('admin_settings');
+        }
+        $this->settings->setOcr([
+            'enabled' => $enabled,
+            'languages' => $languages,
+            'max_pages' => (int) $request->request->get('max_pages', PortalSettings::OCR_DEFAULT_MAX_PAGES),
+            'dpi' => (int) $request->request->get('dpi', PortalSettings::OCR_DEFAULT_DPI),
+        ], $user);
+        $this->addFlash('success', $enabled
+            ? 'Распознавание сканов включено. Уже загруженные сканы попадут в поиск после переиндексации («Переиндексировать всё»).'
+            : 'Распознавание сканов выключено.');
+
+        return $this->redirectToRoute('admin_settings');
+    }
+
+    /** Очистка готовых предпросмотров (файлы соберутся заново при обращении). */
+    #[Route('/preview-clear', name: 'admin_settings_preview_clear', methods: ['POST'])]
+    public function previewClear(Request $request): Response
+    {
+        $this->checkToken($request);
+        $before = $this->previewer->usage();
+        $this->previewer->clear();
+        $this->addFlash('success', \sprintf('Кэш предпросмотра очищен: удалено файлов %d.', $before['files']));
 
         return $this->redirectToRoute('admin_settings');
     }

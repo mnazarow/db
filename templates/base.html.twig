@@ -57,6 +57,12 @@
                         <span class="ack-chip__text">на ознакомление</span>
                     </a>
                 {% endif %}
+                {% if approvals_pending() > 0 %}
+                    <a class="ack-chip ack-chip--approval" href="{{ path('app_profile_approvals') }}" title="Документы, которые ждут вашего согласования">
+                        <span class="ack-chip__count">{{ approvals_pending() }}</span>
+                        <span class="ack-chip__text">на согласование</span>
+                    </a>
+                {% endif %}
                 {% if app.user.local %}
                     <a class="user-chip" href="{{ path('app_password_change') }}" title="Сменить пароль">
                 {% else %}
@@ -108,7 +114,10 @@
                 <a href="{{ path('app_home') }}">Разделы и документы</a>
                 <a href="{{ path('app_search') }}">Поиск</a>
                 <a href="{{ path('app_profile_acknowledgements') }}">Мои ознакомления</a>
+                {% if approvals_pending() > 0 %}<a href="{{ path('app_profile_approvals') }}">Мне на согласование</a>{% endif %}
+                <a href="{{ path('app_profile_subscriptions') }}">Подписки и уведомления</a>
                 {% if app.user.local %}<a href="{{ path('app_password_change') }}">Сменить пароль</a>{% endif %}
+                <a href="{{ path('app_2fa_setup') }}">Двухфакторная аутентификация</a>
                 {% if is_granted('ROLE_ADMIN') %}<a href="{{ path('admin_dashboard') }}">Панель администратора</a>{% endif %}
             {% else %}
                 <a href="{{ path('app_login') }}">Вход</a>

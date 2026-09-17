@@ -46,6 +46,11 @@
                 <button class="btn btn--pill btn--block" type="submit">Войти</button>
             </form>
 
+            {% if sso_enabled %}
+                <div class="login__divider"><span>или</span></div>
+                <a class="btn btn--ghost btn--block" href="{{ path('app_login_sso') }}">{{ sso_button }}</a>
+            {% endif %}
+
             <p class="login__help">Нет доступа или забыли пароль? Обратитесь к администратору портала.</p>
         </div>
     </div>

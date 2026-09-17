@@ -240,7 +240,7 @@ final class AcknowledgementTest extends PortalTestCase
         self::assertResponseHeaderSame('Content-Type', 'text/csv; charset=UTF-8');
         self::assertStringContainsString('attachment; filename="acknowledgements-'.$id.'-v1.csv"', (string) $this->client->getResponse()->headers->get('Content-Disposition'));
         self::assertStringStartsWith("\xEF\xBB\xBF", $csv);
-        self::assertStringContainsString('Сотрудник;Подразделение;Назначено;Срок;Ознакомлен;IP', $csv);
+        self::assertStringContainsString('Сотрудник;Подразделение;Назначено;Срок;Ознакомлен;"Проверка знаний";IP', $csv);
         self::assertStringContainsString('не ознакомлен', $csv);
         self::assertSame(2, substr_count($csv, 'не ознакомлен'));
 

@@ -6,10 +6,13 @@ namespace App\Command;
 
 use App\Repository\UserRepository;
 use App\Repository\ApiKeyRepository;
+use App\Repository\AuditEventRepository;
 use App\Repository\DocumentAcknowledgementRepository;
 use App\Repository\DocumentTextRepository;
 use App\Security\Ldap\LdapSettings;
 use App\Service\PortalSettings;
+use App\Service\Preview\DocumentPreviewer;
+use App\Service\Text\OcrReader;
 use App\Service\Text\TextExtractor;
 use App\Service\FileStorage;
 use Doctrine\DBAL\Connection;
@@ -34,6 +37,9 @@ final class CheckCommand extends Command
         private readonly ApiKeyRepository $apiKeys,
         private readonly DocumentTextRepository $texts,
         private readonly DocumentAcknowledgementRepository $acknowledgements,
+        private readonly OcrReader $ocr,
+        private readonly DocumentPreviewer $previewer,
+        private readonly AuditEventRepository $auditEvents,
         private readonly string $projectDir,
         private readonly string $importDir,
     ) {
@@ -159,6 +165,21 @@ final class CheckCommand extends Command
             $io->writeln('<comment>Сводка ознакомлений недоступна: '.$e->getMessage().'</comment>');
         }
 
+        $io->section('Просмотр и распознавание');
+        $io->writeln($this->previewer->isAvailable()
+            ? 'Предпросмотр офисных файлов (LibreOffice): <info>доступен</info> ('.$this->previewer->binary().')'
+            : 'Предпросмотр офисных файлов: <comment>LibreOffice не найден</comment> — установите пакет libreoffice-nogui, иначе docx/xlsx/pptx открываются только скачиванием');
+        if (!$this->ocr->isAvailable()) {
+            $io->writeln('Распознавание сканов (OCR): <comment>нет tesseract или pdftoppm</comment> — пакеты tesseract-ocr, tesseract-ocr-rus, poppler-utils');
+        } else {
+            $languages = $this->ocr->installedLanguages();
+            $configured = array_filter(explode('+', $this->ocr->languages()));
+            $missing = array_diff($configured, $languages);
+            $io->writeln($this->ocr->isEnabled()
+                ? \sprintf('Распознавание сканов (OCR): <info>включено</info>, языки %s%s', implode('+', $configured), [] === $missing ? '' : ' — <comment>не установлены: '.implode(', ', $missing).'</comment>')
+                : 'Распознавание сканов (OCR): выключено (панель администратора → Настройки), установлены языки: '.implode(', ', $languages));
+        }
+
         $io->section('Интеграции');
         $io->writeln($this->extractor->hasPdftotext()
             ? 'Извлечение текста из PDF (pdftotext): <info>доступно</info>'
@@ -172,6 +193,21 @@ final class CheckCommand extends Command
             $io->writeln(\sprintf('Описания через LLM: %s', $llm['enabled'] ? \sprintf('<info>включены</info> (%s, модель %s%s)', $llm['base_url'], $llm['model'], $llm['auto_describe'] ? ', автоописание новых документов' : '') : 'выключены'));
             $webhook = $this->settings->webhook();
             $io->writeln(\sprintf('Webhook об изменениях: %s', $webhook['enabled'] ? '<info>включён</info> ('.$webhook['url'].')' : 'выключен'));
+            $telegram = $this->settings->telegram();
+            $io->writeln(\sprintf('Уведомления в Telegram: %s', $telegram['enabled'] && '' !== $telegram['token']
+                ? \sprintf('<info>включены</info> (бот %s, привязанных чатов: %d)', '' !== $telegram['bot_name'] ? '@'.$telegram['bot_name'] : 'без имени', \count($this->users->findWithTelegram()))
+                : 'выключены'));
+            $sso = $this->settings->sso();
+            $io->writeln(\sprintf('Вход через SSO (OpenID Connect): %s', $sso['enabled'] && '' !== $sso['issuer'] ? '<info>включён</info> ('.$sso['issuer'].')' : 'выключен'));
+            $approval = $this->settings->approval();
+            $io->writeln(\sprintf('Согласование перед публикацией: %s', $approval['required'] ? '<info>обязательно</info>'.($approval['auto_publish'] ? ', публикация сразу после согласования' : '') : 'по усмотрению модератора'));
+            $io->writeln(\sprintf('Обсуждение документов: %s; подписка на изменения: %s',
+                $this->settings->commentsEnabled() ? '<info>включено</info>' : 'выключено',
+                $this->settings->subscriptionsEnabled() ? '<info>включена</info>' : 'выключена'));
+            $audit = $this->auditEvents->summary();
+            $io->writeln(\sprintf('Журнал аудита: записей <info>%d</info>%s%s', $audit['total'],
+                $audit['warnings'] > 0 ? ', предупреждений и ошибок: '.$audit['warnings'] : '',
+                null !== $audit['last'] ? ', последняя запись '.$audit['last']->format('d.m.Y H:i') : ''));
         } catch (\Throwable $e) {
             $io->writeln('<comment>Настройки интеграций недоступны: '.$e->getMessage().'</comment>');
         }

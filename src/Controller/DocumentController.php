@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Controller;
 
 use App\Entity\Document;
+use App\Entity\DocumentComment;
+use App\Entity\DocumentLink;
 use App\Entity\DocumentVersion;
 use App\Entity\User;
 use App\Form\DocumentType;
@@ -14,7 +16,16 @@ use App\Repository\SectionRepository;
 use App\Security\Access;
 use App\Security\Voter\PortalVoter;
 use App\Service\DiffService;
+use App\Repository\DocumentApprovalRepository;
+use App\Service\ApprovalService;
+use App\Service\CommentService;
+use App\Service\DocumentLinkService;
+use App\Service\DocumentTemplateService;
+use App\Repository\DocumentTemplateRepository;
+use App\Service\SubscriptionService;
 use App\Service\DocumentManager;
+use App\Service\QuizService;
+use App\Service\Preview\DocumentPreviewer;
 use App\Service\FileStorage;
 use App\Service\Llm\DocumentDescriber;
 use App\Service\Llm\LlmException;
@@ -48,6 +59,15 @@ final class DocumentController extends AbstractController
         private readonly StatsService $stats,
         private readonly DiffService $diff,
         private readonly DocumentDescriber $describer,
+        private readonly DocumentPreviewer $previewer,
+        private readonly ApprovalService $approvals,
+        private readonly QuizService $quiz,
+        private readonly DocumentApprovalRepository $approvalRepository,
+        private readonly CommentService $comments,
+        private readonly SubscriptionService $subscriptions,
+        private readonly DocumentLinkService $links,
+        private readonly DocumentTemplateService $templates,
+        private readonly DocumentTemplateRepository $templateRepository,
         private readonly int $defaultValidityMonths,
     ) {
     }
@@ -74,11 +94,31 @@ final class DocumentController extends AbstractController
         $type = (string) $request->query->get('type', Document::TYPE_FILE);
         $document->setType(\in_array($type, Document::TYPES, true) ? $type : Document::TYPE_FILE);
 
+        // Шаблон заполняет карточку заготовкой: раздел, вид, название, обозначение с автонумерацией,
+        // теги, срок и текст страницы. Номер выдаётся сразу, поэтому шаблон применяется только на GET.
+        $template = null;
+        $templateBody = null;
+        $templateId = (int) $request->query->get('template');
+        if ($templateId > 0 && $request->isMethod('GET')) {
+            $template = $this->templateRepository->find($templateId);
+            if (null !== $template && $template->isActive()) {
+                $templateBody = $this->templates->prepare($template, $document);
+                if (!$this->access->canManageSection($user, $document->getSection())) {
+                    $document->setSection($section ?? $choices[0]);
+                }
+                $this->templates->markUsed($template);
+                $this->addFlash('info', \sprintf('Карточка заполнена по шаблону «%s». Проверьте поля и сохраните.', $template->getName()));
+            }
+        }
+
         $form = $this->createForm(DocumentType::class, $document, [
             'section_choices' => $choices,
             'is_new' => true,
             'accept' => $this->acceptList(),
         ]);
+        if (null !== $templateBody) {
+            $form->get('content')->setData($templateBody);
+        }
         $form->handleRequest($request);
 
         if ($form->isSubmitted() && $form->isValid()) {
@@ -94,10 +134,15 @@ final class DocumentController extends AbstractController
                         $form->get('content')->getData(),
                         $form->get('changeNote')->getData(),
                         $user,
-                        (bool) $form->get('publish')->getData(),
+                        // При обязательном согласовании новый документ всегда сохраняется черновиком.
+                        (bool) $form->get('publish')->getData() && !$this->approvals->isRequired(),
                         $request->getClientIp(),
                     );
-                    $this->addFlash('success', $document->isPublished() ? 'Документ опубликован.' : 'Документ сохранён как черновик.');
+                    $this->addFlash('success', $document->isPublished()
+                        ? 'Документ опубликован.'
+                        : ($this->approvals->isRequired() && (bool) $form->get('publish')->getData()
+                            ? 'Документ сохранён как черновик: по настройкам портала публикация возможна только после согласования.'
+                            : 'Документ сохранён как черновик.'));
                     $this->autoDescribe($document, $user, $request);
 
                     return $this->redirectToRoute('app_document_show', ['id' => $document->getId()]);
@@ -112,6 +157,8 @@ final class DocumentController extends AbstractController
             'document' => $document,
             'is_new' => true,
             'storage' => $this->manager->getStorage(),
+            'template' => $template,
+            'templates' => $this->templateRepository->findForSection($document->getSection()),
         ]);
     }
 
@@ -122,6 +169,12 @@ final class DocumentController extends AbstractController
         $this->trackView($document, $request, $user);
         $canManage = $this->access->canEditDocument($user, $document);
         $current = $document->getCurrentVersion();
+        $comments = $this->comments->isEnabled() ? $this->comments->forDocument($document) : [];
+        $editable = $deletable = [];
+        foreach ($comments as $comment) {
+            $editable[(int) $comment->getId()] = $this->comments->canEdit($comment, $user);
+            $deletable[(int) $comment->getId()] = $this->comments->canDelete($comment, $user, $canManage);
+        }
 
         return $this->render('document/show.html.twig', [
             'document' => $document,
@@ -130,12 +183,36 @@ final class DocumentController extends AbstractController
             'can_manage' => $canManage,
             'inline' => null !== $current && $current->isFile() && FileStorage::isInlineViewable($current->getMimeType(), $current->getExtension()),
             'file_exists' => null !== $current && $current->isFile() ? $this->manager->getStorage()->exists($current) : true,
+            // Офисные файлы показываем через конвертацию в PDF (LibreOffice) — по кнопке, чтобы не ждать в карточке.
+            'previewable' => null !== $current && $this->previewer->isAvailable() && $this->previewer->supports($current),
+            'preview_ready' => null !== $current && $this->previewer->isAvailable() && $this->previewer->supports($current) && $this->previewer->isReady($current),
+            'preview_extensions' => $this->previewer->isAvailable() ? DocumentPreviewer::CONVERTIBLE : [],
+            // Согласование: текущий запрос, решение по текущей редакции и правило публикации.
+            'approval' => $this->approvalRepository->findPending($document),
+            'approval_decided' => null !== $current ? $this->approvalRepository->findDecided($document, $current->getNumber()) : null,
+            'approval_required' => $this->approvals->isRequired(),
+            'can_publish' => $canManage && $this->approvals->canPublish($document),
+            'question_count' => $canManage ? $this->quiz->count($document) : 0,
             'recent_events' => $canManage ? $this->events->findForDocument($document, 10) : [],
             'llm_enabled' => $canManage && $this->describer->isEnabled(),
             // Ознакомление: что назначено текущему сотруднику и сводка для модератора.
             'acknowledgement' => null !== $user ? $this->acknowledgements->findPending($document, $user) : null,
             'acknowledged' => null !== $user && null !== $current ? $this->acknowledgements->findOneFor($document, $user, $current->getNumber())?->getConfirmedAt() : null,
             'acknowledgement_summary' => $canManage && null !== $current ? $this->acknowledgements->summaryForDocument($document, $current->getNumber()) : null,
+            // Обсуждение и подписка на изменения.
+            'comments_enabled' => $this->comments->isEnabled(),
+            'comments' => $this->comments->isEnabled() ? $comments : [],
+            'comment_count' => $this->comments->isEnabled() ? $this->comments->count($document) : 0,
+            'comment_max' => DocumentComment::MAX_LENGTH,
+            'can_comment' => null !== $user && $this->comments->isEnabled(),
+            'comment_edit' => $editable,
+            'comment_delete' => $deletable,
+            'subscriptions_enabled' => $this->subscriptions->isEnabled(),
+            'subscribed' => $this->subscriptions->isSubscribedToDocument($user, $document),
+            'subscribed_section' => $this->subscriptions->coveringSection($user, $document),
+            // Связи с другими документами.
+            'links' => $this->links->forDocument($document),
+            'link_types' => DocumentLink::LABELS,
         ]);
     }
 
@@ -213,6 +290,8 @@ final class DocumentController extends AbstractController
             'document' => $document,
             'is_new' => false,
             'storage' => $this->manager->getStorage(),
+            'template' => null,
+            'templates' => [],
         ]);
     }
 
@@ -235,6 +314,25 @@ final class DocumentController extends AbstractController
         $version = $document->findVersion($number) ?? throw $this->createNotFoundException('Версия не найдена.');
 
         return $this->serveVersion($document, $version, $request, $user);
+    }
+
+    /** Предпросмотр офисного файла в браузере: LibreOffice переводит его в PDF (результат кэшируется). */
+    #[Route('/{id}/preview', name: 'app_document_preview', requirements: ['id' => '\d+'], methods: ['GET'])]
+    #[IsGranted(PortalVoter::DOCUMENT_VIEW, subject: 'document')]
+    public function preview(Document $document): Response
+    {
+        $version = $document->getCurrentVersion() ?? throw $this->createNotFoundException('У документа нет версий.');
+
+        return $this->servePreview($document, $version);
+    }
+
+    #[Route('/{id}/versions/{number}/preview', name: 'app_document_version_preview', requirements: ['id' => '\d+', 'number' => '\d+'], methods: ['GET'])]
+    #[IsGranted(PortalVoter::DOCUMENT_VIEW, subject: 'document')]
+    public function previewVersion(Document $document, int $number): Response
+    {
+        $version = $document->findVersion($number) ?? throw $this->createNotFoundException('Версия не найдена.');
+
+        return $this->servePreview($document, $version);
     }
 
     #[Route('/{id}/versions/{number}', name: 'app_document_version', requirements: ['id' => '\d+', 'number' => '\d+'], methods: ['GET'])]
@@ -292,6 +390,11 @@ final class DocumentController extends AbstractController
     public function publish(Document $document, Request $request, #[CurrentUser] User $user): Response
     {
         $this->checkToken($request, $document);
+        if (!$this->approvals->canPublish($document)) {
+            $this->addFlash('danger', 'По настройкам портала публиковать можно только согласованные документы. Отправьте документ на согласование.');
+
+            return $this->redirectToRoute('app_document_show', ['id' => $document->getId()]);
+        }
         try {
             $this->manager->publish($document, $user, $request->getClientIp());
             $this->addFlash('success', 'Документ опубликован — теперь он виден всем сотрудникам.');
@@ -348,6 +451,31 @@ final class DocumentController extends AbstractController
             'stats' => $data,
             'chart' => StatsService::chartSeries($data['by_day']),
         ]);
+    }
+
+    private function servePreview(Document $document, DocumentVersion $version): Response
+    {
+        if (!$this->previewer->isAvailable()) {
+            throw $this->createNotFoundException('Предпросмотр офисных файлов не настроен: на сервере нет LibreOffice.');
+        }
+        if (!$this->previewer->supports($version)) {
+            // PDF и картинки браузер показывает сам, остальное — только скачиванием.
+            return $this->redirectToRoute('app_document_version_download', ['id' => $document->getId(), 'number' => $version->getNumber(), 'inline' => 1]);
+        }
+        $pdf = $this->previewer->pdf($version);
+        if (null === $pdf) {
+            $this->addFlash('warning', 'Не удалось подготовить предпросмотр этого файла — скачайте его, чтобы открыть.');
+
+            return $this->redirectToRoute('app_document_show', ['id' => $document->getId()]);
+        }
+        $response = new BinaryFileResponse($pdf);
+        $response->headers->set('Content-Type', 'application/pdf');
+        $response->headers->set('X-Content-Type-Options', 'nosniff');
+        $name = pathinfo($version->getOriginalName() ?? 'document', \PATHINFO_FILENAME).'.pdf';
+        $response->setContentDisposition(ResponseHeaderBag::DISPOSITION_INLINE, $name, self::asciiName($name));
+        $response->setPrivate();
+
+        return $response;
     }
 
     private function serveVersion(Document $document, DocumentVersion $version, Request $request, ?User $user): Response

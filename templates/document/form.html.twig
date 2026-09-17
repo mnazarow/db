@@ -19,6 +19,17 @@
 
 <section class="container section">
     {% include '_flashes.html.twig' %}
+    {% if is_new and templates|default([])|length > 0 %}
+        <div class="card card--info template-picker">
+            <h2 class="h-section">Создать по шаблону</h2>
+            <p class="hints">Шаблон заполнит карточку заготовкой: раздел, вид, название, обозначение с автонумерацией, теги и срок актуальности. Любое поле можно поправить до сохранения.</p>
+            <div class="actions">
+                {% for t in templates %}
+                    <a class="btn btn--ghost btn--small {{ template and template.id == t.id ? 'is-active' }}" href="{{ path('app_document_new', {template: t.id, section: document.section.id}) }}" title="{{ t.description }}">{{ t.name }}</a>
+                {% endfor %}
+            </div>
+        </div>
+    {% endif %}
     {{ form_start(form, {attr: {novalidate: 'novalidate', class: 'form doc-form', enctype: 'multipart/form-data', 'data-doc-form': '1', 'data-type': document.type}}) }}
     <div class="grid grid--doc-form">
         <div class="doc-form__main">
@@ -71,6 +82,11 @@
                 {{ form_row(form.changeNote) }}
                 {% if is_new %}{{ form_row(form.publish) }}{% endif %}
                 {{ form_row(form.public) }}
+                {{ form_row(form.restricted) }}
+                <div class="restricted-fields" data-restricted-fields>
+                    {{ form_row(form.allowedUsers) }}
+                    {{ form_row(form.allowedDepartmentsString) }}
+                </div>
             </div>
         </div>
 

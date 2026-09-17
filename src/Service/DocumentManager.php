@@ -10,6 +10,7 @@ use App\Entity\DocumentEvent;
 use App\Entity\DocumentVersion;
 use App\Entity\Section;
 use App\Entity\User;
+use App\Service\Preview\DocumentPreviewer;
 use App\Service\Text\TextIndexer;
 use Doctrine\ORM\EntityManagerInterface;
 use Psr\Log\LoggerInterface;
@@ -28,6 +29,7 @@ final class DocumentManager
         private readonly HtmlSanitizerInterface $documentPage,
         private readonly LoggerInterface $auditLogger,
         private readonly TextIndexer $indexer,
+        private readonly DocumentPreviewer $previewer,
     ) {
     }
 
@@ -301,6 +303,7 @@ final class DocumentManager
         $this->em->persist(new DocumentDeletion($id, $title, $sectionPath, $actor->getDisplayName()));
         $this->em->flush();
         $this->storage->deleteDocumentDir($id);
+        $this->previewer->forget($id);
     }
 
     /** Фиксирует просмотр документа. */

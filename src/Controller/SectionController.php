@@ -14,6 +14,8 @@ use App\Security\Access;
 use App\Security\Voter\PortalVoter;
 use App\Service\SectionManager;
 use App\Service\StatsService;
+use App\Service\SubscriptionService;
+use App\Repository\DocumentTemplateRepository;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -33,6 +35,8 @@ final class SectionController extends AbstractController
         private readonly SectionManager $sectionManager,
         private readonly Access $access,
         private readonly StatsService $stats,
+        private readonly SubscriptionService $subscriptions,
+        private readonly DocumentTemplateRepository $templates,
     ) {
     }
 
@@ -45,6 +49,7 @@ final class SectionController extends AbstractController
         $sort = (string) $request->query->get('sort', 'title');
         $statuses = match ($filter) {
             'draft' => [Document::STATUS_DRAFT],
+            'review' => [Document::STATUS_REVIEW],
             'archived' => [Document::STATUS_ARCHIVED],
             'all' => $canManage ? Document::STATUSES : [Document::STATUS_PUBLISHED],
             default => [Document::STATUS_PUBLISHED],
@@ -54,20 +59,24 @@ final class SectionController extends AbstractController
             $filter = 'published';
         }
         $tree = $this->sections->findAllTree();
-        $counts = HomeController::subtreeCounts($tree, $this->documents->countPerSection($guest));
-        $byStatus = $this->documents->countByStatus([(int) $section->getId()], $guest);
+        $viewer = $this->access->viewer($user);
+        $counts = HomeController::subtreeCounts($tree, $this->documents->countPerSection($guest, $viewer));
+        $byStatus = $this->documents->countByStatus([(int) $section->getId()], $guest, $viewer);
 
         return $this->render('section/show.html.twig', [
             'section' => $section,
             'children' => $section->getChildren(),
             'counts' => $counts,
-            'documents' => $this->documents->findBySection($section, $statuses, $sort, $guest),
+            'documents' => $this->documents->findBySection($section, $statuses, $sort, $guest, $viewer),
             'filter' => $filter,
             'sort' => $sort,
             'by_status' => $byStatus,
             'can_manage' => $canManage,
             'moderators' => $section->getModerators(),
             'expiring' => $canManage ? $this->stats->expiring($this->sections->findSubtreeIds($section), 5) : [],
+            'subscriptions_enabled' => $this->subscriptions->isEnabled(),
+            'subscribed' => $this->subscriptions->isSubscribedToSection($user, $section),
+            'templates' => $canManage ? $this->templates->findForSection($section) : [],
         ]);
     }
 

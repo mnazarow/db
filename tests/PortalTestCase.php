@@ -75,6 +75,11 @@ abstract class PortalTestCase extends WebTestCase
         $em->clear();
         // Настройки портала кэшируются (cache.app) — после пересоздания схемы кэш должен быть пустым.
         static::getContainer()->get('cache.app')->clear();
+        // Счётчик неудачных входов живёт в отдельном пуле и переживает перезапуск тестов:
+        // без очистки повторный прогон упирается в защиту от подбора пароля.
+        if (static::getContainer()->has('app.login_limiter_pool')) {
+            static::getContainer()->get('app.login_limiter_pool')->clear();
+        }
     }
 
     protected function em(): EntityManagerInterface

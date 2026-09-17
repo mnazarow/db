@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="ru">
+<body style="font-family: Arial, Helvetica, sans-serif; color: #1D1E1E; line-height: 1.5;">
+<p>Здравствуйте, {{ user.displayName }}!</p>
+{% if kind == 'requested' %}
+    <p>Вам отправили документ на согласование:</p>
+    <ul>
+        <li><a href="{{ url }}">{{ document.title }}</a>{% if document.code %} ({{ document.code }}){% endif %} — раздел «{{ document.section.fullName }}», редакция {{ approval.versionNumber }}</li>
+    </ul>
+    {% if approval.requestNote %}<p><b>Комментарий отправителя:</b> {{ approval.requestNote }}</p>{% endif %}
+    <p>Откройте документ по ссылке, прочитайте его и примите решение — <b>«Согласовать»</b> или <b>«Отклонить»</b> — в карточке документа либо в разделе «Мне на согласование».</p>
+{% elseif kind == 'approved' %}
+    <p>Документ <a href="{{ url }}">{{ document.title }}</a>{% if document.code %} ({{ document.code }}){% endif %}, редакция {{ approval.versionNumber }}, <b style="color:#1F7A3D;">согласован</b>.</p>
+    <p>Согласующий: {{ approval.approver.displayName }}{% if approval.decidedAt %}, {{ approval.decidedAt|date('d.m.Y H:i') }}{% endif %}.</p>
+    {% if approval.decisionNote %}<p><b>Комментарий:</b> {{ approval.decisionNote }}</p>{% endif %}
+{% else %}
+    <p>Документ <a href="{{ url }}">{{ document.title }}</a>{% if document.code %} ({{ document.code }}){% endif %}, редакция {{ approval.versionNumber }}, <b style="color:#D00024;">отклонён при согласовании</b>.</p>
+    <p>Согласующий: {{ approval.approver.displayName }}{% if approval.decidedAt %}, {{ approval.decidedAt|date('d.m.Y H:i') }}{% endif %}.</p>
+    {% if approval.decisionNote %}<p><b>Причина:</b> {{ approval.decisionNote }}</p>{% endif %}
+    <p>Внесите правки и отправьте документ на согласование заново.</p>
+{% endif %}
+<p style="color:#6E7480; font-size: 12px;">Письмо отправлено автоматически порталом «{{ app_name }}». Отвечать на него не нужно.</p>
+</body>
+</html>

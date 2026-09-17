@@ -1,0 +1,37 @@
+{% extends 'admin/_layout.html.twig' %}
+{% import '_macros.html.twig' as m %}
+
+{% block title %}Согласование{% endblock %}
+{% block admin_title %}Согласование{% endblock %}
+
+{% block admin_body %}
+<div class="card table-card">
+    <div class="card__head card__head--padded">
+        <h2 class="h-section">Ждут решения <span class="tag">{{ pending|length }}</span></h2>
+        <span class="text-muted">документы, отправленные на согласование</span>
+    </div>
+    {% if pending|length > 0 %}
+        <div class="table-scroll">
+            <table class="admin-table">
+                <thead><tr><th>Документ</th><th>Раздел</th><th>Редакция</th><th>Согласующий</th><th>Отправил</th><th>Когда</th><th>Комментарий</th></tr></thead>
+                <tbody>
+                {% for a in pending %}
+                    <tr>
+                        <td><a class="doc-table__title" href="{{ path('app_document_show', {id: a.document.id}) }}">{{ a.document.title }}</a>{% if a.document.code %}<div class="hints">{{ a.document.code }}</div>{% endif %}</td>
+                        <td>{{ a.document.section.fullName }}</td>
+                        <td>v{{ a.versionNumber }}</td>
+                        <td>{{ a.approver.displayName }}{% if a.approver.department %}<div class="hints">{{ a.approver.department }}</div>{% endif %}</td>
+                        <td>{{ a.requestedBy ? a.requestedBy.displayName : '—' }}</td>
+                        <td class="col-nowrap">{{ a.requestedAt|date('d.m.Y H:i') }}<div class="hints">{{ (date().timestamp - a.requestedAt.timestamp) // 86400 }} дн. назад</div></td>
+                        <td class="col-comment">{{ a.requestNote ?: '—' }}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <p class="card__padded text-muted">Незакрытых согласований нет.</p>
+    {% endif %}
+</div>
+<p class="form-help">Согласование включается в «Настройках»: «Публиковать документы только после согласования». Решение принимает назначенный согласующий (или администратор) в карточке документа либо в разделе «Мне на согласование».</p>
+{% endblock %}

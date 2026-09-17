@@ -1,0 +1,67 @@
+{% extends 'base.html.twig' %}
+{% import '_macros.html.twig' as m %}
+
+{% block title %}Мне на согласование{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        <div class="eyebrow">Согласование</div>
+        <h1 class="h-display">Мне на согласование</h1>
+    </div>
+</section>
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+
+    <div class="card table-card">
+        <div class="card__head card__head--padded">
+            <h2 class="h-section">Ждут решения <span class="tag">{{ pending|length }}</span></h2>
+        </div>
+        {% if pending|length > 0 %}
+            <ul class="attention-list">
+                {% for a in pending %}
+                    <li class="attention-item">
+                        <a href="{{ path('app_document_show', {id: a.document.id}) }}">{{ a.document.title }}</a>
+                        <span class="attention-item__meta">{{ a.document.section.fullName }} · редакция {{ a.versionNumber }} · запросил {{ a.requestedBy ? a.requestedBy.displayName : '—' }} {{ a.requestedAt|date('d.m.Y H:i') }}</span>
+                        {% if a.requestNote %}<p class="snippet__text">{{ a.requestNote }}</p>{% endif %}
+                        <form method="post" action="{{ path('app_approval_decide', {id: a.id}) }}" class="form ack-decide">
+                            <input type="hidden" name="_token" value="{{ csrf_token('approval_decide_' ~ a.id) }}">
+                            <input type="hidden" name="from_list" value="1">
+                            <input class="form-control form-control--inline" type="text" name="note" maxlength="2000" placeholder="Комментарий (обязателен при отклонении)">
+                            <button type="submit" class="btn btn--pill btn--small" name="decision" value="approve">Согласовать</button>
+                            <button type="submit" class="btn btn--ghost btn--small btn--danger" name="decision" value="reject">Отклонить</button>
+                        </form>
+                    </li>
+                {% endfor %}
+            </ul>
+        {% else %}
+            <p class="card__padded text-muted">Документов на согласовании за вами нет.</p>
+        {% endif %}
+    </div>
+
+    <div class="card table-card">
+        <div class="card__head card__head--padded"><h2 class="h-section">Мои решения</h2></div>
+        {% if decided|length > 0 %}
+            <div class="table-scroll">
+                <table class="admin-table">
+                    <thead><tr><th>Документ</th><th>Раздел</th><th>Редакция</th><th>Решение</th><th>Дата</th><th>Комментарий</th></tr></thead>
+                    <tbody>
+                    {% for a in decided %}
+                        <tr>
+                            <td><a class="doc-table__title" href="{{ path('app_document_show', {id: a.document.id}) }}">{{ a.document.title }}</a></td>
+                            <td>{{ a.document.section.fullName }}</td>
+                            <td>v{{ a.versionNumber }}</td>
+                            <td>{{ m.approval_badge(a) }}</td>
+                            <td class="col-nowrap">{{ a.decidedAt|date('d.m.Y H:i') }}</td>
+                            <td class="col-comment">{{ a.decisionNote ?: '—' }}</td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <p class="card__padded text-muted">Решений пока нет.</p>
+        {% endif %}
+    </div>
+</section>
+{% endblock %}

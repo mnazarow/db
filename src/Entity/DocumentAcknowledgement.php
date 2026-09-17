@@ -57,6 +57,16 @@ class DocumentAcknowledgement
     #[ORM\Column(name: 'reminded_at', type: Types::DATETIME_IMMUTABLE, nullable: true)]
     private ?\DateTimeImmutable $remindedAt = null;
 
+    /** Проверка знаний: сколько было попыток и с каким результатом подтверждено ознакомление. */
+    #[ORM\Column(name: 'quiz_attempts', type: Types::SMALLINT, options: ['default' => 0])]
+    private int $quizAttempts = 0;
+
+    #[ORM\Column(name: 'quiz_score', type: Types::SMALLINT, nullable: true)]
+    private ?int $quizScore = null;
+
+    #[ORM\Column(name: 'quiz_total', type: Types::SMALLINT, nullable: true)]
+    private ?int $quizTotal = null;
+
     public function __construct(Document $document, User $user, int $versionNumber, ?User $assignedBy = null, ?\DateTimeImmutable $dueAt = null)
     {
         $this->document = $document;
@@ -154,6 +164,42 @@ class DocumentAcknowledgement
         }
 
         return (int) ($today ?? new \DateTimeImmutable('today'))->diff($this->dueAt)->format('%r%a');
+    }
+
+    public function getQuizAttempts(): int
+    {
+        return $this->quizAttempts;
+    }
+
+    public function addQuizAttempt(): static
+    {
+        ++$this->quizAttempts;
+
+        return $this;
+    }
+
+    public function getQuizScore(): ?int
+    {
+        return $this->quizScore;
+    }
+
+    public function getQuizTotal(): ?int
+    {
+        return $this->quizTotal;
+    }
+
+    /** Есть ли результат проверки знаний по этой записи. */
+    public function hasQuizResult(): bool
+    {
+        return null !== $this->quizTotal && $this->quizTotal > 0;
+    }
+
+    public function setQuizResult(int $score, int $total): static
+    {
+        $this->quizScore = max(0, $score);
+        $this->quizTotal = max(0, $total);
+
+        return $this;
     }
 
     public function getRemindedAt(): ?\DateTimeImmutable

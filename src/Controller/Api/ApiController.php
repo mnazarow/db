@@ -12,6 +12,7 @@ use App\Entity\Section;
 use App\Repository\DocumentRepository;
 use App\Repository\SectionRepository;
 use App\Security\Api\ApiPrincipal;
+use App\Service\DocumentLinkService;
 use App\Service\FileStorage;
 use App\Service\Integration\ApiPresenter;
 use App\Service\Text\TextExtractor;
@@ -52,6 +53,7 @@ final class ApiController extends AbstractController
         private readonly ApiPresenter $presenter,
         private readonly TextExtractor $extractor,
         private readonly FileStorage $storage,
+        private readonly DocumentLinkService $links,
         private readonly string $appName,
         private readonly string $appVersion,
     ) {
@@ -165,6 +167,21 @@ final class ApiController extends AbstractController
         $versions = $document->getVersions()->toArray();
         usort($versions, static fn ($a, $b) => $a->getNumber() <=> $b->getNumber());
         $data['versions'] = array_map($this->presenter->version(...), $versions);
+        // Связи с другими документами: индексатору RAG важно знать, какой документ заменён и чем.
+        $data['related'] = [];
+        foreach ($this->links->forDocument($document) as $row) {
+            $other = $row['document'];
+            if (!$other->isDraft() && ($principal->includesInternal() || $other->isPublic())) {
+                $data['related'][] = [
+                    'relation' => $row['label'],
+                    'type' => $row['link']->getType(),
+                    'id' => $other->getId(),
+                    'code' => $other->getCode(),
+                    'title' => $other->getTitle(),
+                    'status' => $other->getStatus(),
+                ];
+            }
+        }
         $withText = filter_var($request->query->get('text', '1'), \FILTER_VALIDATE_BOOL);
         $current = $document->getCurrentVersion();
         if ($withText && null !== $current) {
@@ -267,7 +284,11 @@ final class ApiController extends AbstractController
             'changed_total' => $changed['total'],
             'removed' => array_map(static fn (Document $d): array => [
                 'id' => $d->getId(),
-                'reason' => $d->isDraft() ? 'draft' : ($d->isArchived() && !$includeArchived ? 'archived' : 'internal'),
+                'reason' => match (true) {
+                    $d->isDraft() => 'draft',
+                    $d->isArchived() && !$includeArchived => 'archived',
+                    default => 'internal',
+                },
                 'updated_at' => $d->getUpdatedAt()->format(\DATE_ATOM),
             ], $hidden),
             'deleted' => array_map(fn (DocumentDeletion $d): array => $this->presenter->deletion($d, !$publicOnly), $deletions),

@@ -76,8 +76,12 @@ fi
 if [[ "${INSTALL_MODE}" == "native" ]]; then
     if command -v pdftotext >/dev/null 2>&1; then ok "Извлечение текста из PDF (pdftotext): доступно"
     else warn "pdftotext не найден — установите пакет poppler-utils, иначе API и описания через LLM не получат текст PDF-файлов"; fi
-    if [[ -f "/etc/cron.d/${APP_ID}" ]] && grep -q 'app:search:reindex' "/etc/cron.d/${APP_ID}" && grep -q 'acknowledge-remind' "/etc/cron.d/${APP_ID}"; then ok "Задания cron: проверка сроков, индексация содержимого, описания через LLM, напоминания об ознакомлении$(grep -q 'backup' "/etc/cron.d/${APP_ID}" && echo ', резервные копии')"
-    else warn "В /etc/cron.d/${APP_ID} не хватает заданий (app:search:reindex / app:documents:describe / app:documents:acknowledge-remind) — выполните: sudo ${APP_DIR}/current/deploy/refresh.sh"; PROBLEMS=$((PROBLEMS + 1)); fi
+    if command -v soffice >/dev/null 2>&1; then ok "Предпросмотр офисных файлов (LibreOffice): доступен"
+    else info "LibreOffice не установлен — docx/xlsx/pptx открываются только скачиванием (включить: ${APP_DIR}/current/deploy/refresh.sh --with-preview)"; fi
+    if command -v tesseract >/dev/null 2>&1; then ok "Распознавание сканов (tesseract): доступно"
+    else info "tesseract не установлен — сканы не попадают в поиск (включить: ${APP_DIR}/current/deploy/refresh.sh --with-ocr)"; fi
+    if [[ -f "/etc/cron.d/${APP_ID}" ]] && grep -q 'app:search:reindex' "/etc/cron.d/${APP_ID}" && grep -q 'acknowledge-remind' "/etc/cron.d/${APP_ID}" && grep -q 'app:telegram:poll' "/etc/cron.d/${APP_ID}"; then ok "Задания cron: проверка сроков, индексация содержимого, описания через LLM, напоминания об ознакомлении, разбор сообщений Telegram$(grep -q 'backup' "/etc/cron.d/${APP_ID}" && echo ', резервные копии')"
+    else warn "В /etc/cron.d/${APP_ID} не хватает заданий (app:search:reindex / app:documents:describe / app:documents:acknowledge-remind / app:telegram:poll) — выполните: sudo ${APP_DIR}/current/deploy/refresh.sh"; PROBLEMS=$((PROBLEMS + 1)); fi
     # Команда управления могла остаться от предыдущей версии (обновление скриптами старой версии).
     if [[ -f "/usr/local/bin/${APP_ID}" ]] && ! grep -q 'acknowledge-remind' "/usr/local/bin/${APP_ID}"; then
         warn "Команда ${APP_ID} осталась от предыдущей версии (нет команд reindex и acknowledge-remind) — выполните: sudo ${APP_DIR}/current/deploy/refresh.sh"

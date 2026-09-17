@@ -1,0 +1,36 @@
+Здравствуйте, {{ user.displayName }}!
+{% if kind == 'requested' %}
+
+Вам отправили документ на согласование:
+
+- {{ document.title }}{% if document.code %} ({{ document.code }}){% endif %} — {{ document.section.fullName }}, редакция {{ approval.versionNumber }}
+  {{ url }}
+{% if approval.requestNote %}
+
+Комментарий отправителя: {{ approval.requestNote }}
+{% endif %}
+
+Откройте документ, прочитайте его и примите решение — «Согласовать» или «Отклонить» —
+в карточке документа или в разделе «Мне на согласование».
+{% elseif kind == 'approved' %}
+
+Документ согласован: {{ document.title }}{% if document.code %} ({{ document.code }}){% endif %},
+редакция {{ approval.versionNumber }}. Согласующий: {{ approval.approver.displayName }}.
+{% if approval.decisionNote %}
+Комментарий: {{ approval.decisionNote }}
+{% endif %}
+
+{{ url }}
+{% else %}
+
+Документ отклонён при согласовании: {{ document.title }}{% if document.code %} ({{ document.code }}){% endif %},
+редакция {{ approval.versionNumber }}. Согласующий: {{ approval.approver.displayName }}.
+{% if approval.decisionNote %}
+Причина: {{ approval.decisionNote }}
+{% endif %}
+
+Внесите правки и отправьте документ на согласование заново: {{ url }}
+{% endif %}
+
+--
+Письмо отправлено автоматически порталом «{{ app_name }}». Отвечать на него не нужно.

@@ -37,9 +37,10 @@ class Document
 
     public const STATUS_DRAFT = 'draft';
     public const STATUS_PUBLISHED = 'published';
+    public const STATUS_REVIEW = 'review';
     public const STATUS_ARCHIVED = 'archived';
 
-    public const STATUSES = [self::STATUS_DRAFT, self::STATUS_PUBLISHED, self::STATUS_ARCHIVED];
+    public const STATUSES = [self::STATUS_DRAFT, self::STATUS_REVIEW, self::STATUS_PUBLISHED, self::STATUS_ARCHIVED];
 
     public const DESCRIPTION_MANUAL = 'manual';
     public const DESCRIPTION_LLM = 'llm';
@@ -87,6 +88,24 @@ class Document
      */
     #[ORM\Column(name: 'is_public', options: ['default' => true])]
     private bool $isPublic = true;
+
+    /** Ограниченный доступ: документ виден только перечисленным сотрудникам и подразделениям. */
+    #[ORM\Column(options: ['default' => false])]
+    private bool $restricted = false;
+
+    /** @var Collection<int, User> сотрудники, которым открыт документ с ограниченным доступом */
+    #[ORM\ManyToMany(targetEntity: User::class)]
+    #[ORM\JoinTable(name: 'document_allowed_user')]
+    private Collection $allowedUsers;
+
+    /**
+     * Подразделения, которым открыт документ с ограниченным доступом.
+     *
+     * Хранится строкой вида «|Отдел кадров|Бухгалтерия|»: так подразделение ищется обычным LIKE,
+     * одинаково в DQL и в нативном запросе, без зависимости от того, как база хранит JSON.
+     */
+    #[ORM\Column(name: 'allowed_departments', type: Types::TEXT)]
+    private string $allowedDepartments = '';
 
     /** @var list<string> */
     #[ORM\Column(type: Types::JSON)]
@@ -142,8 +161,93 @@ class Document
         $this->section = $section;
         $this->versions = new ArrayCollection();
         $this->events = new ArrayCollection();
+        $this->allowedUsers = new ArrayCollection();
         $this->createdAt = new \DateTimeImmutable();
         $this->updatedAt = $this->createdAt;
+    }
+
+    // --- Ограниченный доступ ---------------------------------------------------------
+
+    public function isRestricted(): bool
+    {
+        return $this->restricted;
+    }
+
+    public function setRestricted(bool $restricted): static
+    {
+        $this->restricted = $restricted;
+        if (!$restricted) {
+            $this->allowedUsers->clear();
+            $this->allowedDepartments = '';
+        }
+
+        return $this;
+    }
+
+    /** @return Collection<int, User> */
+    public function getAllowedUsers(): Collection
+    {
+        return $this->allowedUsers;
+    }
+
+    /** @param iterable<User> $users */
+    public function setAllowedUsers(iterable $users): static
+    {
+        $this->allowedUsers->clear();
+        foreach ($users as $user) {
+            if (!$this->allowedUsers->contains($user)) {
+                $this->allowedUsers->add($user);
+            }
+        }
+
+        return $this;
+    }
+
+    /** @return list<string> */
+    public function getAllowedDepartments(): array
+    {
+        return array_values(array_filter(explode('|', $this->allowedDepartments), static fn (string $d): bool => '' !== $d));
+    }
+
+    /** @param list<string> $departments */
+    public function setAllowedDepartments(array $departments): static
+    {
+        $clean = [];
+        foreach ($departments as $department) {
+            $department = trim(str_replace('|', ' ', (string) $department));
+            if ('' !== $department && !\in_array($department, $clean, true)) {
+                $clean[] = mb_substr($department, 0, 128);
+            }
+        }
+        sort($clean);
+        $this->allowedDepartments = [] === $clean ? '' : '|'.implode('|', $clean).'|';
+
+        return $this;
+    }
+
+    /** Условие поиска по подразделению: «|Отдел кадров|» ищется в строке разрешений. */
+    public static function departmentNeedle(string $department): string
+    {
+        return '|'.trim(str_replace('|', ' ', $department)).'|';
+    }
+
+    /** Открыт ли документ с ограниченным доступом этому сотруднику (без учёта прав модератора). */
+    public function isAllowedFor(?User $user): bool
+    {
+        if (!$this->restricted) {
+            return true;
+        }
+        if (null === $user) {
+            return false;
+        }
+        foreach ($this->allowedUsers as $allowed) {
+            if ($allowed->getId() === $user->getId()) {
+                return true;
+            }
+        }
+        $department = trim((string) $user->getDepartment());
+
+        return '' !== $department && str_contains($this->allowedDepartments, self::departmentNeedle($department));
     }
 
     #[ORM\PreUpdate]
@@ -293,6 +397,18 @@ class Document
         return self::STATUS_ARCHIVED === $this->status;
     }
 
+    /** Документ отправлен на согласование и ждёт решения. */
+    public function isOnReview(): bool
+    {
+        return self::STATUS_REVIEW === $this->status;
+    }
+
+    /** Черновик или документ на согласовании: сотрудникам он ещё не виден. */
+    public function isUnpublished(): bool
+    {
+        return self::STATUS_DRAFT === $this->status || self::STATUS_REVIEW === $this->status;
+    }
+
     public function isPublic(): bool
     {
         return $this->isPublic;
@@ -334,6 +450,17 @@ class Document
     public function setTagsString(?string $tags): static
     {
         return $this->setTags(preg_split('/[,;]+/u', (string) $tags) ?: []);
+    }
+
+    /** Подразделения с ограниченным доступом одной строкой — для формы. */
+    public function getAllowedDepartmentsString(): string
+    {
+        return implode(', ', $this->getAllowedDepartments());
+    }
+
+    public function setAllowedDepartmentsString(?string $departments): static
+    {
+        return $this->setAllowedDepartments(preg_split('/[,;]+/u', (string) $departments) ?: []);
     }
 
     public function getOwner(): ?User

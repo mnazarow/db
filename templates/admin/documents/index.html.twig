@@ -41,8 +41,34 @@
         <a class="btn btn--ghost btn--small" href="{{ path('admin_documents') }}">Сбросить</a>
     </form>
 </div>
+<form method="post" id="bulk-form" action="{{ path('admin_documents_bulk') }}" data-bulk>
+    <input type="hidden" name="_token" value="{{ csrf_token('documents_bulk') }}">
+</form>
 <div class="card table-card">
-    <div class="card__head card__head--padded"><h2 class="h-section">Найдено: {{ documents|length }}</h2></div>
-    {{ m.document_table(documents, {show_section: true, show_status: true, empty: 'Документов с такими условиями нет.'}) }}
+    <div class="card__head card__head--padded">
+        <h2 class="h-section">Найдено: {{ documents|length }}</h2>
+        <span class="hints">Отметьте документы, чтобы выполнить действие сразу над несколькими (не больше {{ bulk_max }} за раз).</span>
+    </div>
+    {{ m.document_table(documents, {show_section: true, show_status: true, selectable: true, empty: 'Документов с такими условиями нет.'}) }}
+    <div class="bulk-bar" data-bulk-bar hidden>
+        <span class="bulk-bar__count">Отмечено: <b data-bulk-count>0</b></span>
+        <select class="form-control form-control--inline" name="action" form="bulk-form" data-bulk-action aria-label="Действие">
+            {% for value, label in actions %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+        </select>
+        <span class="bulk-bar__field" data-bulk-for="move">
+            <select class="form-control form-control--inline" name="section" form="bulk-form" aria-label="Раздел"><option value="">Выберите раздел</option>{{ m.section_option_tree(tree, null) }}</select>
+        </span>
+        <span class="bulk-bar__field" data-bulk-for="validity">
+            <input class="form-control form-control--inline" type="date" name="valid_until" form="bulk-form" aria-label="Актуален до">
+            <span class="hints">пусто — снять срок</span>
+        </span>
+        <span class="bulk-bar__field" data-bulk-for="tags">
+            <input class="form-control form-control--inline" type="text" name="tags" form="bulk-form" placeholder="теги через запятую" aria-label="Теги">
+        </span>
+        <span class="bulk-bar__field" data-bulk-for="access">
+            <select class="form-control form-control--inline" name="access" form="bulk-form" aria-label="Доступ"><option value="internal">внутренние</option><option value="public">открытые (без входа)</option></select>
+        </span>
+        <button type="submit" form="bulk-form" class="btn btn--pill btn--small" data-bulk-submit data-confirm-delete="Удалить отмеченные документы со всеми версиями? Действие необратимо.">Выполнить</button>
+    </div>
 </div>
 {% endblock %}

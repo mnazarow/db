@@ -6,6 +6,8 @@ namespace App\Form;
 
 use App\Entity\Document;
 use App\Entity\Section;
+use App\Entity\User;
+use App\Repository\UserRepository;
 use Symfony\Bridge\Doctrine\Form\Type\EntityType;
 use Symfony\Component\Form\AbstractType;
 use Symfony\Component\Form\Extension\Core\Type\CheckboxType;
@@ -49,6 +51,29 @@ final class DocumentType extends AbstractType
                 'label' => 'Открытый документ — опубликованную версию можно читать без входа в портал',
                 'required' => false,
                 'help' => 'Снимите флажок для внутренних документов: они видны только сотрудникам после входа. Просмотр без входа регулируется в настройках панели администратора.',
+            ])
+            ->add('restricted', CheckboxType::class, [
+                'label' => 'Ограниченный доступ — документ виден только выбранным сотрудникам и подразделениям',
+                'required' => false,
+                'help' => 'Для кадровых, финансовых и других документов, которые не должны видеть все сотрудники. Модераторы раздела и администраторы видят документ всегда.',
+            ])
+            ->add('allowedUsers', EntityType::class, [
+                'label' => 'Кому открыт документ',
+                'class' => User::class,
+                'required' => false,
+                'multiple' => true,
+                'expanded' => false,
+                'choice_label' => static fn (User $user): string => $user->getDisplayName().($user->getDepartment() ? ' — '.$user->getDepartment() : ''),
+                'query_builder' => static fn (UserRepository $repository) => $repository->createQueryBuilder('u')
+                    ->andWhere('u.active = true')->orderBy('u.displayName', 'ASC'),
+                'attr' => ['size' => 8],
+                'help' => 'Держите Ctrl (⌘), чтобы выбрать несколько.',
+            ])
+            ->add('allowedDepartmentsString', TextType::class, [
+                'label' => 'Каким подразделениям открыт документ',
+                'required' => false,
+                'attr' => ['placeholder' => 'Отдел кадров, Бухгалтерия'],
+                'help' => 'Через запятую, ровно как в карточках сотрудников.',
             ]);
 
         if ($isNew) {

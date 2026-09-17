@@ -1,0 +1,22 @@
+Здравствуйте, {{ user.displayName }}!
+
+Изменения по документу: {{ document.title }}{% if document.code %} ({{ document.code }}){% endif %}
+Раздел: {{ document.section.fullName }}
+{% if changes|length > 0 %}
+{% for change in changes %}
+- {{ change|capitalize }}
+{% endfor %}
+{% endif %}
+{% if comments|length > 0 %}
+Сообщения в обсуждении:
+{% for comment in comments %}
+  {{ comment.authorName }}, {{ comment.createdAt|date('d.m.Y H:i') }}:
+  {{ comment.excerpt(600) }}
+{% endfor %}
+{% endif %}
+
+Открыть документ: {{ url }}
+
+--
+Письмо отправлено автоматически порталом «{{ app_name }}», потому что вы подписаны на изменения.
+Управление подписками: {{ settings_url }}

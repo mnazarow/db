@@ -45,7 +45,7 @@
             <div class="table-card__empty">Ознакомление ещё никому не назначено. Нажмите «Назначить ещё».</div>
         {% else %}
         <div class="table-scroll"><table class="admin-table">
-            <thead><tr><th>Сотрудник</th><th>Подразделение</th><th>Назначено</th><th>Срок</th><th>Ознакомлен</th><th>Адрес</th></tr></thead>
+            <thead><tr><th>Сотрудник</th><th>Подразделение</th><th>Назначено</th><th>Срок</th><th>Ознакомлен</th><th>Проверка знаний</th><th>Адрес</th></tr></thead>
             <tbody>
             {% for row in report.rows %}
                 <tr class="{{ row.confirmed ? '' : (row.isOverdue(today) ? 'is-expired' : 'is-soon') }}">
@@ -54,6 +54,7 @@
                     <td class="col-nowrap">{{ row.assignedAt|date('d.m.Y') }}</td>
                     <td class="col-nowrap">{% if row.dueAt %}{{ row.dueAt|date('d.m.Y') }}{% if not row.confirmed and row.isOverdue(today) %} <span class="text-danger">просрочено</span>{% endif %}{% else %}—{% endif %}</td>
                     <td class="col-nowrap">{% if row.confirmed %}<span class="text-success">{{ row.confirmedAt|date('d.m.Y H:i') }}</span>{% else %}<span class="text-muted">не ознакомлен</span>{% endif %}</td>
+                    <td class="col-nowrap">{% if row.hasQuizResult() %}{{ row.quizScore }} из {{ row.quizTotal }}{% if row.quizAttempts > 1 %}<div class="hints">попыток: {{ row.quizAttempts }}</div>{% endif %}{% else %}<span class="text-muted">—</span>{% endif %}</td>
                     <td class="col-nowrap"><span class="hints">{{ row.confirmedIp ?: '' }}</span></td>
                 </tr>
             {% endfor %}

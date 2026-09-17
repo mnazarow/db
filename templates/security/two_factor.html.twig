@@ -1,0 +1,36 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}Подтверждение входа{% endblock %}
+{% block body_class %}page-login{% endblock %}
+
+{% block body %}
+<section class="login">
+    <div class="login__decor" aria-hidden="true"></div>
+    <div class="container login__container">
+        <div class="login__card card">
+            <div class="login__brand login__brand--wordmark">
+                <img class="login__logo" src="{{ asset('img/logo.svg') }}" alt="{{ app_company }}" height="48">
+                <div class="login__company">{{ app_company }}</div>
+            </div>
+            <h1 class="h-display login__title">Подтверждение входа</h1>
+            <p class="login__lead">Введите шестизначный код из приложения-аутентификатора.</p>
+
+            {% include '_flashes.html.twig' %}
+
+            <form method="post" class="form">
+                <input type="hidden" name="_token" value="{{ csrf_token('two_factor') }}">
+                <div class="form-row">
+                    <label class="form-label" for="code">Код</label>
+                    <input class="form-control" type="text" id="code" name="code" inputmode="numeric" autocomplete="one-time-code"
+                           pattern="[0-9A-Za-z\-]{6,12}" maxlength="12" required autofocus>
+                    <div class="form-help">Если телефон недоступен, введите один из резервных кодов{% if recovery_left > 0 %} (осталось: {{ recovery_left }}){% endif %}.</div>
+                </div>
+                <div class="form-actions form-actions--stack">
+                    <button class="btn btn--pill btn--block" type="submit">Войти</button>
+                    <a class="link-action" href="{{ path('app_logout') }}">Выйти и войти под другой учётной записью</a>
+                </div>
+            </form>
+        </div>
+    </div>
+</section>
+{% endblock %}

@@ -1,0 +1,39 @@
+{# Связи документа: «заменяет», «отменяет», «приложение к», «см. также». #}
+<div class="card" id="links">
+    <div class="card__head"><h2 class="h-section">Связанные документы{% if links|length > 0 %} <span class="tag">{{ links|length }}</span>{% endif %}</h2></div>
+
+    {% if links|length == 0 %}
+        <p class="hints">Связей нет.{% if can_manage %} Укажите, какой документ этот заменяет или отменяет, — сотрудник со старой закладкой сразу увидит действующую редакцию.{% endif %}</p>
+    {% else %}
+        <ul class="doc-links">
+            {% for row in links %}
+                <li class="doc-links__item">
+                    <span class="doc-links__label">{{ row.label }}</span>
+                    <a class="doc-links__title" href="{{ path('app_document_show', {id: row.document.id}) }}">{{ row.document.title }}</a>
+                    {% if row.document.code %}<span class="doc-links__code">{{ row.document.code }}</span>{% endif %}
+                    <span class="doc-links__status status status--{{ row.document.status }}">{{ row.document.status|status_label }}</span>
+                    {% if row.link.note %}<span class="hints">{{ row.link.note }}</span>{% endif %}
+                    {% if can_manage %}
+                        <form method="post" action="{{ path('app_document_link_delete', {id: document.id, link: row.link.id}) }}" class="inline-form" data-confirm="Удалить связь «{{ row.label }} {{ row.document.title }}»?">
+                            <input type="hidden" name="_token" value="{{ csrf_token('document_' ~ document.id) }}">
+                            <button type="submit" class="comments__action comments__action--danger">Удалить</button>
+                        </form>
+                    {% endif %}
+                </li>
+            {% endfor %}
+        </ul>
+    {% endif %}
+
+    {% if can_manage %}
+        <form method="post" action="{{ path('app_document_link_add', {id: document.id}) }}" class="doc-links__form">
+            <input type="hidden" name="_token" value="{{ csrf_token('document_' ~ document.id) }}">
+            <select class="form-control form-control--inline" name="type" aria-label="Вид связи">
+                {% for value, label in link_types %}<option value="{{ value }}">{{ label|capitalize }}</option>{% endfor %}
+            </select>
+            <input class="form-control form-control--inline" type="text" name="target" list="document-codes" placeholder="Обозначение, номер или точное название" aria-label="Второй документ" required>
+            <input class="form-control form-control--inline" type="text" name="note" maxlength="255" placeholder="Примечание (необязательно)" aria-label="Примечание">
+            <label class="form-check"><input type="checkbox" name="archive_target" value="1"><span>перенести заменяемый документ в архив</span></label>
+            <button type="submit" class="btn btn--pill btn--small">Добавить связь</button>
+        </form>
+    {% endif %}
+</div>

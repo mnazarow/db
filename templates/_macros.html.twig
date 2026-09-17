@@ -7,8 +7,19 @@
 {%- endmacro %}
 
 {% macro status_badge(document) %}
-    {%- set cls = {draft: 'shifted', published: 'done', archived: 'none'}[document.status] -%}
+    {%- set cls = {draft: 'shifted', review: 'soon', published: 'done', archived: 'none'}[document.status] -%}
     <span class="badge badge--{{ cls }}"><span class="badge__dot"></span>{{ document.status|status_label }}</span>
+{%- endmacro %}
+
+{% macro approval_badge(approval) %}
+    {%- set cls = {pending: 'soon', approved: 'done', rejected: 'overdue', cancelled: 'none'}[approval.decision] -%}
+    <span class="badge badge--{{ cls }}"><span class="badge__dot"></span>{{ approval.decisionLabel }}</span>
+{%- endmacro %}
+
+{% macro restricted_badge(document) %}
+    {%- if document.restricted -%}
+        <span class="tag tag--internal" title="Документ виден только выбранным сотрудникам и подразделениям">ограниченный доступ</span>
+    {%- endif -%}
 {%- endmacro %}
 
 {% macro access_badge(document) %}
@@ -48,6 +59,7 @@
     {% set show_section = options.show_section|default(false) %}
     {% set show_status = options.show_status|default(false) %}
     {% set empty_text = options.empty|default('Документов пока нет.') %}
+    {% set selectable = options.selectable|default(false) %}
     {% if documents|length == 0 %}
         <div class="table-card__empty">{{ empty_text }}</div>
     {% else %}
@@ -55,6 +67,7 @@
         <table class="doc-table">
             <thead>
                 <tr>
+                    {% if selectable %}<th class="col-check"><input type="checkbox" data-bulk-all aria-label="Отметить все"></th>{% endif %}
                     <th class="col-icon"></th>
                     <th>Документ</th>
                     {% if show_section %}<th>Раздел</th>{% endif %}
@@ -68,6 +81,7 @@
             <tbody>
             {% for d in documents %}
                 <tr class="{{ d.status != 'published' ? 'is-muted' }}">
+                    {% if selectable %}<td class="col-check"><input type="checkbox" name="ids[]" value="{{ d.id }}" form="bulk-form" data-bulk-item aria-label="Отметить документ"></td>{% endif %}
                     <td class="col-icon">{{ m.file_icon(d) }}</td>
                     <td>
                         <a class="doc-table__title" href="{{ path('app_document_show', {id: d.id}) }}">{{ d.title }}</a>

@@ -6,12 +6,15 @@ namespace App\Controller;
 
 use App\Entity\Document;
 use App\Entity\DocumentAcknowledgement;
+use App\Entity\DocumentQuestion;
 use App\Entity\User;
 use App\Repository\DocumentAcknowledgementRepository;
+use App\Repository\DocumentQuestionRepository;
 use App\Repository\UserRepository;
 use App\Security\Access;
 use App\Security\Voter\PortalVoter;
 use App\Service\AcknowledgementService;
+use App\Service\QuizService;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -31,6 +34,8 @@ final class AcknowledgementController extends AbstractController
         private readonly DocumentAcknowledgementRepository $acknowledgements,
         private readonly UserRepository $users,
         private readonly Access $access,
+        private readonly QuizService $quiz,
+        private readonly DocumentQuestionRepository $questions,
     ) {
     }
 
@@ -42,6 +47,10 @@ final class AcknowledgementController extends AbstractController
         if (!$this->isCsrfTokenValid('document_'.$document->getId(), (string) $request->request->get('_token'))) {
             throw $this->createAccessDeniedException('Неверный CSRF-токен.');
         }
+        // Если к документу заданы вопросы, сначала проверка знаний.
+        if ($this->quiz->hasQuiz($document) && null !== $this->acknowledgements->findPending($document, $user)) {
+            return $this->redirectToRoute('app_document_acknowledge_quiz', ['id' => $document->getId()]);
+        }
         $acknowledgement = $this->service->confirm($document, $user, $request->getClientIp());
         if (null === $acknowledgement) {
             $this->addFlash('info', 'Ознакомление с этим документом вам не назначено (или уже подтверждено).');
@@ -50,6 +59,97 @@ final class AcknowledgementController extends AbstractController
         }
 
         return $this->redirectToRoute('app_document_show', ['id' => $document->getId()]);
+    }
+
+    /** Проверка знаний перед подтверждением ознакомления. */
+    #[Route('/documents/{id}/acknowledge/quiz', name: 'app_document_acknowledge_quiz', requirements: ['id' => '\d+'], methods: ['GET', 'POST'])]
+    #[IsGranted(PortalVoter::DOCUMENT_VIEW, subject: 'document')]
+    public function quiz(Document $document, Request $request, #[CurrentUser] User $user): Response
+    {
+        $acknowledgement = $this->acknowledgements->findPending($document, $user);
+        if (null === $acknowledgement) {
+            $this->addFlash('info', 'Ознакомление с этим документом вам не назначено (или уже подтверждено).');
+
+            return $this->redirectToRoute('app_document_show', ['id' => $document->getId()]);
+        }
+        $questions = $this->quiz->questions($document);
+        if ([] === $questions) {
+            return $this->redirectToRoute('app_document_show', ['id' => $document->getId()]);
+        }
+        $result = null;
+        if ($request->isMethod('POST')) {
+            if (!$this->isCsrfTokenValid('quiz_'.$document->getId(), (string) $request->request->get('_token'))) {
+                throw $this->createAccessDeniedException('Неверный CSRF-токен.');
+            }
+            $answers = [];
+            foreach ((array) $request->request->all('answers') as $questionId => $value) {
+                $answers[(int) $questionId] = $value;
+            }
+            $result = $this->quiz->check($document, $answers);
+            if ($result['passed']) {
+                $acknowledgement->addQuizAttempt();
+                $confirmed = $this->service->confirm($document, $user, $request->getClientIp(), $result);
+                $this->addFlash('success', \sprintf('Проверка знаний пройдена (%d из %d). Ознакомление подтверждено: редакция %d, %s.',
+                    $result['correct'], $result['total'], $confirmed?->getVersionNumber() ?? 0, $confirmed?->getConfirmedAt()?->format('d.m.Y H:i') ?? ''));
+
+                return $this->redirectToRoute('app_document_show', ['id' => $document->getId()]);
+            }
+            $this->quiz->recordAttempt($acknowledgement, $result['correct'], $result['total']);
+            $this->addFlash('warning', \sprintf('Верных ответов: %d из %d. Прочитайте документ ещё раз и ответьте на отмеченные вопросы.', $result['correct'], $result['total']));
+        }
+
+        return $this->render('document/acknowledge_quiz.html.twig', [
+            'document' => $document,
+            'questions' => $questions,
+            'acknowledgement' => $acknowledgement,
+            'result' => $result,
+            'answers' => (array) $request->request->all('answers'),
+        ]);
+    }
+
+    /** Вопросы для проверки знаний (модератор раздела). */
+    #[Route('/documents/{id}/questions', name: 'app_document_questions', requirements: ['id' => '\d+'], methods: ['GET', 'POST'])]
+    #[IsGranted(PortalVoter::DOCUMENT_EDIT, subject: 'document')]
+    public function questions(Document $document, Request $request): Response
+    {
+        if ($request->isMethod('POST')) {
+            if (!$this->isCsrfTokenValid('questions_'.$document->getId(), (string) $request->request->get('_token'))) {
+                throw $this->createAccessDeniedException('Неверный CSRF-токен.');
+            }
+            $questionId = (int) $request->request->get('question');
+            $question = $questionId > 0 ? $this->questions->find($questionId) : null;
+            if (null !== $question && $question->getDocument()->getId() !== $document->getId()) {
+                throw $this->createNotFoundException('Вопрос относится к другому документу.');
+            }
+            if ('delete' === $request->request->get('action')) {
+                if (null !== $question) {
+                    $this->quiz->delete($question);
+                    $this->addFlash('success', 'Вопрос удалён.');
+                }
+
+                return $this->redirectToRoute('app_document_questions', ['id' => $document->getId()]);
+            }
+            try {
+                $this->quiz->save(
+                    $document,
+                    $question,
+                    (string) $request->request->get('text'),
+                    array_map('strval', (array) $request->request->all('options')),
+                    (int) $request->request->get('correct'),
+                );
+                $this->addFlash('success', null === $question ? 'Вопрос добавлен.' : 'Вопрос изменён.');
+
+                return $this->redirectToRoute('app_document_questions', ['id' => $document->getId()]);
+            } catch (\InvalidArgumentException $e) {
+                $this->addFlash('danger', $e->getMessage());
+            }
+        }
+
+        return $this->render('document/questions.html.twig', [
+            'document' => $document,
+            'questions' => $this->quiz->questions($document),
+            'max_options' => DocumentQuestion::MAX_OPTIONS,
+        ]);
     }
 
     /** Назначение ознакомления (модератор раздела или администратор). */
@@ -150,7 +250,7 @@ final class AcknowledgementController extends AbstractController
             fputcsv($out, ['Обозначение', (string) $document->getCode()], ';', '"', '\\');
             fputcsv($out, ['Редакция (версия)', (string) $report['version']], ';', '"', '\\');
             fputcsv($out, [], ';', '"', '\\');
-            fputcsv($out, ['Сотрудник', 'Подразделение', 'Назначено', 'Срок', 'Ознакомлен', 'IP'], ';', '"', '\\');
+            fputcsv($out, ['Сотрудник', 'Подразделение', 'Назначено', 'Срок', 'Ознакомлен', 'Проверка знаний', 'IP'], ';', '"', '\\');
             foreach ($report['rows'] as $row) {
                 fputcsv($out, [
                     $row->getUser()->getDisplayName(),
@@ -158,6 +258,7 @@ final class AcknowledgementController extends AbstractController
                     $row->getAssignedAt()->format('d.m.Y'),
                     $row->getDueAt()?->format('d.m.Y') ?? '',
                     $row->getConfirmedAt()?->format('d.m.Y H:i') ?? 'не ознакомлен',
+                    $row->hasQuizResult() ? \sprintf('%d из %d (попыток: %d)', $row->getQuizScore(), $row->getQuizTotal(), $row->getQuizAttempts()) : '',
                     (string) $row->getConfirmedIp(),
                 ], ';', '"', '\\');
             }

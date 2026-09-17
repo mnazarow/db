@@ -1,0 +1,73 @@
+{% extends 'base.html.twig' %}
+{% import '_macros.html.twig' as m %}
+
+{% block title %}Отправить на согласование — {{ document.title }}{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        <div class="eyebrow">Согласование · редакция {{ version }}</div>
+        <div class="hero__row">
+            <h1 class="h-display">{{ document.title }}</h1>
+            <div class="hero__actions">
+                <a class="btn btn--ghost" href="{{ path('app_document_show', {id: document.id}) }}">← К документу</a>
+            </div>
+        </div>
+    </div>
+</section>
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+    <div class="grid grid--two">
+        <div class="card card--form">
+            <h2 class="h-section">Кому отправить</h2>
+            <p>Согласующий получит письмо и увидит документ в разделе «Мне на согласование». Решение относится
+                к <b>редакции {{ version }}</b>: после загрузки новой версии согласование запрашивается заново.</p>
+            <form method="post" class="form">
+                <input type="hidden" name="_token" value="{{ csrf_token('approval_' ~ document.id) }}">
+                <div class="form-row">
+                    <label class="form-label" for="approver">Согласующий</label>
+                    <select class="form-control" id="approver" name="approver" required>
+                        <option value="">— выберите сотрудника —</option>
+                        {% for department, users in by_department %}
+                            <optgroup label="{{ department }}">
+                                {% for u in users %}<option value="{{ u.id }}">{{ u.displayName }}</option>{% endfor %}
+                            </optgroup>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="note">Комментарий</label>
+                    <textarea class="form-control" id="note" name="note" rows="3" maxlength="2000" placeholder="Что именно изменилось и на что обратить внимание"></textarea>
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="btn btn--pill">Отправить на согласование</button>
+                    <a class="btn btn--ghost" href="{{ path('app_document_show', {id: document.id}) }}">Отмена</a>
+                </div>
+            </form>
+        </div>
+        <div class="card table-card">
+            <div class="card__head card__head--padded"><h2 class="h-section">История согласований</h2></div>
+            {% if history|length > 0 %}
+                <div class="table-scroll">
+                    <table class="admin-table">
+                        <thead><tr><th>Редакция</th><th>Согласующий</th><th>Решение</th><th>Дата</th><th>Комментарий</th></tr></thead>
+                        <tbody>
+                        {% for a in history %}
+                            <tr>
+                                <td>v{{ a.versionNumber }}</td>
+                                <td>{{ a.approver.displayName }}<div class="hints">запросил {{ a.requestedBy ? a.requestedBy.displayName : '—' }}</div></td>
+                                <td>{{ m.approval_badge(a) }}</td>
+                                <td class="col-nowrap">{{ (a.decidedAt ?: a.requestedAt)|date('d.m.Y H:i') }}</td>
+                                <td class="col-comment">{{ a.decisionNote ?: a.requestNote ?: '—' }}</td>
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <p class="card__padded text-muted">Документ ещё не отправляли на согласование.</p>
+            {% endif %}
+        </div>
+    </div>
+</section>
+{% endblock %}

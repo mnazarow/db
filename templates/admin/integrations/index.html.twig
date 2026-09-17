@@ -6,6 +6,8 @@
     <a class="btn btn--ghost" href="#api-keys">Ключи API</a>
     <a class="btn btn--ghost" href="#webhook">Webhook</a>
     <a class="btn btn--ghost" href="#llm">Описания через LLM</a>
+    <a class="btn btn--ghost" href="#discussion">Обсуждение</a>
+    <a class="btn btn--ghost" href="#telegram">Telegram</a>
 {% endblock %}
 
 {% block admin_body %}
@@ -117,6 +119,86 @@
         <p><b>Первичная загрузка.</b> Пройдите <code>GET /documents?per_page=200&amp;page=1…N</code>, для каждого документа возьмите <code>text</code> из карточки или <code>/documents/{id}/text</code>, разбейте на фрагменты и сохраните эмбеддинги вместе с <code>id</code>, <code>version.number</code>, <code>section.full_name</code>, <code>links.web</code>.</p>
         <p><b>Обновления.</b> Периодически (или по webhook) вызывайте <code>GET /changes?since=&lt;next_since прошлого раза&gt;</code>: документы из <code>changed</code> переиндексируйте, из <code>removed</code> и <code>deleted</code> — удалите из индекса. Если в ответе <code>truncated: true</code>, повторите запрос с меньшим окном.</p>
         <p>Webhook отправляется один раз без повторов (тайм-аут 10 с); при недоставке достаточно регулярного опроса <code>/changes</code>.</p>
+    </div>
+</div>
+
+<div class="grid grid--two" id="discussion">
+    <div class="card card--form">
+        <div class="card__head"><h2 class="h-section">Обсуждение и подписки</h2></div>
+        <p>Обсуждение — вопросы сотрудников прямо в карточке документа; их видят все, кому открыт документ. Подписка — уведомления о новых редакциях, публикации и сообщениях: по почте и, если настроен бот, в Telegram.</p>
+        <form method="post" action="{{ path('admin_integrations_discussion') }}" class="form">
+            <input type="hidden" name="_token" value="{{ csrf_token('integrations') }}">
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="comments" value="1" {{ comments_enabled ? 'checked' }}><span>Разрешить обсуждение документов</span></label>
+            </div>
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="subscriptions" value="1" {{ subscriptions_enabled ? 'checked' }}><span>Разрешить подписку на изменения документов и разделов</span></label>
+            </div>
+            <div class="form-actions"><button type="submit" class="btn btn--pill btn--small">Сохранить</button></div>
+        </form>
+    </div>
+    <div class="card card--info">
+        <h2 class="h-section">Что уже отслеживают</h2>
+        <dl class="meta meta--stack">
+            <div><dt>Подписок на документы</dt><dd>{{ subscription_summary.documents }}</dd></div>
+            <div><dt>Подписок на разделы</dt><dd>{{ subscription_summary.sections }}</dd></div>
+            <div><dt>Сотрудников с подписками</dt><dd>{{ subscription_summary.users }}</dd></div>
+        </dl>
+        <p class="hints">Уведомления не раскрывают документы с ограниченным доступом: перед отправкой портал проверяет право каждого получателя видеть документ.</p>
+    </div>
+</div>
+
+<div class="grid grid--two" id="telegram">
+    <div class="card card--form">
+        <div class="card__head"><h2 class="h-section">Уведомления в Telegram</h2>
+            {% if telegram.enabled and telegram.token %}<span class="badge badge--done"><span class="badge__dot"></span>Включены</span>{% else %}<span class="badge badge--none"><span class="badge__dot"></span>Выключены</span>{% endif %}</div>
+        <p>Создайте бота у @BotFather, вставьте сюда его токен и включите уведомления. Портал только отправляет запросы наружу и сам забирает сообщения (getUpdates) — открывать порт под webhook не нужно. В закрытом контуре укажите адрес внутреннего Bot API Server вместо {{ telegram.default_api }}.</p>
+        <form method="post" action="{{ path('admin_integrations_telegram') }}" class="form">
+            <input type="hidden" name="_token" value="{{ csrf_token('integrations') }}">
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="enabled" value="1" {{ telegram.enabled ? 'checked' }}><span>Отправлять уведомления в Telegram</span></label>
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="telegram-token">Токен бота</label>
+                <input class="form-control" id="telegram-token" name="token" type="password" autocomplete="new-password" placeholder="{{ telegram.token ? 'сохранён (' ~ telegram.token_masked ~ ') — введите новый, чтобы заменить' : '123456789:AA…' }}">
+                {% if telegram.token %}<div class="form-help"><label class="form-check form-check--inline"><input type="checkbox" name="clear_token" value="1"><span>удалить токен</span></label></div>{% endif %}
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="telegram-bot">Имя бота</label>
+                <input class="form-control" id="telegram-bot" name="bot_name" type="text" placeholder="docportal_bot" value="{{ telegram.bot_name }}">
+                <div class="form-help">Нужно для ссылки «Открыть чат с ботом» в профиле сотрудника; заполняется само при проверке связи.</div>
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="telegram-api">Адрес Bot API</label>
+                <input class="form-control" id="telegram-api" name="api_url" type="url" placeholder="{{ telegram.default_api }}" value="{{ telegram.api_url != telegram.default_api ? telegram.api_url : '' }}">
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="telegram-chat">Чат для проверки и служебных сообщений</label>
+                <input class="form-control" id="telegram-chat" name="admin_chat" type="text" placeholder="-1001234567890" value="{{ telegram.admin_chat }}">
+            </div>
+            <div class="form-actions"><button type="submit" class="btn btn--pill btn--small">Сохранить</button></div>
+        </form>
+        {% if telegram.token %}
+            <div class="form-actions">
+                <form method="post" action="{{ path('admin_integrations_telegram_test') }}" class="inline-form">
+                    <input type="hidden" name="_token" value="{{ csrf_token('integrations') }}">
+                    <button type="submit" class="btn btn--ghost btn--small">Проверить связь</button>
+                </form>
+                <form method="post" action="{{ path('admin_integrations_telegram_poll') }}" class="inline-form">
+                    <input type="hidden" name="_token" value="{{ csrf_token('integrations') }}">
+                    <button type="submit" class="btn btn--ghost btn--small">Разобрать сообщения бота</button>
+                </form>
+            </div>
+        {% endif %}
+    </div>
+    <div class="card card--info">
+        <h2 class="h-section">Как это работает у сотрудника</h2>
+        <p>Сотрудник открывает «Профиль → Подписки и уведомления», получает одноразовый код и отправляет его боту. Портал привязывает чат к учётной записи; команда <code>/stop</code> в чате отключает уведомления.</p>
+        <p>Сообщения бота разбирает команда <code>docportal telegram</code> (<code>php bin/console app:telegram:poll</code>) — поставьте её в cron раз в минуту. Кнопка «Разобрать сообщения бота» делает то же самое вручную.</p>
+        <dl class="meta meta--stack">
+            <div><dt>Привязанных чатов</dt><dd>{{ telegram.linked }}</dd></div>
+            <div><dt>Адрес Bot API</dt><dd>{{ telegram.api_url }}</dd></div>
+        </dl>
     </div>
 </div>
 

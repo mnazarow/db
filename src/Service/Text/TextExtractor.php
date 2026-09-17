@@ -43,6 +43,7 @@ final class TextExtractor
         private readonly LoggerInterface $logger,
         private readonly string $cacheDir,
         private readonly string $pdftotextBin = 'pdftotext',
+        private readonly ?OcrReader $ocr = null,
     ) {
     }
 
@@ -51,7 +52,15 @@ final class TextExtractor
     {
         $ext = strtolower(ltrim($extension, '.'));
 
-        return \in_array($ext, self::PLAIN, true) || \in_array($ext, self::HTML, true) || \in_array($ext, self::OFFICE, true) || ('pdf' === $ext && $this->hasPdftotext());
+        return \in_array($ext, self::PLAIN, true) || \in_array($ext, self::HTML, true) || \in_array($ext, self::OFFICE, true)
+            || ('pdf' === $ext && $this->hasPdftotext())
+            || (\in_array($ext, OcrReader::IMAGE_EXTENSIONS, true) && $this->ocrEnabled());
+    }
+
+    /** Включено ли распознавание сканов (картинки и PDF без текстового слоя). */
+    public function ocrEnabled(): bool
+    {
+        return null !== $this->ocr && $this->ocr->isEnabled();
     }
 
     /** @return list<string> расширения, из которых портал умеет извлекать текст */
@@ -60,6 +69,9 @@ final class TextExtractor
         $list = array_merge(self::PLAIN, self::HTML, self::OFFICE);
         if ($this->hasPdftotext()) {
             $list[] = 'pdf';
+        }
+        if ($this->ocrEnabled()) {
+            $list = array_merge($list, OcrReader::IMAGE_EXTENSIONS);
         }
         sort($list);
 
@@ -131,7 +143,8 @@ final class TextExtractor
         $text = match (true) {
             \in_array($ext, self::PLAIN, true) => self::toUtf8(self::readHead($path)),
             \in_array($ext, self::HTML, true) => self::htmlToText(self::toUtf8(self::readHead($path))),
-            'pdf' === $ext => $this->pdfToText($path),
+            'pdf' === $ext => $this->pdfToTextWithOcr($path),
+            \in_array($ext, OcrReader::IMAGE_EXTENSIONS, true) && $this->ocrEnabled() => (string) $this->ocr?->readImage($path),
             'docx' === $ext => $this->docxToText($path),
             'xlsx' === $ext => $this->xlsxToText($path),
             'pptx' === $ext => $this->pptxToText($path),
@@ -221,10 +234,28 @@ final class TextExtractor
         if (0 !== $code && '' === trim($text)) {
             throw new \RuntimeException(\sprintf('pdftotext завершился с кодом %d.', $code));
         }
-        // Убираем разрывы страниц и «лесенку» пробелов режима -layout.
-        $text = str_replace("\f", "\n\n", $text);
+        return $text;
+    }
 
-        return preg_replace('/[ ]{2,}/', ' ', $text) ?? $text;
+    /**
+     * Текст PDF: сначала текстовый слой (pdftotext), и, если его практически нет (скан)
+     * и распознавание включено, — OCR по страницам.
+     */
+    private function pdfToTextWithOcr(string $path): string
+    {
+        $raw = $this->pdfToText($path);
+        // Разрывы страниц (\f) считаем до замены — по ним оцениваем, скан это или нет.
+        $pages = substr_count($raw, "\f") + 1;
+        $text = str_replace("\f", "\n\n", $raw);
+        $text = preg_replace('/[ ]{2,}/', ' ', $text) ?? $text;
+        if (null !== $this->ocr && $this->ocr->isEnabled() && $this->ocr->looksLikeScan($text, $pages)) {
+            $recognized = trim($this->ocr->readPdf($path));
+            if ('' !== $recognized) {
+                return $recognized;
+            }
+        }
+
+        return $text;
     }
 
     private function docxToText(string $path): string

@@ -7,6 +7,7 @@ namespace App\Repository;
 use App\Entity\Document;
 use App\Entity\Section;
 use App\Entity\User;
+use App\Security\Viewer;
 use App\Service\Text\SearchQuery;
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
 use Doctrine\DBAL\ArrayParameterType;
@@ -40,13 +41,14 @@ final class DocumentRepository extends ServiceEntityRepository
      *
      * @return list<Document>
      */
-    public function findBySection(Section $section, array $statuses, string $sort = 'title', bool $publicOnly = false): array
+    public function findBySection(Section $section, array $statuses, string $sort = 'title', bool $publicOnly = false, ?Viewer $viewer = null): array
     {
         $qb = $this->baseQb()->andWhere('d.section = :s')->setParameter('s', $section)
             ->andWhere('d.status IN (:st)')->setParameter('st', $statuses);
         if ($publicOnly) {
             $qb->andWhere('d.isPublic = true');
         }
+        $this->applyRestrictions($qb, $viewer);
         $this->applySort($qb, $sort);
 
         return $qb->getQuery()->getResult();
@@ -59,19 +61,46 @@ final class DocumentRepository extends ServiceEntityRepository
      *
      * @return list<Document>
      */
-    public function findInSubtree(Section $root, array $statuses, string $sort = 'title', int $limit = 0, bool $publicOnly = false): array
+    public function findInSubtree(Section $root, array $statuses, string $sort = 'title', int $limit = 0, bool $publicOnly = false, ?Viewer $viewer = null): array
     {
         $qb = $this->baseQb()->andWhere('s.path LIKE :path')->setParameter('path', $root->getPath().'%')
             ->andWhere('d.status IN (:st)')->setParameter('st', $statuses);
         if ($publicOnly) {
             $qb->andWhere('d.isPublic = true');
         }
+        $this->applyRestrictions($qb, $viewer);
         $this->applySort($qb, $sort);
         if ($limit > 0) {
             $qb->setMaxResults($limit);
         }
 
         return $qb->getQuery()->getResult();
+    }
+
+    /**
+     * Убирает из выборки документы с ограниченным доступом, недоступные этому пользователю.
+     * $viewer === null — контекст не задан (консоль, панель администратора): фильтр не применяется.
+     */
+    private function applyRestrictions(QueryBuilder $qb, ?Viewer $viewer, string $alias = 'd'): void
+    {
+        if (null === $viewer || $viewer->unrestricted) {
+            return;
+        }
+        $conditions = [$alias.'.restricted = false'];
+        if (null !== $viewer->user) {
+            $conditions[] = ':viewer_user MEMBER OF '.$alias.'.allowedUsers';
+            $qb->setParameter('viewer_user', $viewer->user);
+            $department = trim((string) $viewer->user->getDepartment());
+            if ('' !== $department) {
+                $conditions[] = $alias.'.allowedDepartments LIKE :viewer_dept';
+                $qb->setParameter('viewer_dept', '%'.addcslashes(Document::departmentNeedle($department), '%_').'%');
+            }
+            if ([] !== $viewer->managedSectionIds) {
+                $conditions[] = $alias.'.section IN (:viewer_sections)';
+                $qb->setParameter('viewer_sections', $viewer->managedSectionIds);
+            }
+        }
+        $qb->andWhere('('.implode(' OR ', $conditions).')');
     }
 
     private function applySort(QueryBuilder $qb, string $sort): void
@@ -86,12 +115,13 @@ final class DocumentRepository extends ServiceEntityRepository
     }
 
     /** @return list<Document> недавно обновлённые опубликованные документы (для гостей — только открытые) */
-    public function findRecentPublished(int $limit = 10, bool $publicOnly = false): array
+    public function findRecentPublished(int $limit = 10, bool $publicOnly = false, ?Viewer $viewer = null): array
     {
         $qb = $this->baseQb()->andWhere('d.status = :st')->setParameter('st', Document::STATUS_PUBLISHED);
         if ($publicOnly) {
             $qb->andWhere('d.isPublic = true');
         }
+        $this->applyRestrictions($qb, $viewer);
 
         return $qb->orderBy('d.updatedAt', 'DESC')->setMaxResults($limit)->getQuery()->getResult();
     }
@@ -126,10 +156,10 @@ final class DocumentRepository extends ServiceEntityRepository
         return $qb->getQuery()->getResult();
     }
 
-    /** @return list<Document> черновики в указанных разделах (для блока «требуют внимания») */
+    /** @return list<Document> черновики и документы на согласовании в разделах (для блока «требуют внимания») */
     public function findDrafts(?array $sectionIds = null, int $limit = 10): array
     {
-        $qb = $this->baseQb()->andWhere('d.status = :st')->setParameter('st', Document::STATUS_DRAFT)->orderBy('d.updatedAt', 'DESC');
+        $qb = $this->baseQb()->andWhere('d.status IN (:st)')->setParameter('st', [Document::STATUS_DRAFT, Document::STATUS_REVIEW])->orderBy('d.updatedAt', 'DESC');
         if (null !== $sectionIds) {
             if ([] === $sectionIds) {
                 return [];
@@ -147,7 +177,7 @@ final class DocumentRepository extends ServiceEntityRepository
      *
      * @return list<Document>
      */
-    public function search(string $query, array $statuses, ?Section $section = null, int $limit = 100, bool $publicOnly = false): array
+    public function search(string $query, array $statuses, ?Section $section = null, int $limit = 100, bool $publicOnly = false, ?Viewer $viewer = null): array
     {
         $terms = array_values(array_filter(preg_split('/\s+/u', mb_strtolower(trim($query))) ?: [], static fn ($t) => mb_strlen($t) >= 2));
         if ([] === $terms) {
@@ -164,6 +194,7 @@ final class DocumentRepository extends ServiceEntityRepository
         if (null !== $section) {
             $qb->andWhere('s.path LIKE :path')->setParameter('path', $section->getPath().'%');
         }
+        $this->applyRestrictions($qb, $viewer);
 
         return $qb->orderBy('d.updatedAt', 'DESC')->setMaxResults($limit)->getQuery()->getResult();
     }
@@ -218,12 +249,13 @@ final class DocumentRepository extends ServiceEntityRepository
     }
 
     /** @return array<string, int> число документов по статусам (для гостей — только открытых) */
-    public function countByStatus(?array $sectionIds = null, bool $publicOnly = false): array
+    public function countByStatus(?array $sectionIds = null, bool $publicOnly = false, ?Viewer $viewer = null): array
     {
         $qb = $this->createQueryBuilder('d')->select('d.status AS st, COUNT(d.id) AS cnt')->groupBy('d.status');
         if ($publicOnly) {
             $qb->andWhere('d.isPublic = true');
         }
+        $this->applyRestrictions($qb, $viewer);
         if (null !== $sectionIds) {
             if ([] === $sectionIds) {
                 return array_fill_keys(Document::STATUSES, 0);
@@ -314,12 +346,13 @@ final class DocumentRepository extends ServiceEntityRepository
      *
      * @return array<int, array<string, int>> section_id => [status => count]
      */
-    public function countPerSection(bool $publicOnly = false): array
+    public function countPerSection(bool $publicOnly = false, ?Viewer $viewer = null): array
     {
         $qb = $this->createQueryBuilder('d')->select('IDENTITY(d.section) AS sid, d.status AS st, COUNT(d.id) AS cnt')->groupBy('sid', 'st');
         if ($publicOnly) {
             $qb->andWhere('d.isPublic = true');
         }
+        $this->applyRestrictions($qb, $viewer);
         $rows = $qb->getQuery()->getArrayResult();
         $out = [];
         foreach ($rows as $row) {
@@ -337,7 +370,7 @@ final class DocumentRepository extends ServiceEntityRepository
      *
      * @return list<array{document: Document, score: float, text: ?string}>
      */
-    public function searchContent(SearchQuery $query, array $statuses, ?Section $section = null, int $limit = 30, bool $publicOnly = false): array
+    public function searchContent(SearchQuery $query, array $statuses, ?Section $section = null, int $limit = 30, bool $publicOnly = false, ?Viewer $viewer = null): array
     {
         $boolean = $query->booleanMode();
         if ('' === $boolean || [] === $statuses) {
@@ -356,6 +389,24 @@ final class DocumentRepository extends ServiceEntityRepository
         if (null !== $section) {
             $sql .= ' AND s.path LIKE :path';
             $params['path'] = $section->getPath().'%';
+        }
+        if (null !== $viewer && !$viewer->unrestricted) {
+            $conditions = ['d.restricted = 0'];
+            if (null !== $viewer->user) {
+                $conditions[] = 'EXISTS (SELECT 1 FROM document_allowed_user au WHERE au.document_id = d.id AND au.user_id = :viewer_id)';
+                $params['viewer_id'] = (int) $viewer->user->getId();
+                $department = trim((string) $viewer->user->getDepartment());
+                if ('' !== $department) {
+                    $conditions[] = 'd.allowed_departments LIKE :viewer_dept';
+                    $params['viewer_dept'] = '%'.addcslashes(Document::departmentNeedle($department), '%_').'%';
+                }
+                if ([] !== $viewer->managedSectionIds) {
+                    $conditions[] = 'd.section_id IN (:viewer_sections)';
+                    $params['viewer_sections'] = $viewer->managedSectionIds;
+                    $types['viewer_sections'] = ArrayParameterType::INTEGER;
+                }
+            }
+            $sql .= ' AND ('.implode(' OR ', $conditions).')';
         }
         $sql .= ' ORDER BY score DESC LIMIT '.max(1, $limit);
         try {
@@ -415,7 +466,8 @@ final class DocumentRepository extends ServiceEntityRepository
     {
         $visibleStatuses = $includeArchived ? [Document::STATUS_PUBLISHED, Document::STATUS_ARCHIVED] : [Document::STATUS_PUBLISHED];
         $qb = $this->baseQb()->andWhere('d.updatedAt > :since')->setParameter('since', $since);
-        $hidden = 'd.status NOT IN (:visible)';
+        // Ограничение доступа приравнивается к «документ стал невидимым»: внешняя система уберёт его из индекса.
+        $hidden = '(d.status NOT IN (:visible) OR d.restricted = true)';
         $qb->setParameter('visible', $visibleStatuses);
         if ($publicOnly) {
             $hidden = '('.$hidden.' OR d.isPublic = false)';
@@ -427,7 +479,10 @@ final class DocumentRepository extends ServiceEntityRepository
     /** @param array{statuses: list<string>, public_only: bool, section?: ?Section, subtree?: bool, type?: ?string, updated_since?: ?\DateTimeImmutable, tag?: ?string, q?: ?string} $filters */
     private function apiQb(array $filters): QueryBuilder
     {
-        $qb = $this->baseQb()->andWhere('d.status IN (:st)')->setParameter('st', $filters['statuses']);
+        // Документы с ограниченным доступом через API не отдаются: их список получателей задан
+        // сотрудниками и подразделениями, а у ключа API такого соответствия нет.
+        $qb = $this->baseQb()->andWhere('d.restricted = false')
+            ->andWhere('d.status IN (:st)')->setParameter('st', $filters['statuses']);
         if ($filters['public_only']) {
             $qb->andWhere('d.isPublic = true');
         }

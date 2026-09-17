@@ -288,3 +288,99 @@
         return (v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)) + ' ' + units[i];
     }
 })();
+
+// Поля ограниченного доступа показываем только при включённом флажке.
+(function () {
+    var box = document.querySelector('[data-restricted-fields]');
+    if (!box) { return; }
+    var checkbox = document.querySelector('#document_restricted');
+    if (!checkbox) { return; }
+    var sync = function () { box.hidden = !checkbox.checked; };
+    checkbox.addEventListener('change', sync);
+    sync();
+})();
+
+// Обсуждение документа: ответ на реплику и правка своего сообщения без перезагрузки страницы.
+(function () {
+    var form = document.getElementById('comment-form');
+    var body = document.getElementById('comment-body');
+    var parent = document.getElementById('comment-parent');
+    var replyTo = document.getElementById('comment-reply-to');
+
+    function resetReply() {
+        if (!parent || !replyTo) { return; }
+        parent.value = '';
+        replyTo.hidden = true;
+    }
+
+    document.addEventListener('click', function (event) {
+        var reply = event.target.closest('[data-reply-to]');
+        if (reply && form && parent && replyTo && body) {
+            parent.value = reply.getAttribute('data-reply-to');
+            replyTo.hidden = false;
+            replyTo.querySelector('b').textContent = reply.getAttribute('data-reply-name') || '';
+            body.focus();
+            form.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            return;
+        }
+        if (event.target.id === 'comment-reply-cancel') { resetReply(); return; }
+
+        var edit = event.target.closest('[data-edit-comment]');
+        if (edit) {
+            var box = document.getElementById('comment-edit-' + edit.getAttribute('data-edit-comment'));
+            if (box) { box.hidden = false; box.querySelector('textarea').focus(); }
+            return;
+        }
+        var cancel = event.target.closest('[data-edit-cancel]');
+        if (cancel) {
+            var form2 = document.getElementById('comment-edit-' + cancel.getAttribute('data-edit-cancel'));
+            if (form2) { form2.hidden = true; }
+        }
+    });
+})();
+
+// Массовые операции в реестре документов: панель появляется, когда отмечен хотя бы один документ.
+(function () {
+    var bar = document.querySelector('[data-bulk-bar]');
+    var form = document.getElementById('bulk-form');
+    if (!bar || !form) { return; }
+    var action = bar.querySelector('[data-bulk-action]');
+    var counter = bar.querySelector('[data-bulk-count]');
+    var submit = bar.querySelector('[data-bulk-submit]');
+    var all = document.querySelector('[data-bulk-all]');
+
+    function items() { return Array.prototype.slice.call(document.querySelectorAll('[data-bulk-item]')); }
+
+    function syncFields() {
+        var value = action.value;
+        bar.querySelectorAll('[data-bulk-for]').forEach(function (field) {
+            field.classList.toggle('is-shown', field.getAttribute('data-bulk-for') === value);
+        });
+        submit.classList.toggle('btn--danger', value === 'delete');
+    }
+
+    function sync() {
+        var checked = items().filter(function (box) { return box.checked; });
+        counter.textContent = String(checked.length);
+        bar.hidden = checked.length === 0;
+        if (all) { all.checked = checked.length > 0 && checked.length === items().length; }
+    }
+
+    if (all) {
+        all.addEventListener('change', function () {
+            items().forEach(function (box) { box.checked = all.checked; });
+            sync();
+        });
+    }
+    document.addEventListener('change', function (event) {
+        if (event.target.matches('[data-bulk-item]')) { sync(); }
+        if (event.target === action) { syncFields(); }
+    });
+    form.addEventListener('submit', function (event) {
+        if (action.value === 'delete' && !window.confirm(submit.getAttribute('data-confirm-delete'))) {
+            event.preventDefault();
+        }
+    });
+    syncFields();
+    sync();
+})();

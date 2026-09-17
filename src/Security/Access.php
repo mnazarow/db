@@ -7,6 +7,7 @@ namespace App\Security;
 use App\Entity\Document;
 use App\Entity\Section;
 use App\Entity\User;
+use App\Repository\DocumentApprovalRepository;
 use App\Repository\SectionModeratorRepository;
 use App\Repository\SectionRepository;
 
@@ -16,7 +17,8 @@ use App\Repository\SectionRepository;
  * - Администратор может всё.
  * - Модератор раздела управляет разделом, его подразделами и документами в них
  *   (создание/изменение/публикация/удаление документов, создание подразделов).
- * - Обычный пользователь читает опубликованные документы во всех разделах.
+ * - Обычный пользователь читает опубликованные документы во всех разделах; документ, отправленный
+ *   ему на согласование, он читает и до публикации.
  * - Гость (без входа) читает опубликованные открытые документы, если гостевой доступ разрешён
  *   настройками портала (режим и список сетей проверяет GuestAccessSubscriber).
  */
@@ -28,6 +30,7 @@ final class Access
     public function __construct(
         private readonly SectionModeratorRepository $moderators,
         private readonly SectionRepository $sections,
+        private readonly ?DocumentApprovalRepository $approvals = null,
     ) {
     }
 
@@ -82,13 +85,34 @@ final class Access
     public function canViewDocument(?User $user, Document $document): bool
     {
         if (null === $user) {
-            return $document->isPublished() && $document->isPublic();
+            // Гостю ограниченный доступ закрыт всегда: список сотрудников он предъявить не может.
+            return $document->isPublished() && $document->isPublic() && !$document->isRestricted();
+        }
+        if ($document->isRestricted() && !$document->isAllowedFor($user) && !$this->canManageSection($user, $document->getSection())) {
+            return false;
         }
         if ($document->isPublished()) {
             return true;
         }
+        if ($this->canManageSection($user, $document->getSection())) {
+            return true;
+        }
 
-        return $this->canManageSection($user, $document->getSection());
+        // Согласующий должен прочитать документ, который ждёт его решения, даже вне своих разделов.
+        return $document->isOnReview() && null !== $this->approvals && $this->approvals->isPendingApprover($user, $document);
+    }
+
+    /** Контекст просмотра списков: по нему из выборок убираются документы с ограниченным доступом. */
+    public function viewer(?User $user): Viewer
+    {
+        if (null === $user) {
+            return Viewer::guest();
+        }
+        if ($user->isAdmin()) {
+            return new Viewer($user, true);
+        }
+
+        return new Viewer($user, false, $this->managedSectionIds($user) ?? []);
     }
 
     public function canEditDocument(?User $user, Document $document): bool

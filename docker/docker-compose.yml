@@ -39,6 +39,8 @@ services:
       args:
         PHP_IMAGE: ${PHP_IMAGE:-php:8.4-fpm-alpine}
         TZ: ${TZ:-Europe/Moscow}
+        WITH_PREVIEW: ${WITH_PREVIEW:-0}
+        WITH_OCR: ${WITH_OCR:-0}
     image: ${APP_IMAGE:-docportal:latest}
     env_file:
       - .env

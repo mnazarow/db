@@ -1,0 +1,57 @@
+{% extends 'admin/_layout.html.twig' %}
+
+{% block title %}Шаблоны документов{% endblock %}
+{% block admin_title %}Шаблоны документов{% endblock %}
+{% block admin_actions %}
+    <a class="btn btn--pill" href="{{ path('admin_template_new') }}">Новый шаблон</a>
+{% endblock %}
+
+{% block admin_body %}
+<div class="card table-card">
+    <div class="card__head card__head--padded"><h2 class="h-section">Шаблоны <span class="tag">{{ templates|length }}</span></h2></div>
+    {% if templates|length == 0 %}
+        <div class="table-card__empty">Шаблонов пока нет. Шаблон заполняет карточку нового документа: раздел, вид, название, обозначение с автонумерацией, теги и срок актуальности.</div>
+    {% else %}
+        <div class="table-scroll">
+            <table class="admin-table">
+                <thead><tr><th>Название</th><th>Раздел</th><th>Вид</th><th>Следующее обозначение</th><th>Срок</th><th class="col-num">Использован</th><th class="col-actions"></th></tr></thead>
+                <tbody>
+                {% for t in templates %}
+                    <tr class="{{ not t.active ? 'is-muted' }}">
+                        <td>
+                            <a class="doc-table__title" href="{{ path('admin_template_edit', {id: t.id}) }}">{{ t.name }}</a>
+                            {% if not t.active %}<span class="tag">выключен</span>{% endif %}
+                            {% if t.description %}<div class="hints">{{ t.description }}</div>{% endif %}
+                        </td>
+                        <td>{{ t.section ? t.section.fullName : 'любой' }}</td>
+                        <td>{{ t.page ? 'страница' : 'файл' }}</td>
+                        <td class="col-nowrap">{{ previews[t.id] ?: '—' }}{% if t.codePattern %}<div class="hints">{{ t.codePattern }}</div>{% endif %}</td>
+                        <td class="col-nowrap">{{ t.validityMonths ? t.validityMonths ~ ' мес.' : '—' }}</td>
+                        <td class="col-num">{{ t.usageCount }}</td>
+                        <td class="col-actions">
+                            <div class="actions">
+                                <a class="btn btn--ghost btn--small" href="{{ path('app_document_new', {template: t.id}) }}">Создать документ</a>
+                                <a class="btn btn--ghost btn--small" href="{{ path('admin_template_edit', {id: t.id}) }}">Изменить</a>
+                                <form method="post" action="{{ path('admin_template_delete', {id: t.id}) }}" class="inline-form" data-confirm="Удалить шаблон «{{ t.name }}»? Созданные по нему документы останутся.">
+                                    <input type="hidden" name="_token" value="{{ csrf_token('templates') }}">
+                                    <button type="submit" class="btn btn--ghost btn--small btn--danger">Удалить</button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% endif %}
+</div>
+
+<div class="card card--info">
+    <h2 class="h-section">Автонумерация обозначений</h2>
+    <p>В образце обозначения можно использовать подстановки — портал подставит их при создании документа и увеличит счётчик. Счётчик ведётся по годам: в январе нумерация начинается заново.</p>
+    <dl class="meta meta--stack">
+        {% for code, hint in placeholders %}<div><dt>{{ code }}</dt><dd>{{ hint }}</dd></div>{% endfor %}
+    </dl>
+    <p class="hints">Например, образец <code>ПР-{ГОД}-{NNN}</code> даст ПР-2026-001, ПР-2026-002 и так далее. Если обозначение окажется занято, портал возьмёт следующий свободный номер.</p>
+</div>
+{% endblock %}

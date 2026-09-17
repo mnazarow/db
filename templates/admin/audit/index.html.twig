@@ -1,0 +1,66 @@
+{% extends 'admin/_layout.html.twig' %}
+
+{% block title %}Журнал аудита{% endblock %}
+{% block admin_title %}Журнал аудита{% endblock %}
+
+{% block admin_body %}
+<div class="grid grid--stats">
+    <div class="card"><div class="stat__label">Записей</div><div class="stat__value">{{ summary.total }}</div><div class="stat__hint">всего в журнале</div></div>
+    <div class="card"><div class="stat__label">Предупреждений</div><div class="stat__value {{ summary.warnings > 0 ? 'text-warning' }}">{{ summary.warnings }}</div><div class="stat__hint">неудачные входы, отказы в доступе</div></div>
+    <div class="card"><div class="stat__label">Последняя запись</div><div class="stat__value stat__value--small">{{ summary.last ? summary.last|date('d.m.Y H:i') : '—' }}</div><div class="stat__hint">по часам сервера</div></div>
+    <div class="card"><div class="stat__label">Выгрузка в SIEM</div><div class="stat__value stat__value--small"><a href="{{ path('admin_audit_export', filters|merge({format: 'cef'})) }}">CEF</a> · <a href="{{ path('admin_audit_export', filters|merge({format: 'jsonl'})) }}">JSON</a></div><div class="stat__hint">или команда <code>app:audit:export</code></div></div>
+</div>
+
+<div class="card table-card">
+    <div class="card__head card__head--padded">
+        <h2 class="h-section">События <span class="tag">{{ total }}</span></h2>
+        <a class="btn btn--ghost btn--small" href="{{ path('admin_audit_csv', filters) }}">Выгрузить CSV</a>
+    </div>
+    <form method="get" class="toolbar__row card__padded">
+        <label class="search">
+            <input class="search__input" type="search" name="q" value="{{ filters.q|default('') }}" placeholder="Действие или подробности…">
+        </label>
+        <select class="form-control form-control--inline" name="level" aria-label="Уровень">
+            <option value="">Любой уровень</option>
+            {% for value, label in levels %}<option value="{{ value }}" {{ filters.level|default('') == value ? 'selected' }}>{{ label }}</option>{% endfor %}
+        </select>
+        <select class="form-control form-control--inline" name="actor" aria-label="Сотрудник">
+            <option value="">Все сотрудники</option>
+            {% for name in actors %}<option value="{{ name }}" {{ filters.actor|default('') == name ? 'selected' }}>{{ name }}</option>{% endfor %}
+        </select>
+        <input class="form-control form-control--inline form-control--date" type="date" name="from" value="{{ filters.from|default('') }}" aria-label="С даты">
+        <input class="form-control form-control--inline form-control--date" type="date" name="to" value="{{ filters.to|default('') }}" aria-label="По дату">
+        <button class="btn btn--pill btn--small" type="submit">Показать</button>
+        <a class="btn btn--ghost btn--small" href="{{ path('admin_audit') }}">Сбросить</a>
+    </form>
+    <div class="table-scroll">
+        <table class="admin-table">
+            <thead><tr><th>Дата и время</th><th>Уровень</th><th>Действие</th><th>Сотрудник</th><th>Адрес</th><th>Подробности</th></tr></thead>
+            <tbody>
+            {% for event in events %}
+                <tr class="{{ event.level != 'info' ? 'is-expired' }}">
+                    <td class="col-nowrap">{{ event.occurredAt|date('d.m.Y H:i:s') }}</td>
+                    <td class="col-nowrap">{{ event.levelLabel }}</td>
+                    <td>{{ event.action }}</td>
+                    <td class="col-nowrap">{{ event.actorName ?: '—' }}</td>
+                    <td class="col-nowrap">{{ event.ip ?: '—' }}</td>
+                    <td class="col-comment">{{ event.detailsLine ?: '—' }}</td>
+                </tr>
+            {% else %}
+                <tr><td colspan="6" class="text-muted">Записей нет.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% if pages > 1 %}
+        <div class="pager card__padded">
+            {% if page > 1 %}<a class="btn btn--ghost btn--small" href="{{ path('admin_audit', filters|merge({page: page - 1})) }}">← Предыдущие</a>{% endif %}
+            <span class="text-muted">Страница {{ page }} из {{ pages }}</span>
+            {% if page < pages %}<a class="btn btn--ghost btn--small" href="{{ path('admin_audit', filters|merge({page: page + 1})) }}">Следующие →</a>{% endif %}
+        </div>
+    {% endif %}
+</div>
+<p class="form-help">В журнал попадают входы и выходы, неудачные попытки входа и ввода кода второго фактора, изменения настроек,
+    прав и учётных записей, создание и удаление документов и ключей API, согласования и ознакомления. Те же записи пишутся в файл
+    <code>var/log/audit.log</code>. Срок хранения в базе настраивается командой <code>app:audit:purge</code>.</p>
+{% endblock %}

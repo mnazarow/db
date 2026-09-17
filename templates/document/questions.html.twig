@@ -1,0 +1,89 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}Проверка знаний — {{ document.title }}{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        <div class="eyebrow">Проверка знаний</div>
+        <div class="hero__row">
+            <h1 class="h-display">{{ document.title }}</h1>
+            <div class="hero__actions">
+                <a class="btn btn--ghost" href="{{ path('app_document_show', {id: document.id}) }}">← К документу</a>
+                <a class="btn btn--ghost" href="{{ path('app_document_acknowledgements', {id: document.id}) }}">Ознакомление</a>
+            </div>
+        </div>
+    </div>
+</section>
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+    <p class="form-help">Если к документу заданы вопросы, сотрудник отвечает на них после нажатия «Ознакомлен»: ознакомление
+        подтверждается, только когда все ответы верны. Результат и число попыток видны в отчёте по ознакомлению.
+        Чтобы отключить проверку, удалите все вопросы.</p>
+
+    <div class="card table-card">
+        <div class="card__head card__head--padded"><h2 class="h-section">Вопросы <span class="tag">{{ questions|length }}</span></h2></div>
+        {% if questions|length > 0 %}
+            <ul class="quiz-list">
+                {% for q in questions %}
+                    <li class="quiz-list__item">
+                        <form method="post" class="form">
+                            <input type="hidden" name="_token" value="{{ csrf_token('questions_' ~ document.id) }}">
+                            <input type="hidden" name="question" value="{{ q.id }}">
+                            <div class="form-row">
+                                <label class="form-label" for="text-{{ q.id }}">Вопрос {{ loop.index }}</label>
+                                <input class="form-control" id="text-{{ q.id }}" name="text" maxlength="500" value="{{ q.text }}" required>
+                            </div>
+                            <div class="choice-list">
+                                {% for option in q.options %}
+                                    <label class="form-check">
+                                        <input type="radio" name="correct" value="{{ loop.index0 }}" {{ q.correctOption == loop.index0 ? 'checked' }} required>
+                                        <input class="form-control form-control--inline" type="text" name="options[]" maxlength="300" value="{{ option }}">
+                                    </label>
+                                {% endfor %}
+                                {% for i in q.options|length..(max_options - 1) %}
+                                    {% if i >= q.options|length %}
+                                        <label class="form-check">
+                                            <input type="radio" name="correct" value="{{ i }}">
+                                            <input class="form-control form-control--inline" type="text" name="options[]" maxlength="300" placeholder="ещё вариант (необязательно)">
+                                        </label>
+                                    {% endif %}
+                                {% endfor %}
+                            </div>
+                            <div class="form-actions">
+                                <button type="submit" class="btn btn--ghost btn--small">Сохранить</button>
+                                <button type="submit" name="action" value="delete" class="btn btn--ghost btn--small btn--danger" data-confirm="Удалить вопрос?" formnovalidate>Удалить</button>
+                            </div>
+                        </form>
+                    </li>
+                {% endfor %}
+            </ul>
+        {% else %}
+            <p class="card__padded text-muted">Вопросов нет: ознакомление подтверждается одной кнопкой.</p>
+        {% endif %}
+    </div>
+
+    <div class="card card--form">
+        <h2 class="h-section">Новый вопрос</h2>
+        <form method="post" class="form">
+            <input type="hidden" name="_token" value="{{ csrf_token('questions_' ~ document.id) }}">
+            <div class="form-row">
+                <label class="form-label" for="new-text">Вопрос</label>
+                <input class="form-control" id="new-text" name="text" maxlength="500" placeholder="Например: Через сколько дней нужно сообщить о смене адреса?" required>
+            </div>
+            <div class="form-row">
+                <span class="form-label">Варианты ответа (отметьте верный)</span>
+                <div class="choice-list">
+                    {% for i in 0..(max_options - 1) %}
+                        <label class="form-check">
+                            <input type="radio" name="correct" value="{{ i }}" {{ i == 0 ? 'checked' }}>
+                            <input class="form-control form-control--inline" type="text" name="options[]" maxlength="300" placeholder="Вариант {{ i + 1 }}{{ i < 2 ? '' : ' (необязательно)' }}" {{ i < 2 ? 'required' }}>
+                        </label>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="form-actions"><button type="submit" class="btn btn--pill">Добавить вопрос</button></div>
+        </form>
+    </div>
+</section>
+{% endblock %}

@@ -1,7 +1,8 @@
 """
 Сквозная проверка портала через браузер (Playwright) и снятие скриншотов для документации.
-Перед запуском: загрузите демо-данные (php bin/console app:demo:load --force) и запустите сервер
-(./scripts/dev-server.sh). Запуск: python3 tests/e2e_screens.py http://127.0.0.1:8080 docs/images [var/import] [http://127.0.0.1:8090/v1]
+Перед запуском: загрузите демо-данные (php bin/console app:demo:load --force), сбросьте счётчик
+неудачных входов (php bin/console cache:pool:clear --all — иначе повторные прогоны упрутся в
+защиту от подбора пароля) и запустите сервер (./scripts/dev-server.sh). Запуск: python3 tests/e2e_screens.py http://127.0.0.1:8080 docs/images [var/import] [http://127.0.0.1:8090/v1]
 """
 import json
 import pathlib
@@ -177,6 +178,37 @@ with sync_playwright() as p:
     ack_doc_url = page.url.replace(BASE, '')
     r = page.goto(BASE + ack_doc_url + '/acknowledgements'); assert r.status == 403, r.status
     page.goto(BASE + ack_doc_url)
+
+    # обсуждение документа и подписка на изменения
+    page.goto(BASE + '/search?q=ПОЛ-001')
+    page.click('.doc-table__title >> nth=0')
+    pol_url = page.url.replace(BASE, '')
+    expect(page.locator('#discussion')).to_be_visible()
+    page.fill('#comment-body', 'Подскажите, с какой даты применять новую форму заявки?')
+    page.click('#comment-form button[type=submit]')
+    expect(page.locator('.alert--success').first).to_contain_text('Сообщение добавлено')
+    assert page.locator('.comments__item').count() >= 4, 'реплика добавилась к демонстрационному обсуждению'
+    page.locator('#discussion').scroll_into_view_if_needed()
+    page.wait_for_timeout(300)
+    page.screenshot(path=str(OUT / '59-document-comments.png'), full_page=False)
+    print('screenshot 59-document-comments')
+    # в демо-данных часть сотрудников уже подписана — кнопка переключает состояние в обе стороны
+    # (кнопки написаны прописными через CSS, поэтому читаем текст из DOM, а не inner_text)
+    page.click('.card--subscribe button[type=submit]')
+    expect(page.locator('.alert--success').first).to_contain_text('одпис')
+    if 'Подписаться' in (page.locator('.card--subscribe button[type=submit]').text_content() or ''):
+        page.click('.card--subscribe button[type=submit]')
+    assert 'Отписаться' in (page.locator('.card--subscribe button[type=submit]').text_content() or ''), 'сотрудник подписан на документ'
+    page.goto(BASE + '/profile/subscriptions')
+    expect(page.locator('.h-display')).to_contain_text('Подписки')
+    assert page.locator('.admin-table tbody tr').count() >= 1, 'подписка видна в профиле'
+    shot(page, '60-profile-subscriptions')
+
+    # второй фактор: страница настройки с QR-кодом
+    page.goto(BASE + '/profile/2fa')
+    expect(page.locator('.h-display')).to_contain_text('Двухфакторная')
+    assert page.locator('svg, img').count() >= 1
+    shot(page, '52-two-factor')
     logout(page)
 
     # 3. Модератор
@@ -255,10 +287,73 @@ with sync_playwright() as p:
     shot(page, '28-section-new', full=False)
     page.click('.card--form button[type=submit]')
     expect(page.locator('.alert--success').first).to_contain_text('создан')
-    # удаление тестового файла-документа
+    # связи документов: новый документ заменяет прежний, связь видна с обеих сторон
     page.goto(file_doc_url)
-    page.click('form[action$="/delete"] button')
-    expect(page.locator('.alert--success').first).to_contain_text('удалён')
+    page.select_option('.doc-links__form select[name=type]', 'replaces')
+    page.fill('.doc-links__form input[name=target]', 'ИТ-РМ-002')
+    page.fill('.doc-links__form input[name=note]', 'Пересмотр 2026 года')
+    page.click('.doc-links__form button[type=submit]')
+    expect(page.locator('.alert--success').first).to_contain_text('Связь добавлена')
+    expect(page.locator('.doc-links__item').first).to_contain_text('заменяет')
+    page.locator('#links').scroll_into_view_if_needed()
+    page.wait_for_timeout(300)
+    page.screenshot(path=str(OUT / '58-document-links.png'), full_page=False)
+    print('screenshot 58-document-links')
+    page.goto(BASE + '/search?q=ИТ-РМ-002')
+    page.click('.doc-table__title >> nth=0')
+    expect(page.locator('.doc-links__item').first).to_contain_text('заменён документом')
+
+    # предпросмотр офисного файла (если на сервере есть LibreOffice)
+    page.goto(BASE + '/search?q=ПОЛ-003')
+    page.click('.doc-table__title >> nth=0')
+    if page.locator('a:has-text("Посмотреть в браузере")').count() > 0:
+        page.click('a:has-text("Посмотреть в браузере")')
+        page.wait_for_timeout(3000)
+        page.screenshot(path=str(OUT / '49-document-preview.png'), full_page=False)
+        print('screenshot 49-document-preview')
+        page.go_back()
+    else:
+        print('предпросмотр офисных файлов недоступен (нет LibreOffice) — шаг пропущен')
+
+    # проверка знаний: вопрос к документу
+    page.goto(BASE + '/search?q=ИТ-РМ-002')
+    page.click('.doc-table__title >> nth=0')
+    quiz_doc_url = page.url.replace(BASE, '')
+    page.goto(BASE + quiz_doc_url + '/questions')
+    expect(page.locator('.eyebrow').first).to_contain_text('Проверка знаний')
+    page.fill('#new-text', 'За сколько рабочих дней выдаётся оборудование по заявке?')
+    options = page.locator('.card--form input[name="options[]"]')
+    options.nth(0).fill('Два рабочих дня')
+    options.nth(1).fill('Две недели')
+    page.locator('.card--form input[name="correct"]').nth(0).check()
+    page.click('.card--form button[type=submit]')
+    expect(page.locator('.alert--success').first).to_be_visible()
+    shot(page, '62-acknowledge-quiz')
+
+    # согласование: отправка черновика согласующему
+    page.goto(BASE + '/documents/new')
+    page.fill('#document_title', 'Регламент на согласование')
+    page.select_option('#document_section', label='— — — Почта и телефония')
+    tmp2 = tempfile.NamedTemporaryFile('w', suffix='.txt', delete=False, encoding='utf-8')
+    tmp2.write('Черновик регламента для проверки согласования.\n' * 10); tmp2.close()
+    page.set_input_files('input[type=file]', tmp2.name)
+    page.uncheck('#document_publish')  # согласование запрашивают для черновика
+    page.click('[data-submit]')
+    expect(page.locator('.alert--success').first).to_contain_text('черновик')
+    approval_doc_url = page.url
+    page.click('a:has-text("Отправить на согласование")')
+    expect(page.locator('.eyebrow').first).to_contain_text('огласование')
+    page.select_option('select[name="approver"], #approver', index=1)
+    page.fill('textarea[name="note"]', 'Проверьте, пожалуйста, пункт о сроках.')
+    shot(page, '63-document-approval')
+    page.click('.card--form button[type=submit]')
+    expect(page.locator('.alert--success').first).to_be_visible()
+
+    # удаление тестовых документов
+    for url in (approval_doc_url, file_doc_url):
+        page.goto(url)
+        page.click('.card--actions form[action$="/delete"] button')
+        expect(page.locator('.alert--success').first).to_contain_text('удалён')
     logout(page)
 
     # 4. Администратор
@@ -292,6 +387,47 @@ with sync_playwright() as p:
     shot(page, '36-admin-documents')
     page.goto(BASE + '/admin/documents?validity=expired')
     assert page.locator('.doc-table tbody tr').count() >= 2
+    # массовые операции: панель появляется после отметки документов
+    page.goto(BASE + '/admin/documents?status=archived')
+    boxes = page.locator('[data-bulk-item]')
+    assert boxes.count() >= 1, 'в демо-данных есть документы в архиве'
+    boxes.nth(0).check()
+    expect(page.locator('[data-bulk-bar]')).to_be_visible()
+    expect(page.locator('[data-bulk-count]')).to_have_text('1')
+    page.select_option('[data-bulk-action]', 'tags')
+    expect(page.locator('[data-bulk-for=tags]')).to_be_visible()
+    shot(page, '61-admin-documents-bulk')
+    page.fill('[data-bulk-for=tags] input[name=tags]', 'проверка e2e')
+    page.click('[data-bulk-submit]')
+    expect(page.locator('.alert--success').first).to_contain_text('обработано 1')
+
+    # шаблоны документов с автонумерацией обозначений
+    page.goto(BASE + '/admin/templates')
+    expect(page.locator('.h-display')).to_contain_text('Шаблоны')
+    assert page.locator('.admin-table tbody tr').count() >= 2, 'демо-шаблоны загружены'
+    shot(page, '53-admin-templates')
+    template_href = page.locator('a:has-text("Создать документ")').first.get_attribute('href')
+    page.goto(BASE + template_href)
+    code = page.locator('#document_code').input_value()
+    assert re.match(r'^ПР-\d{4}-\d{3}$', code), code
+    page.goto(BASE + template_href)
+    assert page.locator('#document_code').input_value() != code, 'номер выдаётся сквозной'
+    print('шаблон: автонумерация', code)
+
+    # согласование, аудит, вход и безопасность
+    page.goto(BASE + '/admin/approvals')
+    expect(page.locator('.h-display')).to_contain_text('Согласование')
+    shot(page, '56-admin-approvals')
+    page.goto(BASE + '/admin/audit')
+    expect(page.locator('.h-display')).to_contain_text('аудит')
+    assert page.locator('.admin-table tbody tr').count() >= 1, 'в журнале аудита есть записи'
+    shot(page, '54-admin-audit')
+    with page.expect_download() as dl:
+        page.click('a:has-text("CSV")')
+    assert dl.value.suggested_filename.startswith('audit-'), dl.value.suggested_filename
+    page.goto(BASE + '/admin/security')
+    expect(page.locator('.h-display')).to_contain_text('безопасност')
+    shot(page, '55-admin-security')
     page.goto(BASE + '/admin/statistics')
     shot(page, '37-admin-statistics')
     page.goto(BASE + '/admin/statistics/validity')
@@ -354,6 +490,12 @@ with sync_playwright() as p:
     api_token = page.locator('#new-token-value').input_value()
     assert api_token.startswith('dp_'), api_token
     shot(page, '45-admin-integrations')
+    # уведомления в Telegram: настройки бота (заглушка Bot API, если она запущена)
+    page.goto(BASE + '/admin/integrations#telegram')
+    page.locator('#telegram').scroll_into_view_if_needed()
+    page.wait_for_timeout(300)
+    page.screenshot(path=str(OUT / '57-admin-telegram.png'), full_page=False)
+    print('screenshot 57-admin-telegram')
     def api(path):
         req = urllib.request.Request(BASE + '/api/v1' + path, headers={'Authorization': 'Bearer ' + api_token})
         with urllib.request.urlopen(req) as resp:

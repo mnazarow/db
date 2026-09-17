@@ -1,0 +1,76 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}Двухфакторная аутентификация{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        <div class="eyebrow">Безопасность</div>
+        <h1 class="h-display">Двухфакторная аутентификация</h1>
+    </div>
+</section>
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+
+    {% if codes|length > 0 %}
+        <div class="card card--token">
+            <h2 class="h-section">Резервные коды</h2>
+            <p>Сохраните их в надёжном месте: каждый код действует один раз и заменяет код из приложения, если телефон недоступен. Больше они не показываются.</p>
+            <pre class="code-block" id="recovery-codes">{% for code in codes %}{{ code }}
+{% endfor %}</pre>
+            <button type="button" class="btn btn--ghost btn--small" data-copy="#recovery-codes">Скопировать</button>
+        </div>
+    {% endif %}
+
+    <div class="grid grid--two">
+        <div class="card card--form">
+            {% if app.user.totpEnabled %}
+                <div class="card__head"><h2 class="h-section">Включена</h2><span class="badge badge--done"><span class="badge__dot"></span>работает</span></div>
+                <p>Второй фактор включён {{ app.user.totpConfirmedAt|date('d.m.Y H:i') }}. При входе портал спрашивает код из приложения.
+                    Резервных кодов осталось: <b>{{ recovery_left }}</b>.</p>
+                <form method="post" class="form">
+                    <input type="hidden" name="_token" value="{{ csrf_token('two_factor_setup') }}">
+                    <div class="form-actions">
+                        <button type="submit" name="action" value="recovery" class="btn btn--ghost btn--small" data-confirm="Создать новые резервные коды? Прежние перестанут действовать.">Новые резервные коды</button>
+                    </div>
+                </form>
+                <form method="post" class="form">
+                    <input type="hidden" name="_token" value="{{ csrf_token('two_factor_setup') }}">
+                    <input type="hidden" name="action" value="disable">
+                    <div class="form-row">
+                        <label class="form-label" for="off-code">Выключить: введите текущий код</label>
+                        <input class="form-control form-control--inline" type="text" id="off-code" name="code" inputmode="numeric" maxlength="6" required>
+                    </div>
+                    <div class="form-actions"><button type="submit" class="btn btn--ghost btn--small btn--danger">Выключить</button></div>
+                </form>
+            {% else %}
+                <h2 class="h-section">Как включить</h2>
+                <ol class="steps">
+                    <li>Установите приложение-аутентификатор на телефон (подойдёт любое: оно работает без интернета).</li>
+                    <li>Отсканируйте QR-код или введите ключ вручную.</li>
+                    <li>Введите шестизначный код из приложения — портал проверит его и включит второй фактор.</li>
+                </ol>
+                <form method="post" class="form">
+                    <input type="hidden" name="_token" value="{{ csrf_token('two_factor_setup') }}">
+                    <div class="form-row">
+                        <label class="form-label" for="code">Код из приложения</label>
+                        <input class="form-control form-control--inline" type="text" id="code" name="code" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" required>
+                    </div>
+                    <div class="form-actions"><button type="submit" class="btn btn--pill">Включить</button></div>
+                </form>
+            {% endif %}
+        </div>
+        {% if not app.user.totpEnabled %}
+            <div class="card">
+                <h2 class="h-section">QR-код</h2>
+                <div class="qr">{{ qr|raw }}</div>
+                <dl class="meta meta--stack">
+                    <div><dt>Ключ вручную</dt><dd><code id="totp-secret">{{ secret_human }}</code></dd></div>
+                    <div><dt>Учётная запись</dt><dd>{{ app.user.username }}</dd></div>
+                </dl>
+                <button type="button" class="btn btn--ghost btn--small" data-copy="#totp-secret">Скопировать ключ</button>
+            </div>
+        {% endif %}
+    </div>
+</section>
+{% endblock %}

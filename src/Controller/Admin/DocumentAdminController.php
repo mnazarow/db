@@ -8,7 +8,10 @@ use App\Entity\Document;
 use App\Repository\DocumentRepository;
 use App\Repository\SectionRepository;
 use App\Repository\UserRepository;
+use App\Entity\User;
+use App\Service\BulkDocumentService;
 use App\Service\Validity;
+use Symfony\Component\Security\Http\Attribute\CurrentUser;
 use App\Twig\AppExtension;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\Request;
@@ -27,6 +30,7 @@ final class DocumentAdminController extends AbstractController
         private readonly SectionRepository $sections,
         private readonly UserRepository $users,
         private readonly Validity $validity,
+        private readonly BulkDocumentService $bulk,
     ) {
     }
 
@@ -41,7 +45,34 @@ final class DocumentAdminController extends AbstractController
             'tree' => $this->sections->findAllTree(),
             'owners' => $this->users->findAllOrdered(),
             'sort' => (string) $request->query->get('sort', 'updated'),
+            'actions' => BulkDocumentService::ACTIONS,
+            'bulk_max' => BulkDocumentService::MAX_DOCUMENTS,
         ]);
+    }
+
+    /** Массовые операции с отмеченными документами. */
+    #[Route('/bulk', name: 'admin_documents_bulk', methods: ['POST'])]
+    public function bulk(Request $request, #[CurrentUser] User $user): Response
+    {
+        if (!$this->isCsrfTokenValid('documents_bulk', (string) $request->request->get('_token'))) {
+            throw $this->createAccessDeniedException('Неверный CSRF-токен.');
+        }
+        $action = (string) $request->request->get('action');
+        $ids = array_map('intval', (array) $request->request->all('ids'));
+        $sectionId = (int) $request->request->get('section');
+        $until = trim((string) $request->request->get('valid_until'));
+        $date = '' !== $until ? \DateTimeImmutable::createFromFormat('!Y-m-d', $until) : false;
+        $result = $this->bulk->run($action, $ids, [
+            'section' => $sectionId > 0 ? $this->sections->find($sectionId) : null,
+            'valid_until' => false !== $date ? $date : null,
+            'tags' => preg_split('/[,;]+/u', (string) $request->request->get('tags')) ?: [],
+            'public' => 'public' === $request->request->get('access'),
+        ], $user, $request->getClientIp());
+
+        $summary = \sprintf('%s: обработано %d из %d.', BulkDocumentService::ACTIONS[$action] ?? 'Операция', $result['done'], \count($ids));
+        $this->addFlash($result['done'] > 0 ? 'success' : 'error', $summary.([] !== $result['messages'] ? ' '.implode(' ', \array_slice($result['messages'], 0, 5)) : ''));
+
+        return $this->redirect($request->headers->get('referer') ?? $this->generateUrl('admin_documents'));
     }
 
     #[Route('/export.csv', name: 'admin_documents_export', methods: ['GET'])]

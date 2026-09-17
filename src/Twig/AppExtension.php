@@ -9,6 +9,7 @@ use App\Entity\DocumentEvent;
 use App\Entity\Section;
 use App\Entity\User;
 use App\Repository\DocumentAcknowledgementRepository;
+use App\Repository\DocumentApprovalRepository;
 use App\Security\Access;
 use App\Service\FileStorage;
 use App\Service\Validity;
@@ -24,6 +25,7 @@ final class AppExtension extends AbstractExtension
 {
     public const STATUS_LABELS = [
         Document::STATUS_DRAFT => 'Черновик',
+        Document::STATUS_REVIEW => 'На согласовании',
         Document::STATUS_PUBLISHED => 'Опубликован',
         Document::STATUS_ARCHIVED => 'В архиве',
     ];
@@ -38,6 +40,7 @@ final class AppExtension extends AbstractExtension
         private readonly Access $access,
         private readonly Security $security,
         private readonly DocumentAcknowledgementRepository $acknowledgements,
+        private readonly DocumentApprovalRepository $approvals,
     ) {
     }
 
@@ -47,6 +50,14 @@ final class AppExtension extends AbstractExtension
         $user = $this->security->getUser();
 
         return $user instanceof User ? $this->acknowledgements->countPendingForUser($user) : 0;
+    }
+
+    /** Сколько документов ждут согласования текущего пользователя (значок в шапке). */
+    public function pendingApprovals(): int
+    {
+        $user = $this->security->getUser();
+
+        return $user instanceof User ? $this->approvals->countPendingForUser($user) : 0;
     }
 
     public function getFilters(): array
@@ -72,6 +83,7 @@ final class AppExtension extends AbstractExtension
             new TwigFunction('is_moderator', [$this, 'isModerator']),
             new TwigFunction('validity_today', fn (): \DateTimeImmutable => $this->validity->today()),
             new TwigFunction('acknowledgements_pending', [$this, 'pendingAcknowledgements']),
+            new TwigFunction('approvals_pending', [$this, 'pendingApprovals']),
         ];
     }
 

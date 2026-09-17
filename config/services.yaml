@@ -29,6 +29,17 @@ parameters:
     # Путь к pdftotext (poppler-utils) для извлечения текста из PDF; по умолчанию ищется в PATH.
     env(PDFTOTEXT_BIN): 'pdftotext'
 
+    # Предпросмотр офисных файлов в браузере: LibreOffice в пакетном режиме переводит файл в PDF.
+    env(SOFFICE_BIN): 'soffice'
+    app.preview_dir: '%env(resolve:PREVIEW_DIR)%'
+    env(PREVIEW_DIR): '%kernel.cache_dir%/doc-preview'
+
+    # Распознавание текста на сканах (tesseract + pdftoppm из poppler-utils).
+    env(TESSERACT_BIN): 'tesseract'
+    env(PDFTOPPM_BIN): 'pdftoppm'
+    app.ocr_languages: '%env(OCR_LANGUAGES)%'
+    env(OCR_LANGUAGES): 'rus+eng'
+
     # Почта.
     app.mail_from: '%env(MAIL_FROM)%'
     app.notify_admins: '%env(bool:NOTIFY_ADMINS)%'
@@ -107,6 +118,12 @@ services:
             $cacheDir: '%kernel.cache_dir%/doc-text'
             $pdftotextBin: '%env(PDFTOTEXT_BIN)%'
 
+    App\Service\Text\OcrReader:
+        arguments:
+            $defaultLanguages: '%app.ocr_languages%'
+            $tesseractBin: '%env(TESSERACT_BIN)%'
+            $pdftoppmBin: '%env(PDFTOPPM_BIN)%'
+
     # Ключ API можно передать и заголовком X-Api-Key (кроме стандартного Authorization: Bearer …).
     app.api_key_header_extractor:
         class: Symfony\Component\Security\Http\AccessToken\HeaderAccessTokenExtractor
@@ -116,6 +133,16 @@ services:
 
     # Внешние HTTP-вызовы (LLM, webhook) идут через curl; в тестах — через записывающую заглушку.
     App\Service\Http\HttpTransportInterface: '@App\Service\Http\CurlTransport'
+
+    App\Service\Audit\AuditExporter:
+        arguments:
+            $appName: '%app.name%'
+            $version: '%app.version%'
+
+    App\Service\Preview\DocumentPreviewer:
+        arguments:
+            $previewDir: '%app.preview_dir%'
+            $sofficeBin: '%env(SOFFICE_BIN)%'
 
     App\Security\Api\ApiExceptionSubscriber:
         arguments:

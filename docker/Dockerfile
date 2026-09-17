@@ -6,6 +6,11 @@ ARG PHP_IMAGE=php:8.4-fpm-alpine
 FROM ${PHP_IMAGE}
 
 ARG TZ=Europe/Moscow
+# Необязательные инструменты: предпросмотр офисных файлов (LibreOffice) и распознавание сканов
+# (tesseract). Увеличивают образ на сотни мегабайт, поэтому по умолчанию выключены:
+#   docker compose build --build-arg WITH_PREVIEW=1 --build-arg WITH_OCR=1
+ARG WITH_PREVIEW=0
+ARG WITH_OCR=0
 
 # Системные библиотеки и расширения PHP, необходимые Symfony, Doctrine и входу через LDAP.
 RUN set -eux; \
@@ -15,6 +20,11 @@ RUN set -eux; \
     docker-php-ext-install -j"$(nproc)" intl zip gd pdo_mysql opcache ldap; \
     apk del .build-deps; \
     cp /usr/share/zoneinfo/${TZ} /etc/localtime && echo "${TZ}" > /etc/timezone
+
+# Предпросмотр офисных файлов и распознавание сканов (по флагам сборки).
+RUN set -eux; \
+    if [ "${WITH_PREVIEW}" = "1" ]; then apk add --no-cache libreoffice ttf-dejavu font-noto; fi; \
+    if [ "${WITH_OCR}" = "1" ]; then apk add --no-cache tesseract-ocr tesseract-ocr-data-rus; fi
 
 # Настройки PHP для боевого режима.
 COPY docker/php/php.ini /usr/local/etc/php/conf.d/90-docportal.ini

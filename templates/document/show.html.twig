@@ -15,6 +15,7 @@
                     <div class="doc-head__badges">
                         {{ m.status_badge(document) }}
                         {% if app.user and not document.public %}{{ m.access_badge(document) }}{% endif %}
+                        {{ m.restricted_badge(document) }}
                         {{ m.validity_badge(document, true) }}
                         {% if document.code %}<span class="badge badge--code">{{ document.code }}</span>{% endif %}
                     </div>
@@ -46,7 +47,9 @@
     {% include '_flashes.html.twig' %}
 
     {% if document.draft %}
-        <div class="alert alert--info">Это черновик: его видят только модераторы раздела и администраторы. {% if can_manage %}Опубликуйте документ, чтобы он стал доступен всем сотрудникам.{% endif %}</div>
+        <div class="alert alert--info">Это черновик: его видят только модераторы раздела и администраторы. {% if can_manage %}{{ approval_required ? 'Отправьте документ на согласование — после согласования его можно опубликовать.' : 'Опубликуйте документ, чтобы он стал доступен всем сотрудникам.' }}{% endif %}</div>
+    {% elseif document.onReview %}
+        <div class="alert alert--warning">Документ на согласовании{% if approval %} у {{ approval.approver.displayName }} (с {{ approval.requestedAt|date('d.m.Y H:i') }}){% endif %}: сотрудникам он пока не виден.</div>
     {% elseif document.archived %}
         <div class="alert alert--warning">Документ в архиве: он снят с публикации и сохранён для истории.</div>
     {% endif %}
@@ -58,6 +61,35 @@
     {% endif %}
     {% if not file_exists %}
         <div class="alert alert--danger">Файл текущей версии не найден в хранилище. Сообщите администратору.</div>
+    {% endif %}
+
+    {% if document.restricted and can_manage %}
+        <div class="alert alert--info">Ограниченный доступ: документ видят
+            {% if document.allowedUsers|length > 0 %}{{ document.allowedUsers|map(u => u.displayName)|join(', ') }}{% endif %}
+            {%- if document.allowedUsers|length > 0 and document.allowedDepartments|length > 0 %}, {% endif -%}
+            {% if document.allowedDepartments|length > 0 %}подразделения: {{ document.allowedDepartments|join(', ') }}{% endif %}
+            {%- if document.allowedUsers|length == 0 and document.allowedDepartments|length == 0 %} только модераторы раздела и администраторы{% endif %} —
+            а также модераторы раздела и администраторы.</div>
+    {% endif %}
+
+    {% if approval and approval.approver.id == app.user.id|default(0) %}
+        <div class="ack-box">
+            <p class="ack-box__title">Требуется ваше согласование</p>
+            <p>Вам отправили на согласование редакцию {{ approval.versionNumber }} этого документа{% if approval.requestedBy %} — {{ approval.requestedBy.displayName }}, {{ approval.requestedAt|date('d.m.Y H:i') }}{% endif %}.
+                {% if approval.requestNote %}<br>Комментарий: «{{ approval.requestNote }}»{% endif %}</p>
+            <form method="post" action="{{ path('app_approval_decide', {id: approval.id}) }}" class="form ack-decide">
+                <input type="hidden" name="_token" value="{{ csrf_token('approval_decide_' ~ approval.id) }}">
+                <input class="form-control form-control--inline" type="text" name="note" maxlength="2000" placeholder="Комментарий (обязателен при отклонении)">
+                <button type="submit" class="btn btn--pill" name="decision" value="approve">Согласовать</button>
+                <button type="submit" class="btn btn--ghost btn--danger" name="decision" value="reject">Отклонить</button>
+            </form>
+        </div>
+    {% elseif approval_decided and can_manage and not document.published %}
+        <div class="ack-box {{ approval_decided.approved ? 'ack-box--done' }}">
+            <p class="ack-box__title">{{ approval_decided.approved ? 'Редакция согласована' : 'Редакция отклонена при согласовании' }}</p>
+            <p>{{ approval_decided.approver.displayName }}, {{ approval_decided.decidedAt|date('d.m.Y H:i') }}{% if approval_decided.decisionNote %}: «{{ approval_decided.decisionNote }}»{% endif %}.
+                {% if approval_decided.approved %}Документ можно публиковать.{% else %}Внесите правки и отправьте документ на согласование заново.{% endif %}</p>
+        </div>
     {% endif %}
 
     {% if acknowledgement %}
@@ -105,6 +137,19 @@
                         <iframe class="preview-frame__iframe" src="{{ path('app_document_download', {id: document.id, inline: 1}) }}" title="Предпросмотр: {{ document.title }}" loading="lazy"></iframe>
                     {% endif %}
                 </div>
+            {% elseif current and previewable and file_exists %}
+                <div class="card card--preview" id="preview">
+                    <div class="card__head">
+                        <h2 class="h-section">Предпросмотр</h2>
+                        <a class="link-action" href="{{ path('app_document_preview', {id: document.id}) }}" target="_blank" rel="noopener">Открыть на весь экран</a>
+                    </div>
+                    {% if preview_ready %}
+                        <iframe class="preview-frame__iframe" src="{{ path('app_document_preview', {id: document.id}) }}" title="Предпросмотр: {{ document.title }}" loading="lazy"></iframe>
+                    {% else %}
+                        <p class="text-muted">Файл {{ current.extension|upper }} можно посмотреть прямо в браузере — портал переведёт его в PDF (первый раз это занимает несколько секунд).</p>
+                        <p><a class="btn btn--pill" href="{{ path('app_document_preview', {id: document.id}) }}" target="_blank" rel="noopener">Посмотреть в браузере</a></p>
+                    {% endif %}
+                </div>
             {% endif %}
 
             <div class="card table-card">
@@ -131,6 +176,7 @@
                                     <div class="actions">
                                         {% if v.file %}
                                             <a class="btn btn--ghost btn--small" href="{{ path('app_document_version_download', {id: document.id, number: v.number}) }}">Скачать</a>
+                                            {% if preview_extensions is defined and v.extension|lower in preview_extensions %}<a class="btn btn--ghost btn--small" href="{{ path('app_document_version_preview', {id: document.id, number: v.number}) }}" target="_blank" rel="noopener">Посмотреть</a>{% endif %}
                                         {% else %}
                                             <a class="btn btn--ghost btn--small" href="{{ path('app_document_version', {id: document.id, number: v.number}) }}">Открыть</a>
                                             {% if not v.current and current %}<a class="btn btn--ghost btn--small" href="{{ path('app_document_compare', {id: document.id, a: v.number, b: current.number}) }}">Сравнить с текущей</a>{% endif %}
@@ -149,6 +195,12 @@
                     </table>
                 </div>
             </div>
+
+            {{ include('document/_links.html.twig') }}
+
+            {% if comments_enabled %}
+                {{ include('document/_comments.html.twig') }}
+            {% endif %}
         </div>
 
         <aside class="doc-side">
@@ -169,6 +221,24 @@
                 </dl>
             </div>
 
+            {% if app.user and subscriptions_enabled %}
+                <div class="card card--subscribe">
+                    <h2 class="h-section">Уведомления</h2>
+                    {% if subscribed %}
+                        <p class="hints">Вы получаете уведомления об изменениях этого документа и о новых сообщениях в обсуждении.</p>
+                    {% elseif subscribed_section %}
+                        <p class="hints">Вы подписаны на раздел «{{ subscribed_section.fullName }}» — уведомления по этому документу уже приходят.</p>
+                    {% else %}
+                        <p class="hints">Подпишитесь, чтобы получать письмо (и сообщение в Telegram) при выходе новой редакции и при обсуждении.</p>
+                    {% endif %}
+                    <form method="post" action="{{ path('app_document_subscribe', {id: document.id}) }}" class="inline-form">
+                        <input type="hidden" name="_token" value="{{ csrf_token('document_' ~ document.id) }}">
+                        <button type="submit" class="btn btn--block {{ subscribed ? 'btn--ghost' : 'btn--pill' }}">{{ subscribed ? 'Отписаться' : 'Подписаться на изменения' }}</button>
+                    </form>
+                    <p class="hints"><a href="{{ path('app_profile_subscriptions') }}">Мои подписки и каналы уведомлений</a></p>
+                </div>
+            {% endif %}
+
             {% if can_manage %}
                 <div class="card card--actions">
                     <h2 class="h-section">Управление</h2>
@@ -176,8 +246,18 @@
                         {% if not document.published %}
                             <form method="post" action="{{ path('app_document_publish', {id: document.id}) }}" class="inline-form">
                                 <input type="hidden" name="_token" value="{{ csrf_token('document_' ~ document.id) }}">
-                                <button type="submit" class="btn btn--pill btn--block">Опубликовать</button>
+                                <button type="submit" class="btn btn--pill btn--block" {{ can_publish ? '' : 'disabled' }} {{ can_publish ? '' : 'title="Сначала документ нужно согласовать"' }}>Опубликовать</button>
                             </form>
+                            {% if current %}
+                                {% if approval %}
+                                    <form method="post" action="{{ path('app_approval_cancel', {id: approval.id}) }}" class="inline-form" data-confirm="Отозвать запрос согласования?">
+                                        <input type="hidden" name="_token" value="{{ csrf_token('approval_decide_' ~ approval.id) }}">
+                                        <button type="submit" class="btn btn--ghost btn--block">Отозвать согласование</button>
+                                    </form>
+                                {% else %}
+                                    <a class="btn btn--ghost btn--block" href="{{ path('app_document_approval_request', {id: document.id}) }}">Отправить на согласование</a>
+                                {% endif %}
+                            {% endif %}
                         {% else %}
                             <form method="post" action="{{ path('app_document_unpublish', {id: document.id}) }}" class="inline-form" data-confirm="Снять документ с публикации? Он станет черновиком и пропадёт из списков для сотрудников.">
                                 <input type="hidden" name="_token" value="{{ csrf_token('document_' ~ document.id) }}">
@@ -198,6 +278,7 @@
                         {% endif %}
                         {% if document.published and current %}
                             <a class="btn btn--ghost btn--block" href="{{ path(acknowledgement_summary and acknowledgement_summary.assigned > 0 ? 'app_document_acknowledgements' : 'app_document_acknowledge_assign', {id: document.id}) }}">Ознакомление{% if acknowledgement_summary and acknowledgement_summary.assigned > 0 %} ({{ acknowledgement_summary.confirmed }}/{{ acknowledgement_summary.assigned }}){% endif %}</a>
+                            <a class="btn btn--ghost btn--block" href="{{ path('app_document_questions', {id: document.id}) }}">Проверка знаний{% if question_count > 0 %} ({{ question_count }}){% endif %}</a>
                         {% endif %}
                         <a class="btn btn--ghost btn--block" href="{{ path('app_document_stats', {id: document.id}) }}">Статистика документа</a>
                         <form method="post" action="{{ path('app_document_delete', {id: document.id}) }}" class="inline-form" data-confirm="Удалить документ «{{ document.title }}» со всеми {{ versions|length }} версиями? Действие необратимо.">

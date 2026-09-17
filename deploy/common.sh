@@ -494,6 +494,39 @@ EOF
         chmod 644 "${cron_file}"
         info "В cron добавлено задание индексации содержимого (app:search:reindex)."
     fi
+    if ! grep -q 'app:telegram:poll' "${cron_file}"; then
+        cat >> "${cron_file}" <<EOF
+#  - каждую минуту — разбор сообщений бота Telegram (привязка чатов сотрудников; без включённых уведомлений ничего не делает).
+* * * * * root /usr/local/bin/${APP_ID} console app:telegram:poll --no-interaction >> ${LOG_DIR}/telegram-cron.log 2>&1
+EOF
+        chmod 644 "${cron_file}"
+        info "В cron добавлено задание разбора сообщений Telegram (app:telegram:poll)."
+    fi
+}
+
+# --- Необязательные инструменты: предпросмотр офисных файлов и распознавание сканов -----------
+# LibreOffice весит сотни мегабайт, tesseract нужен не всем — поэтому ставятся по отдельному запросу
+# (--with-preview / --with-ocr при установке либо вручную, команда показана в панели администратора).
+install_preview_tools() {
+    case "${OS_FAMILY:-}" in
+        debian)
+            pkg_install_optional libreoffice-nogui && return 0
+            pkg_install_optional libreoffice-writer libreoffice-calc libreoffice-impress && return 0
+            ;;
+        rhel)
+            pkg_install_optional libreoffice-headless && return 0
+            pkg_install_optional libreoffice-writer libreoffice-calc libreoffice-impress && return 0
+            ;;
+    esac
+    return 1
+}
+
+install_ocr_tools() {
+    case "${OS_FAMILY:-}" in
+        debian) pkg_install_optional tesseract-ocr tesseract-ocr-rus poppler-utils && return 0 ;;
+        rhel)   pkg_install_optional tesseract tesseract-langpack-rus poppler-utils && return 0 ;;
+    esac
+    return 1
 }
 
 install_cli_wrapper() {
@@ -534,13 +567,15 @@ case "\${cmd}" in
         SRC=\$(cd "\${SRC}" && pwd)
         # Пользователь службы должен читать каталог: при необходимости скопируйте его в \${APP_DIR}/shared/import.
         exec runuser -u "\${SERVICE_USER}" -- php "\${APP_DIR}/current/bin/console" app:import:directory "\${SRC}" --root-as-section "\$@" ;;
-    api-key|describe|reindex|acknowledge-remind)
+    api-key|describe|reindex|acknowledge-remind|telegram)
         # api-key — ключи REST API; describe — описания через LLM; reindex — индекс поиска по содержимому;
-        # acknowledge-remind — напоминания сотрудникам о неподтверждённом ознакомлении.
+        # acknowledge-remind — напоминания сотрудникам о неподтверждённом ознакомлении;
+        # telegram — разбор сообщений бота и проверка связи.
         SUB="app:api-key"
         [[ "\${cmd}" == "describe" ]] && SUB="app:documents:describe"
         [[ "\${cmd}" == "reindex" ]] && SUB="app:search:reindex"
         [[ "\${cmd}" == "acknowledge-remind" ]] && SUB="app:documents:acknowledge-remind"
+        [[ "\${cmd}" == "telegram" ]] && SUB="app:telegram:poll"
         if [[ "\${INSTALL_MODE}" == "docker" ]]; then
             cd "\${APP_DIR}/docker" && exec docker compose exec app php bin/console "\${SUB}" "\$@"
         else
@@ -567,6 +602,7 @@ case "\${cmd}" in
   describe            Сформировать описания документов через LLM (параметры: --missing --regenerate --force --limit=N --dry-run)
   reindex             Индекс полнотекстового поиска по содержимому файлов (--all — всё заново, --status — состояние)
   acknowledge-remind  Напоминания о неподтверждённом ознакомлении (--days=N, --dry-run)
+  telegram            Уведомления в Telegram: разбор сообщений бота (--status, --check, --send "текст" --user ЛОГИН)
   logs                Журнал приложения
   uninstall           Удаление портала
 HELP

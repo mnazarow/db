@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace App\Command;
 
 use App\Entity\Document;
+use App\Entity\DocumentComment;
+use App\Entity\DocumentLink;
+use App\Entity\DocumentTemplate;
+use App\Entity\DocumentSubscription;
 use App\Entity\DocumentEvent;
 use App\Entity\Section;
 use App\Entity\User;
@@ -198,6 +202,65 @@ HTML, true, [
             }
             $io->writeln('Назначено ознакомление с инструкцией по охране труда (часть сотрудников уже подтвердила).');
         }
+        // --- Обсуждение и подписки --------------------------------------------------------
+        $discussed = null;
+        foreach ($docs as $doc) {
+            if ('ПОЛ-001' === $doc->getCode()) {
+                $discussed = $doc;
+                break;
+            }
+        }
+        if (null !== $discussed) {
+            $question = new DocumentComment($discussed, 'Подскажите, с какого дня действует новый порядок согласования — с даты утверждения или со следующего месяца?', $smirnov);
+            $this->em->persist($question);
+            $this->em->persist(new DocumentComment($discussed, 'С даты утверждения. Переходных положений нет, старые бланки принимаем только до конца недели.', $ivanov, $question));
+            $this->em->persist(new DocumentComment($discussed, 'Добавили в раздел «Шаблоны и бланки» актуальную форму заявки — пользуйтесь ей.', $kuznetsova));
+            foreach ([$smirnov, $petrova] as $subscriber) {
+                $this->em->persist(new DocumentSubscription($subscriber, $discussed));
+            }
+            $this->em->persist(new DocumentSubscription($smirnov, null, $safety));
+            $this->em->flush();
+            $io->writeln('Добавлено обсуждение документа ПОЛ-001 и подписки сотрудников.');
+        }
+
+        // --- Связи документов и шаблоны ---------------------------------------------------
+        $byCode = [];
+        foreach ($docs as $doc) {
+            if (null !== $doc->getCode()) {
+                $byCode[$doc->getCode()] = $doc;
+            }
+        }
+        if (isset($byCode['ПОЛ-001'], $byCode['ПОЛ-003'])) {
+            $this->em->persist(new DocumentLink($byCode['ПОЛ-001'], $byCode['ПОЛ-003'], DocumentLink::RELATED, $admin, 'Связанные правила внутреннего распорядка'));
+        }
+        if (isset($byCode['ОТ-001'], $byCode['ОТ-002'])) {
+            $this->em->persist(new DocumentLink($byCode['ОТ-002'], $byCode['ОТ-001'], DocumentLink::RELATED, $admin));
+        }
+        if (isset($byCode['ПР-2026-01'], $byCode['ПР-2025-01'])) {
+            $this->em->persist(new DocumentLink($byCode['ПР-2026-01'], $byCode['ПР-2025-01'], DocumentLink::REPLACES, $admin, 'График отпусков на новый год'));
+        }
+        $order = (new DocumentTemplate('Приказ по основной деятельности'))
+            ->setDescription('Для приказов директора: раздел «Приказы», сквозная нумерация по годам.')
+            ->setSection($orders)
+            ->setType(Document::TYPE_FILE)
+            ->setTitlePattern('Приказ от {ДАТА} № ')
+            ->setCodePattern('ПР-{ГОД}-{NNN}')
+            ->setTagsString('приказ')
+            ->setValidityMonths(36)
+            ->setCreatedBy($admin);
+        $regulation = (new DocumentTemplate('Регламент процесса'))
+            ->setDescription('Страница портала с типовой структурой регламента.')
+            ->setType(Document::TYPE_PAGE)
+            ->setTitlePattern('Регламент ')
+            ->setTagsString('регламент')
+            ->setValidityMonths(24)
+            ->setBody('<h2>Назначение</h2><p>Для чего нужен процесс и на кого распространяется.</p><h2>Термины</h2><p>Пояснения к сокращениям.</p><h2>Порядок выполнения</h2><ol><li>Шаг 1.</li><li>Шаг 2.</li></ol><h2>Ответственность</h2><p>Кто за что отвечает.</p>')
+            ->setCreatedBy($admin);
+        $this->em->persist($order);
+        $this->em->persist($regulation);
+        $this->em->flush();
+        $io->writeln('Добавлены связи документов и два шаблона (приказ с автонумерацией, регламент-страница).');
+
         $this->rrmdir($tmp);
 
         // --- История событий -------------------------------------------------------------
@@ -232,6 +295,9 @@ HTML, true, [
             }
         }
         $user->setDepartment($department);
+        // Демо-данные должны быть предсказуемыми: второй фактор, привязка Telegram и каналы
+        // уведомлений сбрасываются, иначе прежние проверки мешают повторному прогону.
+        $user->setTotpSecret(null)->unlinkTelegram()->setNotifyEmail(true)->setNotifyTelegram(true);
         $this->em->flush();
 
         return $user;
@@ -437,7 +503,7 @@ HTML, true, [
         // document_deletion, document_text и document_acknowledgement тоже очищаем: иначе записи остались бы
         // от прежних демо-данных и относились бы к идентификаторам, которые после перезагрузки
         // принадлежат другим документам (TRUNCATE сбрасывает счётчик, и номера выдаются заново).
-        foreach (['document_event', 'document_version', 'document_text', 'document_acknowledgement', 'document', 'document_deletion', 'section_moderator', 'section'] as $table) {
+        foreach (['document_event', 'document_version', 'document_text', 'document_acknowledgement', 'document_approval', 'document_question', 'document_comment', 'document_subscription', 'document_link', 'document', 'document_deletion', 'document_template', 'section_moderator', 'section'] as $table) {
             $this->connection->executeStatement('TRUNCATE TABLE '.$table);
         }
         $this->connection->executeStatement('SET FOREIGN_KEY_CHECKS = 1');

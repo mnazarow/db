@@ -793,3 +793,77 @@ a.chip { text-decoration: none; }
 .ack-chip:hover { background: #0B3568; color: #fff; }
 .ack-chip__count { display: inline-flex; min-width: 22px; height: 22px; align-items: center; justify-content: center; border-radius: 999px; background: #fff; color: var(--blue); font-weight: 700; }
 @media (max-width: 720px) { .ack-chip__text { display: none; } }
+
+/* Согласование: строка решения в карточке и в списке задач. */
+.ack-decide { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; }
+.ack-decide .form-control--inline { flex: 1 1 260px; min-width: 200px; }
+.ack-chip--approval { background: var(--blue-pale); color: var(--blue-dark); }
+
+/* Проверка знаний: вопросы и варианты ответа. */
+.quiz-card .quiz-question { border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; margin: 0 0 14px; }
+.quiz-card .quiz-question.is-wrong { border-color: var(--red); background: #FFF6F7; }
+.quiz-question legend { padding: 0 6px; }
+.quiz-list { list-style: none; margin: 0; padding: 0; }
+.quiz-list__item { border-top: 1px solid var(--border); padding: 18px 22px; }
+.quiz-list__item:first-child { border-top: 0; }
+.quiz-list__item .form-check { align-items: center; gap: 10px; }
+.quiz-list__item .form-check .form-control--inline { flex: 1 1 auto; }
+
+/* Двухфакторная аутентификация: QR-код и резервные коды. */
+.qr { display: flex; justify-content: center; padding: 12px 0 16px; }
+.qr svg { width: 200px; height: 200px; border: 1px solid var(--border); border-radius: 12px; }
+
+/* Разделитель между входом по паролю и кнопкой SSO. */
+.login__divider { display: flex; align-items: center; gap: 12px; margin: 18px 0 14px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+.login__divider::before, .login__divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+/* Поля ограниченного доступа к документу. */
+.restricted-fields[hidden] { display: none; }
+.restricted-fields select[multiple] { min-height: 160px; }
+
+/* Мелкое значение в карточке-показателе (дата, ссылки). */
+.stat__value--small { font-size: 20px; line-height: 1.3; }
+.pager { display: flex; gap: 12px; align-items: center; justify-content: flex-end; }
+
+/* Обсуждение документа */
+.comments { list-style: none; margin: 0 0 16px; padding: 0; }
+.comments__item { padding: 12px 0; border-top: 1px solid var(--border-light); }
+.comments__item:first-child { border-top: 0; }
+.comments__item--reply { margin-left: 28px; padding-left: 14px; border-left: 2px solid var(--blue-pale); border-top: 0; }
+.comments__item--deleted { color: var(--muted); }
+.comments__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.comments__author { font-weight: 500; }
+.comments__when { color: var(--muted); font-size: 12px; }
+.comments__body { margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; }
+.comments__body--deleted { font-style: italic; color: var(--muted); }
+.comments__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 6px; }
+.comments__action {
+    background: none; border: 0; padding: 0; cursor: pointer;
+    font: inherit; font-size: 12px; color: var(--blue); text-decoration: underline; text-underline-offset: 2px;
+}
+.comments__action:hover { color: var(--blue-dark); }
+.comments__action--danger { color: var(--red); }
+.comments__form { display: block; margin-top: 12px; }
+.comments__form--edit { margin-top: 8px; }
+.comments__form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 8px; }
+.comments__reply-to { margin: 0 0 8px; font-size: 13px; color: var(--muted); }
+.card--subscribe .btn { margin-top: 8px; }
+
+/* Связи между документами */
+.doc-links { list-style: none; margin: 0 0 12px; padding: 0; }
+.doc-links__item { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border-light); }
+.doc-links__item:first-child { border-top: 0; }
+.doc-links__label { flex: none; min-width: 150px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+.doc-links__title { font-weight: 500; }
+.doc-links__code { color: var(--muted); font-size: 13px; }
+.doc-links__status { font-size: 12px; }
+.doc-links__form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.doc-links__form .form-control--inline { min-width: 180px; }
+
+/* Массовые операции в реестре */
+.bulk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--border-light); background: var(--blue-bg); }
+.bulk-bar[hidden] { display: none; }
+.bulk-bar__count { font-weight: 500; }
+.bulk-bar__field { display: none; }
+.bulk-bar__field.is-shown { display: inline-flex; align-items: center; gap: 6px; }
+.col-check { width: 32px; }
