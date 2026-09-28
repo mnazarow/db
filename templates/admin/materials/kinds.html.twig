@@ -1,0 +1,94 @@
+{% extends 'admin/_layout.html.twig' %}
+
+{% block title %}Типы файлов{% endblock %}
+{% block admin_title %}Типы файлов{% endblock %}
+{% block admin_actions %}
+    <a class="btn btn--ghost" href="{{ path('admin_materials') }}">Сводная по категориям</a>
+{% endblock %}
+
+{% block admin_body %}
+{% set token = csrf_token('materials_admin') %}
+<div class="grid kinds-layout">
+    <div class="card table-card">
+        <div class="card__head card__head--padded">
+            <h2 class="h-section">Справочник</h2>
+            <span class="hints">в этом порядке типы идут в списках и в сводной</span>
+        </div>
+        <div class="table-scroll">
+            <table class="admin-table kinds-table">
+                <thead>
+                    <tr>
+                        <th scope="col">Тип файла</th>
+                        <th scope="col" class="col-num">Документов</th>
+                        <th scope="col" class="col-num">Строк таблиц</th>
+                        <th scope="col" class="col-actions"><span class="visually-hidden">Действия</span></th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for k in kinds %}
+                    {% set docs = documents[k.id]|default(0) %}
+                    {% set used = rows[k.id]|default(0) %}
+                    <tr>
+                        <td>
+                            <form method="post" action="{{ path('admin_material_kinds_rename', {id: k.id}) }}" class="kinds-table__rename">
+                                <input type="hidden" name="_token" value="{{ token }}">
+                                <label class="visually-hidden" for="kind-name-{{ k.id }}">Название типа</label>
+                                <input class="form-control form-control--inline" id="kind-name-{{ k.id }}" name="name" value="{{ k.name }}" maxlength="64" required>
+                                <button type="submit" class="btn btn--ghost btn--small">Сохранить</button>
+                            </form>
+                            {% if k.system %}<div class="hints">Служебный тип: получает документы удалённых типов и документы, тип которых не определён. Удалить нельзя.</div>{% endif %}
+                        </td>
+                        <td class="col-num">{% if docs > 0 %}<a href="{{ path('admin_documents', {kind: k.id}) }}" title="Показать в реестре документов">{{ docs }}</a>{% else %}<span class="text-muted">0</span>{% endif %}</td>
+                        <td class="col-num">{% if used > 0 %}{{ used }}{% else %}<span class="text-muted">0</span>{% endif %}</td>
+                        <td class="col-actions">
+                            <div class="kinds-table__actions">
+                                <form method="post" action="{{ path('admin_material_kinds_move', {id: k.id}) }}" class="inline-form">
+                                    <input type="hidden" name="_token" value="{{ token }}">
+                                    <input type="hidden" name="direction" value="-1">
+                                    <button type="submit" class="btn btn--ghost btn--small kinds-table__move" title="Выше" aria-label="Переместить «{{ k.name }}» выше" {{ loop.first ? 'disabled' }}>↑</button>
+                                </form>
+                                <form method="post" action="{{ path('admin_material_kinds_move', {id: k.id}) }}" class="inline-form">
+                                    <input type="hidden" name="_token" value="{{ token }}">
+                                    <input type="hidden" name="direction" value="1">
+                                    <button type="submit" class="btn btn--ghost btn--small kinds-table__move" title="Ниже" aria-label="Переместить «{{ k.name }}» ниже" {{ loop.last ? 'disabled' }}>↓</button>
+                                </form>
+                                {% if not k.system %}
+                                    <details class="kinds-table__delete">
+                                        <summary class="btn btn--danger btn--small">Удалить</summary>
+                                        <form method="post" action="{{ path('admin_material_kinds_delete', {id: k.id}) }}" class="kinds-table__delete-form" data-confirm="Удалить тип «{{ k.name }}»?{{ docs + used > 0 ? ' Документы и строки таблиц получат выбранный тип.' : '' }}">
+                                            <input type="hidden" name="_token" value="{{ token }}">
+                                            {% if docs + used > 0 %}
+                                                <label class="form-label" for="kind-replacement-{{ k.id }}">Документам ({{ docs }}) и строкам ({{ used }}) назначить</label>
+                                                <select class="form-control form-control--inline" id="kind-replacement-{{ k.id }}" name="replacement">
+                                                    {% for other in kinds %}{% if other.id != k.id %}<option value="{{ other.id }}" {{ other.system ? 'selected' }}>{{ other.name }}</option>{% endif %}{% endfor %}
+                                                </select>
+                                            {% endif %}
+                                            <button type="submit" class="btn btn--danger btn--small">Удалить тип</button>
+                                        </form>
+                                    </details>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <form method="post" action="{{ path('admin_material_kinds_add') }}" class="kinds-add">
+            <input type="hidden" name="_token" value="{{ token }}">
+            <label class="form-label" for="kind-new">Новый тип</label>
+            <div class="kinds-add__row">
+                <input class="form-control" id="kind-new" name="name" maxlength="64" required placeholder="Например: Сертификаты">
+                <button type="submit" class="btn btn--pill btn--small">Добавить тип</button>
+            </div>
+        </form>
+    </div>
+
+    <div class="card card--info">
+        <h2 class="h-section">Как используются типы</h2>
+        <p>Тип есть у каждого документа портала и у каждой строки таблицы материалов. Он показывается в карточке документа и в списках, по нему фильтруется реестр, а в сводной по категориям по типам считается блок «Несоответствие / Отсутствие по типу».</p>
+        <p>Если при загрузке тип не выбран, он определяется по файлу и названию: изображения (JPG, PNG, HEIC…) — «Фотографии»; «опросный лист», «ТКП», «коммерческое предложение» — «Опросные листы и ТКП»; «паспорт», «руководство», «инструкция по монтажу» — «Паспорта и руководства»; «каталог», «брошюра», «буклет», «листовка», «альбом» — «Каталоги и брошюры»; «презентация» — «Презентации» (если такой тип есть); остальное — «Прочее». Тип всегда можно поменять в карточке документа или в реестре (массово).</p>
+        <p>При переименовании тип меняется везде сразу. При удалении документы и строки таблиц получают выбранный тип; «Прочее» удалить нельзя. Новые типы также появляются сами при импорте из Excel, если в столбце «Тип» встретилось новое значение.</p>
+    </div>
+</div>
+{% endblock %}

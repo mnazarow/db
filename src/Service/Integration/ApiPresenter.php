@@ -63,6 +63,7 @@ final class ApiPresenter
             'description' => $document->getDescription(),
             'description_source' => $document->getDescriptionSource(),
             'type' => $document->getType(),
+            'kind' => $document->getKind()?->getName(),
             'status' => $document->getStatus(),
             'is_public' => $document->isPublic(),
             'tags' => $document->getTags(),

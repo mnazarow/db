@@ -65,6 +65,10 @@ class Section
     #[ORM\Column(options: ['default' => 0])]
     private int $depth = 0;
 
+    /** Включена таблица материалов (только для разделов верхнего уровня). */
+    #[ORM\Column(name: 'materials_enabled', options: ['default' => false])]
+    private bool $materialsEnabled = false;
+
     #[ORM\Column(type: Types::DATETIME_IMMUTABLE)]
     private \DateTimeImmutable $createdAt;
 
@@ -90,6 +94,24 @@ class Section
         $this->moderators = new ArrayCollection();
         $this->createdAt = new \DateTimeImmutable();
         $this->updatedAt = $this->createdAt;
+    }
+
+    public function isMaterialsEnabled(): bool
+    {
+        return $this->materialsEnabled;
+    }
+
+    public function setMaterialsEnabled(bool $materialsEnabled): static
+    {
+        $this->materialsEnabled = $materialsEnabled;
+
+        return $this;
+    }
+
+    /** Раздел верхнего уровня (без родителя) — только у таких бывает таблица материалов. */
+    public function isTopLevel(): bool
+    {
+        return null === $this->parent;
     }
 
     #[ORM\PreUpdate]

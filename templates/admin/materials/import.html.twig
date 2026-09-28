@@ -1,0 +1,48 @@
+{% extends 'admin/_layout.html.twig' %}
+
+{% block title %}Импорт таблиц материалов из Excel{% endblock %}
+{% block admin_title %}Импорт из Excel{% endblock %}
+{% block admin_actions %}
+    <a class="btn btn--ghost" href="{{ path('admin_materials') }}">Сводная по категориям</a>
+{% endblock %}
+
+{% block admin_body %}
+<div class="grid grid--two">
+    <div class="card card--form">
+        <form method="post" action="{{ path('admin_materials_import_upload') }}" enctype="multipart/form-data" class="form">
+            <input type="hidden" name="_token" value="{{ csrf_token('materials_admin') }}">
+
+            <div class="form-row">
+                <label class="form-label" for="materials-file">Книга Excel</label>
+                <input class="form-control" type="file" id="materials-file" name="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
+                <div class="form-help">Файл .xlsx до {{ max_mb }} МБ — например, «Продуктовые материалы.xlsx». Сначала будет показан план: что создастся и изменится; до подтверждения ничего не сохраняется.</div>
+            </div>
+
+            <div class="form-row form-row--check">
+                <label class="form-check" for="materials-delete-missing">
+                    <input type="checkbox" id="materials-delete-missing" name="delete_missing" value="1">
+                    <span>Удалить строки, которых нет в файле</span>
+                </label>
+                <div class="form-help">Без флажка строки, которых нет в книге, остаются в конце таблиц. Документы, загруженные к удалённым строкам, остаются в разделах.</div>
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" class="btn btn--pill">Проверить и показать план</button>
+                <a class="btn btn--ghost" href="{{ path('admin_materials') }}">Отмена</a>
+            </div>
+        </form>
+    </div>
+
+    <div class="card card--info">
+        <h2 class="h-section">Как устроен импорт</h2>
+        <ul class="bullets">
+            <li>Каждый лист с шапкой «Материал | Тип | Состояние | …» становится разделом верхнего уровня с тем же названием (существующий раздел используется повторно) и его таблицей материалов.</li>
+            <li>Столбцы «Версия», «Дата обнов.», «Требования PM», «Дизайн-требования», «Ссылка», «Комментарий» сопоставляются со столбцами таблицы по названию. Другие столбцы добавляются как новые: со списком значений, если в Excel у столбца есть выпадающий список, как даты или ссылки — по содержимому.</li>
+            <li>«Тип» приводится к справочнику: «Опросные листы» → «Опросные листы и ТКП», «Паспорта и руководство» → «Паспорта и руководства»; новые значения, например «Презентации», добавляются в справочник типов.</li>
+            <li>«Состояние» не переносится — портал считает его по той же формуле, что и Excel. Сводный лист и скрытые листы пропускаются.</li>
+            <li>Повторный импорт обновляет таблицы: строки сопоставляются по названию материала, файлы, загруженные к строкам, сохраняются.</li>
+        </ul>
+        <p class="hints">Большие книги удобнее загружать на сервере: <code>docportal console app:materials:import ФАЙЛ.xlsx --dry-run</code>, затем без <code>--dry-run</code>.</p>
+    </div>
+</div>
+{% endblock %}

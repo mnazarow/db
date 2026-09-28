@@ -10,6 +10,7 @@ use App\Repository\SectionRepository;
 use App\Repository\UserRepository;
 use App\Entity\User;
 use App\Service\BulkDocumentService;
+use App\Service\DocumentKindService;
 use App\Service\Validity;
 use Symfony\Component\Security\Http\Attribute\CurrentUser;
 use App\Twig\AppExtension;
@@ -31,6 +32,7 @@ final class DocumentAdminController extends AbstractController
         private readonly UserRepository $users,
         private readonly Validity $validity,
         private readonly BulkDocumentService $bulk,
+        private readonly DocumentKindService $kinds,
     ) {
     }
 
@@ -46,6 +48,7 @@ final class DocumentAdminController extends AbstractController
             'owners' => $this->users->findAllOrdered(),
             'sort' => (string) $request->query->get('sort', 'updated'),
             'actions' => BulkDocumentService::ACTIONS,
+            'kinds' => $this->kinds->all(),
             'bulk_max' => BulkDocumentService::MAX_DOCUMENTS,
         ]);
     }
@@ -67,6 +70,7 @@ final class DocumentAdminController extends AbstractController
             'valid_until' => false !== $date ? $date : null,
             'tags' => preg_split('/[,;]+/u', (string) $request->request->get('tags')) ?: [],
             'public' => 'public' === $request->request->get('access'),
+            'kind' => $this->kinds->find((int) $request->request->get('kind')),
         ], $user, $request->getClientIp());
 
         $summary = \sprintf('%s: обработано %d из %d.', BulkDocumentService::ACTIONS[$action] ?? 'Операция', $result['done'], \count($ids));
@@ -82,11 +86,11 @@ final class DocumentAdminController extends AbstractController
         $response = new StreamedResponse(function () use ($documents): void {
             $out = fopen('php://output', 'w');
             fwrite($out, "\xEF\xBB\xBF"); // BOM для Excel
-            fputcsv($out, ['ID', 'Обозначение', 'Название', 'Раздел', 'Вид', 'Статус', 'Доступ', 'Версия', 'Актуален до', 'Состояние', 'Владелец', 'Создан', 'Обновлён', 'Просмотры', 'Скачивания', 'Теги'], ';');
+            fputcsv($out, ['ID', 'Обозначение', 'Название', 'Раздел', 'Вид', 'Тип файла', 'Статус', 'Доступ', 'Версия', 'Актуален до', 'Состояние', 'Владелец', 'Создан', 'Обновлён', 'Просмотры', 'Скачивания', 'Теги'], ';');
             foreach ($documents as $d) {
                 fputcsv($out, [
                     $d->getId(), $d->getCode(), $d->getTitle(), $d->getSection()->getFullName(),
-                    AppExtension::TYPE_LABELS[$d->getType()] ?? $d->getType(), AppExtension::STATUS_LABELS[$d->getStatus()] ?? $d->getStatus(),
+                    AppExtension::TYPE_LABELS[$d->getType()] ?? $d->getType(), $d->getKind()?->getName(), AppExtension::STATUS_LABELS[$d->getStatus()] ?? $d->getStatus(),
                     $d->isPublic() ? 'открытый' : 'внутренний',
                     $d->getCurrentVersion()?->getNumber(), $d->getValidUntil()?->format('d.m.Y'),
                     Validity::LABELS[$this->validity->stateOf($d)], $d->getOwner()?->getDisplayName(),
@@ -113,6 +117,7 @@ final class DocumentAdminController extends AbstractController
             'type' => $request->query->get('type') ?: null,
             'validity' => $request->query->get('validity') ?: null,
             'owner' => $ownerId > 0 ? $this->users->find($ownerId) : null,
+            'kind' => $this->kinds->find((int) $request->query->get('kind')),
             'access' => \in_array($request->query->get('access'), ['public', 'internal'], true) ? $request->query->get('access') : null,
             'q' => $request->query->get('q') ?: null,
         ];

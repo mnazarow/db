@@ -1,0 +1,147 @@
+{% extends 'base.html.twig' %}
+{% import '_macros.html.twig' as m %}
+
+{% block title %}Материалы — {{ section.name }}{% endblock %}
+{% block body_class %}page-materials{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        {{ m.breadcrumbs(section, 'Таблица материалов') }}
+        <div class="hero__row">
+            <div>
+                <div class="eyebrow">Таблица материалов</div>
+                <h1 class="h-display">{{ section.name }}</h1>
+            </div>
+            <div class="hero__actions">
+                {% if enabled %}<a class="btn btn--ghost" href="{{ path('app_section_materials_export', {id: section.id}) }}">Выгрузить в Excel</a>{% endif %}
+                {% if is_granted('ROLE_ADMIN') %}<a class="btn btn--ghost" href="{{ path('admin_materials') }}">Сводная по категориям</a>{% endif %}
+                <a class="btn btn--ghost" href="{{ path('app_section_show', {id: section.id}) }}">Документы раздела</a>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+
+    {% if not enabled %}
+        <div class="card card--info">
+            <h2 class="h-section">Таблица материалов не включена</h2>
+            <p>Таблица — как лист Excel «Продуктовые материалы»: каждая строка — материал (каталог, паспорт, опросный лист…) с типом, состоянием, версией, датой обновления, проверками «Требования PM» и «Дизайн-требования», ссылкой и комментарием. К строке можно сразу загрузить файл — он появится среди документов раздела.</p>
+            <form method="post" action="{{ path('app_section_materials_enable', {id: section.id}) }}" class="inline-form">
+                <input type="hidden" name="_token" value="{{ csrf_token('materials_' ~ section.id) }}">
+                <button type="submit" class="btn btn--pill">Включить таблицу</button>
+            </form>
+            {% if is_granted('ROLE_ADMIN') %}<p class="hints">Или загрузите книгу Excel целиком: <a href="{{ path('admin_materials_import') }}">Панель администратора → Материалы → Импорт из Excel</a>.</p>{% endif %}
+        </div>
+    {% else %}
+        <div class="mt-summary" data-mt-summary>
+            {{ include('materials/_summary_strip.html.twig', {summary: summary}) }}
+        </div>
+
+        <div class="card mt-card">
+            <div class="mt-toolbar">
+                <label class="search search--small">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                    <input class="search__input" type="search" placeholder="Найти материал" data-mt-filter="q" aria-label="Поиск по названию">
+                </label>
+                <select class="form-control form-control--inline" data-mt-filter="kind" aria-label="Фильтр по типу">
+                    <option value="">Все типы</option>
+                    {% for k in kinds %}<option value="{{ k.id }}">{{ k.name }}</option>{% endfor %}
+                    <option value="none">Без типа</option>
+                </select>
+                <select class="form-control form-control--inline" data-mt-filter="state" aria-label="Фильтр по состоянию">
+                    <option value="">Любое состояние</option>
+                    {% for s in states %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+                    <option value="Неизвестно">Неизвестно</option>
+                    <option value="none">Без оценки</option>
+                </select>
+                <span class="mt-toolbar__spacer"></span>
+                <button type="button" class="btn btn--ghost btn--small" data-mt-action="add-column">+ Столбец</button>
+                <button type="button" class="btn btn--pill btn--small" data-mt-action="add-row">+ Строка</button>
+            </div>
+
+            <div class="mt-scroll" data-mt-scroll>
+                <table class="mt" data-mt-table aria-label="Таблица материалов раздела {{ section.name }}">
+                    <thead>
+                        <tr>
+                            <th class="mt__num" scope="col">№</th>
+                            <th class="mt__col mt__col--title" scope="col" data-key="title"><button type="button" class="mt__sort" data-sort="title">Материал</button></th>
+                            <th class="mt__col mt__col--kind" scope="col" data-key="kind"><button type="button" class="mt__sort" data-sort="kind">Тип</button></th>
+                            <th class="mt__col mt__col--state" scope="col" data-key="state"><button type="button" class="mt__sort" data-sort="state">Состояние</button></th>
+                            {% for p in parameters %}
+                                <th class="mt__col mt__col--{{ p.kind }}" scope="col" data-key="{{ p.key }}" {% if p.width %}style="min-width: {{ (p.width * 0.62)|round(1) }}em"{% endif %}>
+                                    <span class="mt__head">
+                                        <button type="button" class="mt__sort" data-sort="{{ p.key }}" title="{{ p.kindLabel }}{{ p.roleHint ? ' — ' ~ p.roleHint }}">{{ p.name }}</button>
+                                        <button type="button" class="mt__menu" data-mt-column="{{ p.id }}" aria-label="Настроить столбец «{{ p.name }}»" title="Настроить столбец">⋮</button>
+                                    </span>
+                                </th>
+                            {% endfor %}
+                            <th class="mt__col mt__col--file" scope="col">Файл</th>
+                            <th class="mt__actions" scope="col"><span class="visually-hidden">Действия</span></th>
+                        </tr>
+                    </thead>
+                    <tbody data-mt-body></tbody>
+                </table>
+            </div>
+            <p class="mt-empty" data-mt-empty hidden>Строк пока нет. Нажмите «+ Строка» или загрузите таблицу из Excel.</p>
+            <p class="hints mt-hint">Щёлкните ячейку и начните печатать (или дважды щёлкните) — правка как в Excel: Enter — сохранить и вниз, Tab — вправо, Esc — отменить, Delete — очистить. Файл можно перетащить прямо на строку: документ получит название и тип из строки.</p>
+            <noscript><p class="alert alert--danger">Для правки таблицы нужен JavaScript.</p></noscript>
+        </div>
+
+        {% if is_granted('ROLE_ADMIN') %}
+            <form method="post" action="{{ path('app_section_materials_disable', {id: section.id}) }}" class="inline-form mt-disable" data-confirm="Скрыть таблицу материалов раздела? Данные сохранятся и вернутся при повторном включении.">
+                <input type="hidden" name="_token" value="{{ csrf_token('materials_' ~ section.id) }}">
+                <button type="submit" class="btn btn--ghost btn--small">Скрыть таблицу материалов</button>
+            </form>
+        {% endif %}
+
+        <input type="file" hidden data-mt-file accept="{{ accept }}">
+
+        <dialog class="mt-dialog" data-mt-dialog aria-labelledby="mt-dialog-title">
+            <form method="dialog" class="form" data-mt-column-form>
+                <h2 class="h-section" id="mt-dialog-title" data-mt-dialog-title>Столбец</h2>
+                <div class="form-row">
+                    <label class="form-label" for="mt-col-name">Название</label>
+                    <input class="form-control" id="mt-col-name" name="name" maxlength="100" required>
+                </div>
+                <div class="form-row" data-mt-kind-row>
+                    <label class="form-label" for="mt-col-kind">Вид значений</label>
+                    <select class="form-control" id="mt-col-kind" name="kind">
+                        {% for value, label in kind_labels %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+                    </select>
+                </div>
+                <div class="form-row" data-mt-options-row>
+                    <label class="form-label" for="mt-col-options">Значения списка — по одному в строке</label>
+                    <textarea class="form-control" id="mt-col-options" name="options" rows="5"></textarea>
+                    <div class="form-help" data-mt-options-hint></div>
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="mt-col-width">Ширина, символов</label>
+                    <input class="form-control" id="mt-col-width" name="width" type="number" min="6" max="80" placeholder="по содержимому">
+                </div>
+                <p class="form-help" data-mt-role-hint></p>
+                <p class="form-error" data-mt-dialog-error hidden></p>
+                <div class="form-actions mt-dialog__actions">
+                    <button type="submit" class="btn btn--pill btn--small" value="save">Сохранить</button>
+                    <button type="button" class="btn btn--ghost btn--small" data-mt-dialog-close>Отмена</button>
+                    <span class="mt-toolbar__spacer"></span>
+                    <button type="button" class="btn btn--ghost btn--small" data-mt-column-move="-1" title="Сдвинуть влево">←</button>
+                    <button type="button" class="btn btn--ghost btn--small" data-mt-column-move="1" title="Сдвинуть вправо">→</button>
+                    <button type="button" class="btn btn--ghost btn--small btn--danger" data-mt-column-delete>Удалить столбец</button>
+                </div>
+            </form>
+        </dialog>
+
+        <div class="mt-toast" data-mt-toast role="status" aria-live="polite" hidden></div>
+
+        <script type="application/json" id="mt-config">{{ config|json_encode(constant('JSON_HEX_TAG') b-or constant('JSON_HEX_AMP') b-or constant('JSON_UNESCAPED_UNICODE'))|raw }}</script>
+        <script type="application/json" id="mt-rows">{{ rows|json_encode(constant('JSON_HEX_TAG') b-or constant('JSON_HEX_AMP') b-or constant('JSON_UNESCAPED_UNICODE'))|raw }}</script>
+    {% endif %}
+</section>
+{% endblock %}
+
+{% block javascripts %}
+    {% if enabled %}<script src="{{ asset('js/materials.js') }}" defer></script>{% endif %}
+{% endblock %}

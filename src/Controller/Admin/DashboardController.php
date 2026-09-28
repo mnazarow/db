@@ -6,6 +6,7 @@ namespace App\Controller\Admin;
 
 use App\Repository\DocumentEventRepository;
 use App\Repository\SectionRepository;
+use App\Service\Material\MaterialSummary;
 use App\Service\StatsService;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\Response;
@@ -15,7 +16,7 @@ use Symfony\Component\Routing\Attribute\Route;
 final class DashboardController extends AbstractController
 {
     #[Route('', name: 'admin_dashboard', methods: ['GET'])]
-    public function index(StatsService $stats, DocumentEventRepository $events, SectionRepository $sections): Response
+    public function index(StatsService $stats, DocumentEventRepository $events, SectionRepository $sections, MaterialSummary $materials): Response
     {
         $overview = $stats->overview();
         $byDay = $stats->activityByDay(30);
@@ -27,6 +28,7 @@ final class DashboardController extends AbstractController
             'expiring' => $stats->expiring(null, 10),
             'recent_events' => $events->findRecent(12),
             'roots' => $sections->findRoots(),
+            'materials' => $materials->overview(),
         ]);
     }
 }

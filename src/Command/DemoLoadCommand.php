@@ -15,7 +15,10 @@ use App\Entity\User;
 use App\Repository\SectionRepository;
 use App\Repository\UserRepository;
 use App\Service\AcknowledgementService;
+use App\Service\DocumentKindService;
 use App\Service\DocumentManager;
+use App\Service\Material\MaterialImporter;
+use App\Service\Material\MaterialService;
 use App\Service\SectionManager;
 use App\Service\UserManager;
 use Doctrine\DBAL\Connection;
@@ -46,6 +49,9 @@ final class DemoLoadCommand extends Command
         private readonly SectionManager $sectionManager,
         private readonly DocumentManager $documentManager,
         private readonly AcknowledgementService $acknowledgements,
+        private readonly MaterialImporter $materialImporter,
+        private readonly MaterialService $materials,
+        private readonly DocumentKindService $kinds,
         private readonly string $projectDir,
     ) {
         parent::__construct();
@@ -54,7 +60,7 @@ final class DemoLoadCommand extends Command
     protected function configure(): void
     {
         $this
-            ->addOption('force', null, InputOption::VALUE_NONE, 'Удалить существующие разделы и документы перед загрузкой')
+            ->addOption('force', null, InputOption::VALUE_NONE, 'Удалить существующие разделы, документы и таблицы материалов перед загрузкой')
             ->addOption('no-events', null, InputOption::VALUE_NONE, 'Не генерировать историю просмотров и скачиваний');
     }
 
@@ -68,8 +74,11 @@ final class DemoLoadCommand extends Command
                 return Command::FAILURE;
             }
             $this->wipe();
-            $io->note('Существующие разделы, документы и события удалены.');
+            $io->note('Существующие разделы, документы, таблицы материалов и события удалены, справочник типов файлов сброшен.');
         }
+
+        // Типы файлов по умолчанию (на случай базы, созданной без миграций).
+        $this->kinds->ensureDefaults();
 
         // --- Пользователи ---------------------------------------------------------------
         $admin = $this->ensureUser('admin', 'Администратор портала', true, 'admin@example.ru', 'ИТ-отдел');
@@ -261,6 +270,10 @@ HTML, true, [
         $this->em->flush();
         $io->writeln('Добавлены связи документов и два шаблона (приказ с автонумерацией, регламент-страница).');
 
+        // --- Таблицы материалов (как «Продуктовые материалы.xlsx») -------------------------
+        $this->demoMaterials($admin, $sidorov, $tmp);
+        $io->writeln('Созданы разделы-категории «Насосные станции» и «Предохранительные клапаны» с таблицами материалов.');
+
         $this->rrmdir($tmp);
 
         // --- История событий -------------------------------------------------------------
@@ -274,12 +287,66 @@ HTML, true, [
             ['admin', 'администратор', self::PASSWORD],
             ['ivanov', 'модератор раздела «Общие документы»', self::PASSWORD],
             ['petrova', 'модератор раздела «ИТ»', self::PASSWORD],
-            ['sidorov', 'модератор раздела «Производство»', self::PASSWORD],
+            ['sidorov', 'модератор разделов «Производство» и «Насосные станции»', self::PASSWORD],
             ['kuznetsova', 'модератор раздела «Кадры»', self::PASSWORD],
             ['smirnov', 'обычный пользователь (только чтение)', self::PASSWORD],
         ]);
 
         return Command::SUCCESS;
+    }
+
+    /**
+     * Две категории продуктовых материалов — так же, как листы книги Excel: материалы с типом,
+     * версией, датой, проверками PM и дизайна; к двум строкам сразу загружены файлы.
+     */
+    private function demoMaterials(User $admin, User $moderator, string $tmp): void
+    {
+        $header = ['Материал', 'Тип', 'Состояние', 'Версия', 'Дата обнов.', 'Требования PM', 'Дизайн-требования', 'Ссылка', 'Комментарий'];
+        $sheet = static fn (string $name, array $rows): array => [
+            'name' => $name,
+            'hidden' => false,
+            'rows' => array_merge([$header], array_map(static fn (array $r): array => array_pad($r, \count($header), ''), $rows)),
+            'lists' => [],
+            'dates' => [4 => true],
+        ];
+        $report = $this->materialImporter->apply([
+            $sheet('Насосные станции', [
+                ['Каталог насосных станций НС', 'Каталоги и брошюры', '', '3.2', '2026-06-10', 'Соответствует', 'Соответствует'],
+                ['Брошюра НС-40 для дилеров', 'Каталоги и брошюры', '', '1.4', '2026-02-01', 'Соответствует', 'Не соответствует', '', 'Обновить фото на обложке'],
+                ['Паспорт насосной станции НС-40', 'Паспорта и руководства', '', '2.0', '2025-11-20', 'Соответствует', 'Соответствует'],
+                ['Руководство по монтажу и эксплуатации НС-40', 'Паспорта и руководство', '', '1.1', '2024-09-05', 'Не соответствует', 'Не соответствует', '', 'Нет раздела о сервисном обслуживании'],
+                ['Опросный лист подбора насосной станции', 'Опросные листы', '', '', '', 'Отсутствует', 'Не выбрано', '', 'Разработать вместе с отделом продаж'],
+                ['Шаблон ТКП на насосную станцию', 'Опросные листы и ТКП', '', '1.0', '2026-04-15', 'Соответствует', 'Соответствует'],
+                ['Презентация линейки НС', 'Презентации', '', '', '', 'Не соответствует', 'Соответствует', '', 'Нет новых моделей 2026 года'],
+                ['Фото НС-40 на объекте', 'Фотографии', '', '', '2026-05-20', 'Соответствует', 'Не соответствует'],
+            ]),
+            $sheet('Предохранительные клапаны', [
+                ['Каталог предохранительных клапанов', 'Каталоги и брошюры', '', '2.1', '2026-03-03', 'Соответствует', 'Соответствует'],
+                ['Паспорт предохранительных клапанов КП', 'Паспорта и руководства', '', '1.3', '2025-12-12', 'Соответствует', 'Не соответствует'],
+                ['Руководство по подбору предохранительного клапана', 'Паспорта и руководства', '', '', '', 'Отсутствует', 'Не выбрано'],
+                ['Опросный лист подбора клапана', 'Опросные листы', '', '1.0', '2025-10-01', 'Соответствует', 'Соответствует'],
+                ['Презентация для монтажных организаций', 'Презентации', '', '0.9', '2026-01-25', 'Не соответствует', 'Соответствует', '', 'Согласовать цены с отделом продаж'],
+                ['Памятка по продажам клапанов', '', '', '', '', '', ''],
+            ]),
+        ], false, $admin);
+
+        foreach ($report['sheets'] as $entry) {
+            $section = $entry['section'];
+            if ('Насосные станции' === $section->getName()) {
+                $this->sectionManager->addModerator($section, $moderator, $admin);
+            }
+            foreach ($this->materials->rows($section) as $row) {
+                $file = match ($row->getTitle()) {
+                    'Каталог насосных станций НС' => $this->pdf($tmp, 'NS-CAT', 'Katalog nasosnykh stantsiy NS'),
+                    'Паспорт насосной станции НС-40' => $this->pdf($tmp, 'NS-40-PS', 'Pasport NS-40'),
+                    'Каталог предохранительных клапанов' => $this->pdf($tmp, 'KP-CAT', 'Katalog predokhranitelnykh klapanov'),
+                    default => null,
+                };
+                if (null !== $file) {
+                    $this->materials->upload($row, $this->upload($file), $admin);
+                }
+            }
+        }
     }
 
     private function ensureUser(string $username, string $name, bool $admin, string $email, string $department): User
@@ -500,10 +567,11 @@ HTML, true, [
     private function wipe(): void
     {
         $this->connection->executeStatement('SET FOREIGN_KEY_CHECKS = 0');
+        // Справочник типов файлов возвращается к стандартному набору (ensureDefaults ниже).
         // document_deletion, document_text и document_acknowledgement тоже очищаем: иначе записи остались бы
         // от прежних демо-данных и относились бы к идентификаторам, которые после перезагрузки
         // принадлежат другим документам (TRUNCATE сбрасывает счётчик, и номера выдаются заново).
-        foreach (['document_event', 'document_version', 'document_text', 'document_acknowledgement', 'document_approval', 'document_question', 'document_comment', 'document_subscription', 'document_link', 'document', 'document_deletion', 'document_template', 'section_moderator', 'section'] as $table) {
+        foreach (['document_event', 'document_version', 'document_text', 'document_acknowledgement', 'document_approval', 'document_question', 'document_comment', 'document_subscription', 'document_link', 'material_row', 'material_parameter', 'document', 'document_kind', 'document_deletion', 'document_template', 'section_moderator', 'section'] as $table) {
             $this->connection->executeStatement('TRUNCATE TABLE '.$table);
         }
         $this->connection->executeStatement('SET FOREIGN_KEY_CHECKS = 1');

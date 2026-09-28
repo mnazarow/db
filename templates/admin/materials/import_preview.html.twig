@@ -1,0 +1,86 @@
+{% extends 'admin/_layout.html.twig' %}
+
+{% block title %}План импорта таблиц материалов{% endblock %}
+{% block admin_title %}План импорта{% endblock %}
+{% block admin_actions %}
+    <a class="btn btn--ghost" href="{{ path('admin_materials_import') }}">Другой файл</a>
+{% endblock %}
+
+{% block admin_body %}
+{% set t = plan.totals %}
+<div class="card">
+    <div class="card__head">
+        <h2 class="h-section">{{ file_name }}</h2>
+        <span class="hints">{{ plan.sheets|length|plural(['лист с таблицей', 'листа с таблицами', 'листов с таблицами']) }}{% if plan.skipped is not empty %}, пропускается {{ plan.skipped|length }}{% endif %}</span>
+    </div>
+    <dl class="meta import-counters">
+        <div><dt>Новых разделов</dt><dd>{{ t.sectionsCreated }}</dd></div>
+        <div><dt>Строк добавится</dt><dd>{{ t.created }}</dd></div>
+        <div><dt>Изменится</dt><dd>{{ t.updated }}</dd></div>
+        <div><dt>Без изменений</dt><dd>{{ t.unchanged }}</dd></div>
+        {% if delete_missing %}<div><dt>Удалится</dt><dd class="{{ t.deleted > 0 ? 'text-danger' }}">{{ t.deleted }}</dd></div>{% endif %}
+        <div><dt>Новых столбцов</dt><dd>{{ t.parametersCreated }}</dd></div>
+    </dl>
+    {% if plan.kindsCreated is not empty %}
+        <div class="alert alert--info">Новые типы файлов будут добавлены в справочник: {{ plan.kindsCreated|map(k => '«' ~ k ~ '»')|join(', ') }}.</div>
+    {% endif %}
+    {% if delete_missing and t.deleted > 0 %}
+        <div class="alert alert--warning">Строки, которых нет в файле, будут удалены ({{ t.deleted }}). Загруженные к ним документы останутся в разделах.</div>
+    {% endif %}
+
+    <form method="post" action="{{ path('admin_materials_import_apply', {token: token}) }}" class="form-actions">
+        <input type="hidden" name="_token" value="{{ csrf_token('materials_admin') }}">
+        <input type="hidden" name="delete_missing" value="{{ delete_missing ? 1 : 0 }}">
+        <button type="submit" class="btn btn--pill" {{ plan.sheets is empty ? 'disabled' }}>Импортировать</button>
+        <a class="btn btn--ghost" href="{{ path('admin_materials_import') }}">Отмена</a>
+    </form>
+</div>
+
+{% if plan.sheets is not empty %}
+<div class="card table-card">
+    <div class="card__head card__head--padded"><h2 class="h-section">По листам</h2></div>
+    <div class="table-scroll">
+        <table class="admin-table plan-table">
+            <thead>
+                <tr>
+                    <th scope="col">Лист → раздел</th>
+                    <th scope="col" class="col-num">Строк</th>
+                    <th scope="col" class="col-num">Добавится</th>
+                    <th scope="col" class="col-num">Изменится</th>
+                    <th scope="col" class="col-num">Без изменений</th>
+                    {% if delete_missing %}<th scope="col" class="col-num">Удалится</th>{% endif %}
+                    <th scope="col">Новые столбцы</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for s in plan.sheets %}
+                <tr>
+                    <td>
+                        {{ s.name }}
+                        <div class="hints">{% if s.sectionCreated %}новый раздел верхнего уровня{% elseif s.section %}раздел уже есть{% if not s.section.materialsEnabled %} — таблица будет включена{% endif %}{% endif %}</div>
+                    </td>
+                    <td class="col-num">{{ s.rows }}</td>
+                    <td class="col-num">{{ s.created }}</td>
+                    <td class="col-num">{{ s.updated }}</td>
+                    <td class="col-num">{{ s.unchanged }}</td>
+                    {% if delete_missing %}<td class="col-num {{ s.deleted > 0 ? 'text-danger' }}">{{ s.deleted }}</td>{% endif %}
+                    <td>{{ s.parametersCreated is empty ? '—' : s.parametersCreated|join(', ') }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+    <div class="alert alert--warning">В книге не найдено листов с таблицей материалов: нужна строка-шапка со столбцами «Материал» и «Тип» в первых пяти строках листа.</div>
+{% endif %}
+
+{% if plan.skipped is not empty %}
+<div class="card">
+    <h2 class="h-section">Пропускаются</h2>
+    <ul class="bullets bullets--small">
+        {% for s in plan.skipped %}<li>«{{ s.name }}» — {{ s.reason }}</li>{% endfor %}
+    </ul>
+</div>
+{% endif %}
+{% endblock %}

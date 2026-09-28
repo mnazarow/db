@@ -209,6 +209,10 @@
                 <dl class="meta meta--stack">
                     <div><dt>Раздел</dt><dd><a href="{{ path('app_section_show', {id: document.section.id}) }}">{{ document.section.fullName }}</a></dd></div>
                     {% if document.code %}<div><dt>Обозначение</dt><dd>{{ document.code }}</dd></div>{% endif %}
+                    <div><dt>Тип файла</dt><dd>{{ document.kind ? document.kind.name : 'не указан' }}</dd></div>
+                    {% for item in material_rows|default([]) %}
+                        <div><dt>Таблица материалов</dt><dd><a href="{{ path('app_section_materials', {id: item.row.section.id}) }}">{{ item.row.section.name }}</a>{% if item.state %} · <span class="state-badge state-badge--{{ item.css }}">{{ item.state }}</span>{% endif %}<div class="hints">строка «{{ item.row.title }}»: название и тип документа берутся из неё</div></dd></div>
+                    {% endfor %}
                     <div><dt>Актуальность</dt><dd>{{ document|validity_text|capitalize }}</dd></div>
                     {% if app.user %}<div><dt>Доступ</dt><dd>{{ document.public ? 'открытый — читается без входа в портал' : 'внутренний — только для сотрудников после входа' }}</dd></div>{% endif %}
                     <div><dt>Создан</dt><dd>{{ document.createdAt|date('d.m.Y') }}{% if document.owner %} · {{ document.owner.displayName }}{% endif %}</dd></div>

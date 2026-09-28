@@ -7,6 +7,7 @@ namespace App\Controller;
 use App\Entity\Document;
 use App\Entity\DocumentComment;
 use App\Entity\DocumentLink;
+use App\Entity\MaterialRow;
 use App\Entity\DocumentVersion;
 use App\Entity\User;
 use App\Form\DocumentType;
@@ -29,6 +30,8 @@ use App\Service\Preview\DocumentPreviewer;
 use App\Service\FileStorage;
 use App\Service\Llm\DocumentDescriber;
 use App\Service\Llm\LlmException;
+use App\Service\Material\MaterialService;
+use App\Service\Material\MaterialState;
 use App\Service\StatsService;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\Form\FormError;
@@ -68,6 +71,7 @@ final class DocumentController extends AbstractController
         private readonly DocumentLinkService $links,
         private readonly DocumentTemplateService $templates,
         private readonly DocumentTemplateRepository $templateRepository,
+        private readonly MaterialService $materials,
         private readonly int $defaultValidityMonths,
     ) {
     }
@@ -213,6 +217,8 @@ final class DocumentController extends AbstractController
             // Связи с другими документами.
             'links' => $this->links->forDocument($document),
             'link_types' => DocumentLink::LABELS,
+            // Строки таблиц материалов, из которых загружен документ.
+            'material_rows' => $canManage ? $this->materialRows($document, $user) : [],
         ]);
     }
 
@@ -230,6 +236,22 @@ final class DocumentController extends AbstractController
         }
 
         return $this->redirectToRoute('app_document_show', ['id' => $document->getId()]);
+    }
+
+    /**
+     * @return list<array{row: MaterialRow, state: string, css: string}>
+     */
+    private function materialRows(Document $document, ?User $user): array
+    {
+        $items = [];
+        foreach ($this->materials->rowsForDocument($document) as $row) {
+            if (null !== $user && $this->access->canManageSection($user, $row->getSection())) {
+                $state = $this->materials->state($row);
+                $items[] = ['row' => $row, 'state' => $state, 'css' => MaterialState::css($state)];
+            }
+        }
+
+        return $items;
     }
 
     /** При включённом автоописании пытается сразу описать новый документ без описания; ошибка не мешает созданию. */
@@ -276,6 +298,8 @@ final class DocumentController extends AbstractController
                         $newVersion = $this->manager->addPageVersion($document, $form->get('content')->getData(), $note, $user, $ip);
                     }
                     $this->manager->updateMetadata($document, $previousSection, $user, $ip);
+                    // Название и тип документа — это название и тип строки таблицы материалов.
+                    $this->materials->syncFromDocument($document);
                     $this->addFlash('success', null !== $newVersion ? \sprintf('Сохранена версия %d.', $newVersion->getNumber()) : 'Карточка документа сохранена.');
 
                     return $this->redirectToRoute('app_document_show', ['id' => $document->getId()]);

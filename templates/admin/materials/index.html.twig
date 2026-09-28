@@ -1,0 +1,169 @@
+{% extends 'admin/_layout.html.twig' %}
+
+{% block title %}Сводная по категориям{% endblock %}
+{% block admin_title %}Сводная по категориям{% endblock %}
+{% block admin_actions %}
+    <a class="btn btn--ghost" href="{{ path('admin_material_kinds') }}">Типы файлов</a>
+    <a class="btn btn--ghost" href="{{ path('admin_materials_import') }}">Импорт из Excel</a>
+    {% if overview.categories is not empty %}<a class="btn btn--pill" href="{{ path('admin_materials_export') }}">Выгрузить в Excel</a>{% endif %}
+{% endblock %}
+
+{% block admin_body %}
+{% import 'materials/_macros.html.twig' as mt %}
+{% set cats = overview.categories %}
+{% set totals = overview.totals %}
+{% set kinds = overview.kinds %}
+{% set unknown = totals.states['Неизвестно']|default(0) %}
+
+{% if cats is empty %}
+    <div class="card empty-state">
+        <h2 class="h-section">Таблиц материалов пока нет</h2>
+        <p>Загрузите книгу Excel «Продуктовые материалы»: каждый лист станет разделом верхнего уровня с таблицей материалов, а сводная по категориям соберётся здесь сама. Или включите таблицу для существующего раздела — список ниже.</p>
+        <a class="btn btn--pill" href="{{ path('admin_materials_import') }}">Импорт из Excel</a>
+    </div>
+{% else %}
+    <div class="grid grid--stats">
+        <div class="card"><div class="stat__label">Категорий</div><div class="stat__value">{{ cats|length }}</div><div class="stat__hint">разделов верхнего уровня с таблицей материалов</div></div>
+        <div class="card"><div class="stat__label">Материалов</div><div class="stat__value">{{ totals.total }}</div><div class="stat__hint">с загруженными файлами — {{ totals.files }}</div></div>
+        <div class="card"><div class="stat__label">Готово</div><div class="stat__value ms-text--ready">{{ totals.states['Готово']|default(0) }}</div><div class="stat__hint">{{ totals.total > 0 ? (100 * totals.states['Готово']|default(0) / totals.total)|round : 0 }}% материалов · допустимо {{ totals.states['Допустимо']|default(0) }}</div></div>
+        <div class="card"><div class="stat__label">Требуют доработки</div><div class="stat__value {{ totals.problems > 0 ? 'text-danger' }}">{{ totals.problems }}</div><div class="stat__hint">не соответствует {{ totals.states['Не соответствует']|default(0) }} · отсутствует {{ totals.states['Отсутствует']|default(0) }}</div></div>
+        <div class="card"><div class="stat__label">Без состояния</div><div class="stat__value stat__value--quiet">{{ totals.unrated + unknown }}</div><div class="stat__hint">пустое «Состояние» — {{ totals.unrated }}{% if unknown > 0 %} · «Неизвестно» — {{ unknown }}{% endif %}</div></div>
+    </div>
+
+    <div class="card table-card">
+        <div class="card__head card__head--padded">
+            <h2 class="h-section">Общее состояние</h2>
+            <span class="hints">Состояние считается как в Excel — по столбцам «Требования PM» и «Дизайн-требования»</span>
+        </div>
+        <div class="table-scroll">
+            <table class="admin-table ms-pivot">
+                <thead>
+                    <tr>
+                        <th scope="col">Категория</th>
+                        {% for s in states %}<th scope="col" class="col-num"><span class="state-dot state-dot--{{ state_css[s] }}" aria-hidden="true"></span>{{ s }}</th>{% endfor %}
+                        {% if unknown > 0 %}<th scope="col" class="col-num"><span class="state-dot state-dot--unknown" aria-hidden="true"></span>Неизвестно</th>{% endif %}
+                        {% if totals.unrated > 0 %}<th scope="col" class="col-num">Без оценки</th>{% endif %}
+                        <th scope="col" class="col-num">Всего</th>
+                        <th scope="col" class="col-num">С файлами</th>
+                        <th scope="col" class="ms-pivot__bar">Доли</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for c in cats %}
+                    {% set s = c.summary %}
+                    <tr>
+                        <th scope="row"><a href="{{ path('app_section_materials', {id: c.section.id}) }}">{{ c.section.name }}</a></th>
+                        {% for st in states %}{% set n = s.states[st]|default(0) %}<td class="col-num {{ n == 0 ? 'is-zero' }}">{{ n }}</td>{% endfor %}
+                        {% if unknown > 0 %}<td class="col-num {{ s.states['Неизвестно']|default(0) == 0 ? 'is-zero' }}">{{ s.states['Неизвестно']|default(0) }}</td>{% endif %}
+                        {% if totals.unrated > 0 %}<td class="col-num {{ s.unrated == 0 ? 'is-zero' }}">{{ s.unrated }}</td>{% endif %}
+                        <td class="col-num"><b>{{ s.total }}</b></td>
+                        <td class="col-num {{ s.files == 0 ? 'is-zero' }}">{{ s.files }}</td>
+                        <td class="ms-pivot__bar">{{ mt.state_bar(s) }}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <th scope="row">Итого</th>
+                        {% for st in states %}<td class="col-num">{{ totals.states[st]|default(0) }}</td>{% endfor %}
+                        {% if unknown > 0 %}<td class="col-num">{{ unknown }}</td>{% endif %}
+                        {% if totals.unrated > 0 %}<td class="col-num">{{ totals.unrated }}</td>{% endif %}
+                        <td class="col-num">{{ totals.total }}</td>
+                        <td class="col-num">{{ totals.files }}</td>
+                        <td class="ms-pivot__bar">{{ mt.state_bar(totals) }}</td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+
+    <div class="card table-card">
+        <div class="card__head card__head--padded">
+            <h2 class="h-section">Несоответствие / Отсутствие по типу</h2>
+            <span class="hints">материалы в состоянии «Не соответствует» или «Отсутствует»</span>
+        </div>
+        <div class="table-scroll">
+            <table class="admin-table ms-pivot ms-pivot--kinds">
+                <thead>
+                    <tr>
+                        <th scope="col">Категория</th>
+                        {% for k in kinds %}<th scope="col" class="col-num">{{ k.name }}</th>{% endfor %}
+                        {% if totals.noKindProblems > 0 %}<th scope="col" class="col-num">Без типа</th>{% endif %}
+                        <th scope="col" class="col-num">Итого</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for c in cats %}
+                    {% set s = c.summary %}
+                    <tr>
+                        <th scope="row"><a href="{{ path('app_section_materials', {id: c.section.id}) }}">{{ c.section.name }}</a></th>
+                        {% for k in kinds %}{% set n = s.problemsByKind[k.id]|default(0) %}<td class="col-num {{ n > 0 ? 'is-problem' : 'is-zero' }}">{{ n }}</td>{% endfor %}
+                        {% if totals.noKindProblems > 0 %}<td class="col-num {{ s.noKindProblems > 0 ? 'is-problem' : 'is-zero' }}">{{ s.noKindProblems }}</td>{% endif %}
+                        <td class="col-num"><b>{{ s.problems }}</b></td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <th scope="row">Итого</th>
+                        {% for k in kinds %}<td class="col-num">{{ totals.problemsByKind[k.id]|default(0) }}</td>{% endfor %}
+                        {% if totals.noKindProblems > 0 %}<td class="col-num">{{ totals.noKindProblems }}</td>{% endif %}
+                        <td class="col-num">{{ totals.problems }}</td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+
+    <div class="ms-blocks__head">
+        <h2 class="h-section">По категориям</h2>
+        <ul class="ms-legend" aria-label="Цвета состояний">
+            {% for s in states %}<li><span class="state-dot state-dot--{{ state_css[s] }}" aria-hidden="true"></span>{{ s }}</li>{% endfor %}
+            {% if unknown > 0 %}<li><span class="state-dot state-dot--unknown" aria-hidden="true"></span>Неизвестно</li>{% endif %}
+        </ul>
+    </div>
+    <div class="ms-blocks">
+        {% for c in cats %}
+            {% set s = c.summary %}
+            <article class="card ms-block">
+                <header class="ms-block__head">
+                    <h3 class="ms-block__title"><a href="{{ path('app_section_materials', {id: c.section.id}) }}">{{ c.section.name }}</a></h3>
+                    <div class="hints">{{ s.total|plural(['материал', 'материала', 'материалов']) }} · с файлами {{ s.files }}</div>
+                </header>
+                <div class="ms-block__body">
+                    {{ mt.donut(donuts[c.section.id], s, 128, 'Общее состояние — ' ~ c.section.name) }}
+                    {{ mt.state_table(s) }}
+                </div>
+                {{ mt.kind_table(s, kinds) }}
+                <a class="link-action" href="{{ path('app_section_materials', {id: c.section.id}) }}">Открыть таблицу</a>
+            </article>
+        {% endfor %}
+    </div>
+{% endif %}
+
+{% if candidates is not empty %}
+    <div class="card table-card">
+        <div class="card__head card__head--padded">
+            <h2 class="h-section">Разделы без таблицы материалов</h2>
+            <span class="hints">разделы верхнего уровня — таблицу можно включить в один щелчок</span>
+        </div>
+        <div class="table-scroll">
+            <table class="admin-table">
+                <tbody>
+                {% for section in candidates %}
+                    <tr>
+                        <td><a href="{{ path('app_section_show', {id: section.id}) }}">{{ section.name }}</a>{% if section.description %}<div class="hints">{{ section.description|length > 140 ? section.description|slice(0, 139) ~ '…' : section.description }}</div>{% endif %}</td>
+                        <td class="col-actions">
+                            <form method="post" action="{{ path('admin_materials_enable', {id: section.id}) }}" class="inline-form">
+                                <input type="hidden" name="_token" value="{{ csrf_token('materials_admin') }}">
+                                <button type="submit" class="btn btn--ghost btn--small">Включить таблицу</button>
+                            </form>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+{% endif %}
+{% endblock %}

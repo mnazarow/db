@@ -17,6 +17,16 @@
     <div class="card"><div class="stat__label">Разделы и люди</div><div class="stat__value">{{ overview.sections }}</div><div class="stat__hint">пользователей {{ overview.users }} (домен: {{ overview.users_by_source.ldap }}), назначений модераторов {{ overview.moderators }}</div></div>
 </div>
 
+{% if materials.categories|default([]) is not empty %}
+    {% import 'materials/_macros.html.twig' as mt %}
+    <div class="card ms-dash">
+        <div class="card__head"><h2 class="h-section">Продуктовые материалы</h2><a class="link-action" href="{{ path('admin_materials') }}">Сводная по категориям</a></div>
+        {{ include('materials/_summary_strip.html.twig', {summary: materials.totals}) }}
+        {{ mt.state_bar(materials.totals) }}
+        <div class="hints">{{ materials.categories|length|plural(['категория', 'категории', 'категорий']) }}{% if materials.totals.problems > 0 %} · требуют доработки: <b class="text-danger">{{ materials.totals.problems }}</b>{% endif %}</div>
+    </div>
+{% endif %}
+
 <div class="card">
     <div class="card__head"><h2 class="h-section">Активность за 30 дней</h2><a class="link-action" href="{{ path('admin_statistics') }}">Подробная статистика</a></div>
     {{ m.bar_chart(chart) }}

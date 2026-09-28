@@ -86,6 +86,7 @@
                     <td>
                         <a class="doc-table__title" href="{{ path('app_document_show', {id: d.id}) }}">{{ d.title }}</a>
                         {% if d.code %}<span class="doc-table__code">{{ d.code }}</span>{% endif %}
+                        {% if d.kind and d.kind.name != 'Прочее' %}<span class="tag tag--kind" title="Тип файла">{{ d.kind.name }}</span>{% endif %}
                         {% if not d.public %}<span class="tag tag--internal" title="Внутренний документ: виден только после входа">внутренний</span>{% endif %}
                         {% if d.description %}<div class="hints">{{ d.description|length > 140 ? d.description|slice(0, 140) ~ '…' : d.description }}</div>{% endif %}
                     </td>

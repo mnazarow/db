@@ -18,7 +18,7 @@
 <a class="skip-link" href="#content">К содержимому</a>
 
 <header class="site-header">
-    <div class="container site-header__inner">
+    <div class="container site-header__inner{{ app.user ? (is_granted('ROLE_ADMIN') ? ' site-header__inner--admin' : (is_granted('MODERATOR') ? ' site-header__inner--moderator')) }}">
         <a class="brand brand--wordmark" href="{{ path('app_home') }}" aria-label="{{ app_company }} — {{ app_name }}">
             {# Штатный логотип vodokomfort.ru уже содержит надпись «ВОДОКОМФОРТ»; на узких экранах — компактный знак #}
             <picture>
@@ -64,9 +64,9 @@
                     </a>
                 {% endif %}
                 {% if app.user.local %}
-                    <a class="user-chip" href="{{ path('app_password_change') }}" title="Сменить пароль">
+                    <a class="user-chip" href="{{ path('app_password_change') }}" title="{{ app.user.displayName }} — сменить пароль">
                 {% else %}
-                    <span class="user-chip" title="Доменная учётная запись">
+                    <span class="user-chip" title="{{ app.user.displayName }} — доменная учётная запись">
                 {% endif %}
                     <span class="user-chip__avatar" aria-hidden="true">{{ app.user.initials }}</span>
                     <span class="user-chip__name">{{ app.user.displayName }}</span>

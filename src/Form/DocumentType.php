@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace App\Form;
 
 use App\Entity\Document;
+use App\Entity\DocumentKind;
 use App\Entity\Section;
 use App\Entity\User;
+use App\Repository\DocumentKindRepository;
 use App\Repository\UserRepository;
 use Symfony\Bridge\Doctrine\Form\Type\EntityType;
 use Symfony\Component\Form\AbstractType;
@@ -31,6 +33,16 @@ final class DocumentType extends AbstractType
         $builder
             ->add('title', TextType::class, ['label' => 'Название', 'attr' => ['maxlength' => 255, 'autofocus' => $isNew]])
             ->add('code', TextType::class, ['label' => 'Обозначение / номер', 'required' => false, 'attr' => ['maxlength' => 64, 'placeholder' => 'например, ИТ-РГ-003'], 'help' => 'Регистрационный номер или шифр документа (необязательно).'])
+            ->add('kind', EntityType::class, [
+                'label' => 'Тип файла',
+                'class' => DocumentKind::class,
+                'choice_label' => 'name',
+                'query_builder' => static fn (DocumentKindRepository $repository) => $repository->createQueryBuilder('k')
+                    ->orderBy('k.position', 'ASC')->addOrderBy('k.name', 'ASC'),
+                'required' => false,
+                'placeholder' => 'Определить автоматически',
+                'help' => 'Каталоги и брошюры, паспорта и руководства, опросные листы и ТКП, фотографии… Если не выбрать, портал определит тип по названию и расширению файла.',
+            ])
             ->add('section', EntityType::class, [
                 'label' => 'Раздел',
                 'class' => Section::class,

@@ -1,0 +1,65 @@
+{# Общие элементы сводной по материалам: кольцевая диаграмма, полоса состояний, мини-таблицы как в Excel. #}
+
+{# Кольцо «Общее состояние» (сегменты считает MaterialSummary::donut). #}
+{% macro donut(d, summary, size = 128, label = 'Общее состояние') %}
+    {%- set caption = summary.unrated > 0 ? 'с оценкой' : (d.total|plural(['материал', 'материала', 'материалов'])|split(' ')|last) -%}
+    <svg class="donut" viewBox="0 0 120 120" width="{{ size }}" height="{{ size }}" role="img"
+         aria-label="{{ label }}: {% for s in d.segments %}{{ s.state }} — {{ s.count }}{{ not loop.last ? ', ' }}{% else %}оценённых материалов нет{% endfor %}">
+        {% if d.total == 0 %}<circle class="donut__track" cx="60" cy="60" r="46"></circle>{% endif %}
+        {% for s in d.segments %}<path class="donut__seg donut__seg--{{ s.class }}" d="{{ s.path }}"><title>{{ s.state }}: {{ s.count }} ({{ s.share }}%)</title></path>{% endfor %}
+        <text class="donut__value" x="60" y="63" text-anchor="middle">{{ d.total }}</text>
+        <text class="donut__caption" x="60" y="79" text-anchor="middle">{{ caption }}</text>
+    </svg>
+{% endmacro %}
+
+{# Полоса долей состояний для строки сводной таблицы. #}
+{% macro state_bar(summary) %}
+    {%- set states = {'Готово': 'ready', 'Допустимо': 'acceptable', 'Не соответствует': 'mismatch', 'Отсутствует': 'absent', 'Неизвестно': 'unknown'} -%}
+    {%- if summary.total > 0 -%}
+    <div class="share-bar share-bar--gaps" role="img" aria-label="{% for state, css in states %}{% set n = summary.states[state]|default(0) %}{% if n > 0 %}{{ state }} {{ n }}; {% endif %}{% endfor %}{% if summary.unrated > 0 %}без оценки {{ summary.unrated }}{% endif %}">
+        {%- for state, css in states -%}
+            {%- set n = summary.states[state]|default(0) -%}
+            {%- if n > 0 -%}<span class="share-bar__seg ms-fill--{{ css }}" style="width: {{ (100 * n / summary.total)|round(2) }}%" title="{{ state }}: {{ n }} ({{ (100 * n / summary.total)|round }}%)"></span>{%- endif -%}
+        {%- endfor -%}
+        {%- if summary.unrated > 0 -%}<span class="share-bar__seg ms-fill--empty" style="width: {{ (100 * summary.unrated / summary.total)|round(2) }}%" title="Без оценки: {{ summary.unrated }}"></span>{%- endif -%}
+    </div>
+    {%- else -%}<span class="text-muted">—</span>{%- endif -%}
+{% endmacro %}
+
+{# Блок «Общее состояние»: состояние и количество, как на листе «Сводная по категориям». #}
+{% macro state_table(summary) %}
+    {%- set states = {'Готово': 'ready', 'Допустимо': 'acceptable', 'Не соответствует': 'mismatch', 'Отсутствует': 'absent'} -%}
+    <table class="ms-mini">
+        <caption>Общее состояние</caption>
+        <thead><tr><th scope="col">Состояние</th><th scope="col" class="col-num">Кол-во</th></tr></thead>
+        <tbody>
+            {% for state, css in states %}
+                {% set n = summary.states[state]|default(0) %}
+                <tr class="{{ n == 0 ? 'is-zero' }}"><td><span class="state-dot state-dot--{{ css }}" aria-hidden="true"></span>{{ state }}</td><td class="col-num">{{ n }}</td></tr>
+            {% endfor %}
+            {% if summary.states['Неизвестно']|default(0) > 0 %}
+                <tr><td><span class="state-dot state-dot--unknown" aria-hidden="true"></span>Неизвестно</td><td class="col-num">{{ summary.states['Неизвестно'] }}</td></tr>
+            {% endif %}
+            {% if summary.unrated > 0 %}
+                <tr class="is-muted"><td><span class="state-dot state-dot--empty" aria-hidden="true"></span>Без оценки</td><td class="col-num">{{ summary.unrated }}</td></tr>
+            {% endif %}
+        </tbody>
+    </table>
+{% endmacro %}
+
+{# Блок «Несоответствие / Отсутствие по типу». #}
+{% macro kind_table(summary, kinds) %}
+    <table class="ms-mini ms-mini--kinds">
+        <caption>Несоответствие / Отсутствие по типу</caption>
+        <thead><tr><th scope="col">Тип</th><th scope="col" class="col-num">Кол-во</th></tr></thead>
+        <tbody>
+            {% for k in kinds %}
+                {% set n = summary.problemsByKind[k.id]|default(0) %}
+                <tr class="{{ n == 0 ? 'is-zero' : 'is-problem' }}"><td>{{ k.name }}</td><td class="col-num">{{ n }}</td></tr>
+            {% endfor %}
+            {% if summary.noKindProblems > 0 %}
+                <tr class="is-problem"><td>Без типа</td><td class="col-num">{{ summary.noKindProblems }}</td></tr>
+            {% endif %}
+        </tbody>
+    </table>
+{% endmacro %}

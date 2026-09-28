@@ -23,6 +23,10 @@
         <select class="form-control form-control--inline" name="type" aria-label="Вид">
             <option value="">Любой вид</option><option value="file" {{ filters.type == 'file' ? 'selected' }}>Файлы</option><option value="page" {{ filters.type == 'page' ? 'selected' }}>Страницы</option>
         </select>
+        <select class="form-control form-control--inline" name="kind" aria-label="Тип файла">
+            <option value="">Любой тип файла</option>
+            {% for k in kinds %}<option value="{{ k.id }}" {{ filters.kind and filters.kind.id == k.id ? 'selected' }}>{{ k.name }}</option>{% endfor %}
+        </select>
         <select class="form-control form-control--inline" name="validity" aria-label="Актуальность">
             <option value="">Любая актуальность</option>
             {% for value, label in {expired: 'Просрочены', soon: 'Истекают', valid: 'Актуальны', none: 'Бессрочные'} %}<option value="{{ value }}" {{ filters.validity == value ? 'selected' }}>{{ label }}</option>{% endfor %}
@@ -64,6 +68,9 @@
         </span>
         <span class="bulk-bar__field" data-bulk-for="tags">
             <input class="form-control form-control--inline" type="text" name="tags" form="bulk-form" placeholder="теги через запятую" aria-label="Теги">
+        </span>
+        <span class="bulk-bar__field" data-bulk-for="kind">
+            <select class="form-control form-control--inline" name="kind" form="bulk-form" aria-label="Тип файла">{% for k in kinds %}<option value="{{ k.id }}">{{ k.name }}</option>{% endfor %}</select>
         </span>
         <span class="bulk-bar__field" data-bulk-for="access">
             <select class="form-control form-control--inline" name="access" form="bulk-form" aria-label="Доступ"><option value="internal">внутренние</option><option value="public">открытые (без входа)</option></select>

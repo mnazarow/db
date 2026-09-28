@@ -7,6 +7,7 @@ namespace App\Service;
 use App\Entity\Section;
 use App\Entity\SectionModerator;
 use App\Entity\User;
+use App\Repository\MaterialRowRepository;
 use App\Repository\SectionModeratorRepository;
 use App\Repository\SectionRepository;
 use Doctrine\ORM\EntityManagerInterface;
@@ -23,6 +24,7 @@ final class SectionManager
         private readonly SectionRepository $sections,
         private readonly SectionModeratorRepository $moderators,
         private readonly LoggerInterface $auditLogger,
+        private readonly ?MaterialRowRepository $materialRows = null,
     ) {
     }
 
@@ -123,6 +125,10 @@ final class SectionManager
         }
         if (!$section->getDocuments()->isEmpty()) {
             throw new \DomainException('В разделе есть документы. Перенесите или удалите их, затем удалите раздел.');
+        }
+        $rows = null !== $section->getId() ? ($this->materialRows?->countForSection($section) ?? 0) : 0;
+        if ($rows > 0) {
+            throw new \DomainException(\sprintf('В разделе ведётся таблица материалов (строк: %d). Удалите строки таблицы, затем удалите раздел.', $rows));
         }
         $name = $section->getFullName();
         $this->em->remove($section);

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Repository;
 
 use App\Entity\Document;
+use App\Entity\DocumentKind;
 use App\Entity\Section;
 use App\Entity\User;
 use App\Security\Viewer;
@@ -202,7 +203,7 @@ final class DocumentRepository extends ServiceEntityRepository
     /**
      * Реестр документов для панели администратора с фильтрами.
      *
-     * @param array{section?: ?Section, status?: ?string, type?: ?string, validity?: ?string, owner?: ?User, access?: ?string, q?: ?string} $filters
+     * @param array{section?: ?Section, status?: ?string, type?: ?string, validity?: ?string, owner?: ?User, kind?: ?DocumentKind, access?: ?string, q?: ?string} $filters
      *
      * @return list<Document>
      */
@@ -220,6 +221,9 @@ final class DocumentRepository extends ServiceEntityRepository
         }
         if (!empty($filters['owner'])) {
             $qb->andWhere('d.owner = :owner')->setParameter('owner', $filters['owner']);
+        }
+        if (!empty($filters['kind'])) {
+            $qb->andWhere('d.kind = :kind')->setParameter('kind', $filters['kind']);
         }
         if (!empty($filters['access'])) {
             $qb->andWhere('d.isPublic = :public')->setParameter('public', 'public' === $filters['access']);

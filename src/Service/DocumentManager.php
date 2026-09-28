@@ -30,6 +30,7 @@ final class DocumentManager
         private readonly LoggerInterface $auditLogger,
         private readonly TextIndexer $indexer,
         private readonly DocumentPreviewer $previewer,
+        private readonly ?DocumentKindService $kinds = null,
     ) {
     }
 
@@ -105,6 +106,8 @@ final class DocumentManager
         $this->em->flush();
 
         $document->setCurrentVersion($version);
+        // Тип файла, если его не выбрали: по названию и расширению («Паспорт…» → «Паспорта и руководства»).
+        $this->kinds?->assignIfMissing($document);
         $this->em->persist(new DocumentEvent($document, DocumentEvent::CREATE, $actor, $version, $ip, $details));
         if ($publish) {
             $document->setStatus(Document::STATUS_PUBLISHED)->setPublishedAt(new \DateTimeImmutable());
@@ -125,6 +128,7 @@ final class DocumentManager
     public function updateMetadata(Document $document, ?Section $previousSection, User $actor, ?string $ip = null): void
     {
         $document->setUpdatedAt(new \DateTimeImmutable());
+        $this->kinds?->assignIfMissing($document);
         $this->em->persist(new DocumentEvent($document, DocumentEvent::UPDATE, $actor, null, $ip));
         if (null !== $previousSection && $previousSection->getId() !== $document->getSection()->getId()) {
             $this->em->persist(new DocumentEvent($document, DocumentEvent::MOVE, $actor, null, $ip, [

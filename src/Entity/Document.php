@@ -79,6 +79,11 @@ class Document
     #[ORM\Column(length: 8)]
     private string $type = self::TYPE_FILE;
 
+    /** Тип файла по справочнику: «Каталоги и брошюры», «Паспорта и руководства», «Прочее»… */
+    #[ORM\ManyToOne(targetEntity: DocumentKind::class)]
+    #[ORM\JoinColumn(name: 'kind_id', nullable: true, onDelete: 'SET NULL')]
+    private ?DocumentKind $kind = null;
+
     #[ORM\Column(length: 12)]
     private string $status = self::STATUS_DRAFT;
 
@@ -353,6 +358,18 @@ class Document
             throw new \InvalidArgumentException('Неизвестный тип документа: '.$type);
         }
         $this->type = $type;
+
+        return $this;
+    }
+
+    public function getKind(): ?DocumentKind
+    {
+        return $this->kind;
+    }
+
+    public function setKind(?DocumentKind $kind): static
+    {
+        $this->kind = $kind;
 
         return $this;
     }

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Service;
 
 use App\Entity\Document;
+use App\Entity\DocumentKind;
 use App\Entity\Section;
 use App\Entity\User;
 use App\Repository\DocumentRepository;
@@ -29,6 +30,7 @@ final class BulkDocumentService
         'move' => 'Перенести в раздел',
         'validity' => 'Изменить срок актуальности',
         'tags' => 'Добавить теги',
+        'kind' => 'Изменить тип файла',
         'access' => 'Изменить доступ',
         'delete' => 'Удалить',
     ];
@@ -66,6 +68,11 @@ final class BulkDocumentService
             return $result;
         }
         $target = $options['section'] ?? null;
+        if ('kind' === $action && !($options['kind'] ?? null) instanceof DocumentKind) {
+            $result['messages'][] = 'Не выбран тип файла.';
+
+            return $result;
+        }
         if ('move' === $action) {
             if (!$target instanceof Section) {
                 $result['messages'][] = 'Не выбран раздел, в который переносить.';
@@ -156,6 +163,18 @@ final class BulkDocumentService
                     return false;
                 }
                 $this->manager->updateMetadata($document, null, $by, $ip);
+
+                return true;
+            case 'kind':
+                $kind = $options['kind'] ?? null;
+                if (!$kind instanceof DocumentKind || $document->getKind()?->getId() === $kind->getId()) {
+                    return false;
+                }
+                $document->setKind($kind);
+                $this->manager->updateMetadata($document, null, $by, $ip);
+                // Строки таблиц материалов, из которых загружен документ, получают тот же тип.
+                $this->em->createQuery('UPDATE App\Entity\MaterialRow r SET r.kind = :kind WHERE r.document = :document')
+                    ->setParameter('kind', $kind)->setParameter('document', $document)->execute();
 
                 return true;
             case 'access':
