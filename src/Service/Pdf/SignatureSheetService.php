@@ -71,8 +71,9 @@ final class SignatureSheetService
                 $date($a->getAssignedAt(), 'Y-m-d'), $date($a->getDueAt(), 'Y-m-d'), $date($a->getConfirmedAt()),
                 $a->hasQuizResult() ? [$a->getQuizScore(), $a->getQuizTotal()] : null,
             ], $acknowledgements),
+            // Модерация (без назначенного согласующего): в реквизиты листа попадает принявший решение.
             'approvals' => array_map(static fn (DocumentApproval $a): array => [
-                $a->getApprover()->getId(), $a->getApprover()->getDisplayName(), $a->getApprover()->getUsername(),
+                ($a->getApprover() ?? $a->getDecidedBy())?->getId(), $a->getApprover()?->getDisplayName() ?? $a->getDeciderName(), ($a->getApprover() ?? $a->getDecidedBy())?->getUsername() ?? '',
                 $a->getDecision(), $date($a->getDecidedAt()), (string) $a->getDecisionNote(),
             ], $approvals),
         ];
@@ -223,7 +224,7 @@ final class SignatureSheetService
             $rows = [];
             foreach ($snapshot['approvals'] as $approval) {
                 $rows[] = [
-                    $approval->getApprover()->getDisplayName().' ('.$approval->getApprover()->getUsername().')',
+                    $approval->getDeciderName().(null !== ($approval->getApprover() ?? $approval->getDecidedBy()) ? ' ('.($approval->getApprover() ?? $approval->getDecidedBy())->getUsername().')' : '').($approval->isModeration() ? ', модерация' : ''),
                     $approval->getDecisionLabel(),
                     $approval->getDecidedAt()?->format('d.m.Y H:i') ?? '',
                     (string) $approval->getDecisionNote(),

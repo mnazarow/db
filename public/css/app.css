@@ -1164,6 +1164,23 @@ select.mt__editor { cursor: pointer; padding-right: 26px; }
     .site-header__inner--admin .brand--wordmark .brand__text, .site-header__inner--moderator .brand--wordmark .brand__text { display: none; }
 }
 
+/* 1.8.0: в шапке появились «Видео» и «Модерация» — название портала рядом с логотипом у администратора
+   скрывается раньше (логотип остаётся), у модераторов и помощников — с 1280 px; на узких экранах у
+   администратора пункты меню плотнее. */
+@media (max-width: 1600px) {
+    .site-header__inner--admin .brand--wordmark .brand__text { display: none; }
+}
+@media (max-width: 1280px) {
+    .site-header__inner--moderator .brand--wordmark .brand__text { display: none; }
+}
+@media (max-width: 1250px) {
+    .site-header__inner--admin .site-nav { gap: 14px; }
+    .site-header__inner--admin .site-nav__link { letter-spacing: 0.02em; }
+}
+@media (max-width: 1160px) {
+    .site-header__inner--admin .site-nav { gap: 9px; }
+}
+
 /* Новая редакция, ждущая согласования (видна модераторам). */
 .ack-box--pending { border-color: #F3D9A0; background: var(--amber-bg); }
 .ack-box .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }

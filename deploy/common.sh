@@ -365,7 +365,8 @@ save_conf() {
         # Значения экранируются (printf %q): пароли с кавычками, $ и пробелами не ломают файл.
         for var in INSTALL_MODE APP_DIR APP_VERSION BACKUP_DIR DOMAIN HTTP_PORT SERVICE_USER PHP_VERSION PHP_FPM_SERVICE \
                    PHP_FPM_SOCK DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD DB_SERVER_VERSION DB_LOCAL DB_SERVICE \
-                   DB_CREATED_BY_INSTALL DB_USER_CREATED_BY_INSTALL SSL_ENABLED INSTALLED_AT BACKUP_REMOTE BACKUP_REMOTE_KEEP; do
+                   DB_CREATED_BY_INSTALL DB_USER_CREATED_BY_INSTALL SSL_ENABLED INSTALLED_AT BACKUP_REMOTE BACKUP_REMOTE_KEEP \
+                   VIDEO_ENABLED VIDEO_LIVE VIDEO_PATH VIDEO_PORT VIDEO_DATA_DIR VIDEO_BACKUP_MEDIA; do
             printf '%s=%q\n' "${var}" "${!var:-}"
         done
     } > "${tmp}"
@@ -693,7 +694,7 @@ DEXEC=(docker compose exec -u www-data)
 [[ -t 0 && -t 1 ]] || DEXEC+=(-T)
 cmd="\${1:-help}"; shift || true
 case "\${cmd}" in
-    update|backup|restore|uninstall|status|doctor|maintenance|verify-backup|remote-backup)
+    update|backup|restore|uninstall|status|doctor|maintenance|verify-backup|remote-backup|video)
         [[ "\${cmd}" == "status" ]] && cmd="doctor"
         exec "\${DEPLOY}/\${cmd}.sh" "\$@" ;;
     console)
@@ -761,6 +762,8 @@ case "\${cmd}" in
   reindex             Индекс полнотекстового поиска по содержимому файлов (--all — всё заново, --status — состояние)
   acknowledge-remind  Напоминания о неподтверждённом ознакомлении (--days=N, --dry-run)
   telegram            Уведомления в Telegram: разбор сообщений бота (--status, --check, --send "текст" --user ЛОГИН)
+  video <команда>     Раздел «Видео» (видеопортал по адресу /video, общий вход и роли с порталом):
+                      enable [--no-live] [--backup-media] | status | restart | logs [api|worker|mediamtx] | disable
   logs                Журнал приложения
   uninstall           Удаление портала
 HELP

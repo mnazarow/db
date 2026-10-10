@@ -18,7 +18,7 @@
 <a class="skip-link" href="#content">К содержимому</a>
 
 <header class="site-header">
-    <div class="container site-header__inner{{ app.user ? (is_granted('ROLE_ADMIN') ? ' site-header__inner--admin' : (is_granted('MODERATOR') ? ' site-header__inner--moderator')) }}">
+    <div class="container site-header__inner{{ app.user ? (is_granted('ROLE_ADMIN') ? ' site-header__inner--admin' : (is_granted('CONTRIBUTOR') ? ' site-header__inner--moderator')) }}">
         <a class="brand brand--wordmark" href="{{ path('app_home') }}" aria-label="{{ app_company }} — {{ app_name }}">
             {# Штатный логотип vodokomfort.ru уже содержит надпись «ВОДОКОМФОРТ»; на узких экранах — компактный знак #}
             <picture>
@@ -34,9 +34,13 @@
         {% set route = app.request.attributes.get('_route') ?? '' %}
         {% if route != 'app_login' %}
             <nav class="site-nav" id="site-nav" aria-label="Основная навигация">
-                <a class="site-nav__link {{ route in ['app_home', 'app_section_show'] or route starts with 'app_document' ? 'is-active' }}" href="{{ path('app_home') }}">Документы</a>
-                {% if app.user and is_granted('MODERATOR') %}
+                <a class="site-nav__link {{ route in ['app_home', 'app_section_show'] or (route starts with 'app_document' and route != 'app_document_new') ? 'is-active' }}" href="{{ path('app_home') }}">Документы</a>
+                {% if video_enabled() %}
+                    <a class="site-nav__link" href="{{ video_url('/') }}">Видео</a>
+                {% endif %}
+                {% if app.user and is_granted('CONTRIBUTOR') %}
                     <a class="site-nav__link {{ route == 'app_document_new' ? 'is-active' }}" href="{{ path('app_document_new') }}">Добавить документ</a>
+                    <a class="site-nav__link {{ route == 'app_moderation' ? 'is-active' }}" href="{{ path('app_moderation') }}">Модерация</a>
                 {% endif %}
                 {% if app.user and is_granted('ROLE_ADMIN') %}
                     <a class="site-nav__link {{ route starts with 'admin_' ? 'is-active' }}" href="{{ path('admin_dashboard') }}">Панель администратора</a>
@@ -59,6 +63,12 @@
                         <span class="ack-chip__text">на ознакомление</span>
                     </a>
                 {% endif %}
+                {% if moderation_pending() > 0 %}
+                    <a class="ack-chip ack-chip--approval" href="{{ path('app_moderation') }}" title="Материалы помощников маркетолога, которые ждут решения">
+                        <span class="ack-chip__count">{{ moderation_pending() }}</span>
+                        <span class="ack-chip__text">на модерации</span>
+                    </a>
+                {% endif %}
                 {% if approvals_pending() > 0 %}
                     <a class="ack-chip ack-chip--approval" href="{{ path('app_profile_approvals') }}" title="Документы, которые ждут вашего согласования">
                         <span class="ack-chip__count">{{ approvals_pending() }}</span>
@@ -72,7 +82,7 @@
                 {% endif %}
                     <span class="user-chip__avatar" aria-hidden="true">{{ app.user.initials }}</span>
                     <span class="user-chip__name">{{ app.user.displayName }}</span>
-                    <span class="user-chip__role">{{ is_granted('ROLE_ADMIN') ? 'администратор' : (is_granted('MODERATOR') ? 'модератор' : 'пользователь') }}</span>
+                    <span class="user-chip__role">{{ role_label() }}</span>
                 {% if app.user.local %}</a>{% else %}</span>{% endif %}
                 <form method="post" action="{{ path('app_logout') }}" class="inline-form">
                     <input type="hidden" name="_csrf_token" value="{{ csrf_token('logout') }}">
@@ -117,6 +127,8 @@
                 <a href="{{ path('app_search') }}">Поиск</a>
                 <a href="{{ path('app_profile_acknowledgements') }}">Мои ознакомления</a>
                 {% if approvals_pending() > 0 %}<a href="{{ path('app_profile_approvals') }}">Мне на согласование</a>{% endif %}
+                {% if is_contributor() %}<a href="{{ path('app_moderation') }}">Модерация материалов</a>{% endif %}
+                {% if video_enabled() %}<a href="{{ video_url('/') }}">Видео</a>{% endif %}
                 <a href="{{ path('app_profile_subscriptions') }}">Подписки и уведомления</a>
                 {% if app.user.local %}<a href="{{ path('app_password_change') }}">Сменить пароль</a>{% endif %}
                 <a href="{{ path('app_2fa_setup') }}">Двухфакторная аутентификация</a>

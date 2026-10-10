@@ -13,6 +13,7 @@ use App\Repository\DocumentApprovalRepository;
 use App\Security\Access;
 use App\Service\FileStorage;
 use App\Service\Validity;
+use App\Service\Video\VideoIntegration;
 use Symfony\Bundle\SecurityBundle\Security;
 use Twig\Extension\AbstractExtension;
 use Twig\TwigFilter;
@@ -41,7 +42,33 @@ final class AppExtension extends AbstractExtension
         private readonly Security $security,
         private readonly DocumentAcknowledgementRepository $acknowledgements,
         private readonly DocumentApprovalRepository $approvals,
+        private readonly VideoIntegration $video,
     ) {
+    }
+
+    /** Сколько материалов ждут модерации в разделах, которыми управляет текущий пользователь (значок в шапке). */
+    public function pendingModeration(): int
+    {
+        $user = $this->security->getUser();
+        if (!$user instanceof User || !$this->access->isModerator($user)) {
+            return 0;
+        }
+
+        return $this->approvals->countModerationQueue($this->access->managedSectionIds($user));
+    }
+
+    /** Роль текущего пользователя для подписи в шапке. */
+    public function roleLabel(): string
+    {
+        $user = $this->security->getUser();
+        if (!$user instanceof User) {
+            return 'гость';
+        }
+        if (User::POSITION_USER === $user->getPosition() && $this->access->isModerator($user)) {
+            return 'модератор';
+        }
+
+        return mb_strtolower($user->getPositionLabel());
     }
 
     /** Сколько документов ждут ознакомления у текущего пользователя (значок в шапке). */
@@ -84,6 +111,11 @@ final class AppExtension extends AbstractExtension
             new TwigFunction('validity_today', fn (): \DateTimeImmutable => $this->validity->today()),
             new TwigFunction('acknowledgements_pending', [$this, 'pendingAcknowledgements']),
             new TwigFunction('approvals_pending', [$this, 'pendingApprovals']),
+            new TwigFunction('moderation_pending', [$this, 'pendingModeration']),
+            new TwigFunction('is_contributor', [$this, 'isContributor']),
+            new TwigFunction('role_label', [$this, 'roleLabel']),
+            new TwigFunction('video_enabled', fn (): bool => $this->video->isEnabled()),
+            new TwigFunction('video_url', fn (string $path = '/'): string => $this->video->url($path)),
         ];
     }
 
@@ -103,6 +135,14 @@ final class AppExtension extends AbstractExtension
         $user = $this->security->getUser();
 
         return $user instanceof User && $this->access->isModerator($user);
+    }
+
+    /** Добавляет ли текущий пользователь материалы (модератор, маркетолог или помощник маркетолога). */
+    public function isContributor(): bool
+    {
+        $user = $this->security->getUser();
+
+        return $user instanceof User && $this->access->isContributor($user);
     }
 
     /** Условное обозначение формата файла для значка. */

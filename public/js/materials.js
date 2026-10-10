@@ -675,12 +675,14 @@
             ['down', 'Переместить вниз']
         ];
         if (canUpload(row)) { items.push(['upload', row.document ? 'Загрузить новую версию файла' : 'Загрузить файл']); }
+        // Помощник маркетолога (config.canStructure = false) не отвязывает файлы и не удаляет строки.
+        var structure = config.canStructure !== false;
         if (row.document) {
             if (!row.document.hidden) { items.push(['open', 'Открыть документ']); }
-            items.push(['detach', 'Отвязать файл от строки']);
+            if (structure) { items.push(['detach', 'Отвязать файл от строки']); }
         }
         items.push(['history', 'История изменений']);
-        items.push(['delete', 'Удалить строку']);
+        if (structure) { items.push(['delete', 'Удалить строку']); }
         menu.innerHTML = items.map(function (item) {
             return '<button type="button" role="menuitem" data-menu="' + item[0] + '"' + (item[0] === 'delete' ? ' class="is-danger"' : '') + '>' + item[1] + '</button>';
         }).join('');

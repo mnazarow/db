@@ -87,6 +87,10 @@ final class DemoLoadCommand extends Command
         $sidorov = $this->ensureUser('sidorov', 'Сидоров Алексей Николаевич', false, 'sidorov@example.ru', 'Производство');
         $kuznetsova = $this->ensureUser('kuznetsova', 'Кузнецова Елена Викторовна', false, 'kuznetsova@example.ru', 'Отдел кадров');
         $smirnov = $this->ensureUser('smirnov', 'Смирнов Дмитрий Олегович', false, 'smirnov@example.ru', 'Отдел продаж');
+        // Роли маркетинга (1.8): маркетолог — модератор всех разделов и видео, помощник — публикует через модерацию.
+        $this->ensureUser('markova', 'Маркова Анна Викторовна', false, 'markova@example.ru', 'Отдел маркетинга')->setPosition(User::POSITION_MARKETER);
+        $this->ensureUser('belov', 'Белов Кирилл Андреевич', false, 'belov@example.ru', 'Отдел маркетинга')->setPosition(User::POSITION_ASSISTANT);
+        $this->em->flush();
         $readers = [$smirnov, $sidorov, $kuznetsova, $ivanov, $petrova, $smirnov];
 
         // --- Разделы ----------------------------------------------------------------------
@@ -290,6 +294,8 @@ HTML, true, [
             ['sidorov', 'модератор разделов «Производство» и «Насосные станции»', self::PASSWORD],
             ['kuznetsova', 'модератор раздела «Кадры»', self::PASSWORD],
             ['smirnov', 'обычный пользователь (только чтение)', self::PASSWORD],
+            ['markova', 'маркетолог (модератор всех разделов и видео)', self::PASSWORD],
+            ['belov', 'помощник маркетолога (публикует через модерацию)', self::PASSWORD],
         ]);
 
         return Command::SUCCESS;

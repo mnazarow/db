@@ -31,7 +31,7 @@
             <div class="card__head card__head--padded">
                 <h2 class="h-section">Найдено: {{ results|length }}</h2>
             </div>
-            {{ m.document_table(results, {show_section: true, show_status: is_granted('MODERATOR'), empty: content_results|length > 0 ? 'По названию и реквизитам ничего не найдено — смотрите совпадения в тексте файлов ниже.' : 'Ничего не найдено. Попробуйте другие слова или уберите фильтр по разделу.'}) }}
+            {{ m.document_table(results, {show_section: true, show_status: is_granted('CONTRIBUTOR'), empty: content_results|length > 0 ? 'По названию и реквизитам ничего не найдено — смотрите совпадения в тексте файлов ниже.' : 'Ничего не найдено. Попробуйте другие слова или уберите фильтр по разделу.'}) }}
         </div>
 
         {% if content_results|length > 0 %}

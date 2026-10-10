@@ -76,7 +76,7 @@
                     <h3 class="h-sub">Согласование</h3>
                     <ul class="plain-list">
                         {% for approval in details.approvals %}
-                            <li>{{ approval.approver.displayName }} — {{ approval.decisionLabel|lower }}{% if approval.decidedAt %}, {{ approval.decidedAt|date('d.m.Y H:i') }}{% endif %}</li>
+                            <li>{{ approval.deciderName }} — {{ approval.decisionLabel|lower }}{% if approval.decidedAt %}, {{ approval.decidedAt|date('d.m.Y H:i') }}{% endif %}</li>
                         {% endfor %}
                     </ul>
                 </div>

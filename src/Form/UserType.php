@@ -19,6 +19,13 @@ use Symfony\Component\OptionsResolver\OptionsResolver;
  */
 final class UserType extends AbstractType
 {
+    private const HINTS = [
+        User::POSITION_USER => 'просмотр опубликованного',
+        User::POSITION_ASSISTANT => 'добавляет материалы, публикация через модерацию',
+        User::POSITION_MARKETER => 'модератор всех разделов и видео',
+        User::POSITION_ADMIN => 'всё, включая панель администратора',
+    ];
+
     public function buildForm(FormBuilderInterface $builder, array $options): void
     {
         $builder
@@ -40,10 +47,12 @@ final class UserType extends AbstractType
             ->add('role', ChoiceType::class, [
                 'label' => 'Роль',
                 'mapped' => false,
-                'choices' => ['Пользователь' => 'user', 'Администратор' => 'admin'],
+                'choices' => array_flip(User::POSITION_LABELS),
+                'choice_attr' => static fn (string $value): array => ['data-hint' => self::HINTS[$value] ?? ''],
                 'expanded' => true,
                 'multiple' => false,
-                'data' => $options['is_admin'] ? 'admin' : 'user',
+                'data' => $options['position'] ?? ($options['is_admin'] ? User::POSITION_ADMIN : User::POSITION_USER),
+                'help' => 'Пользователь видит опубликованные документы и одобренные видео. Помощник маркетолога добавляет документы, новые редакции и видео — они публикуются после модерации. Маркетолог ведёт все разделы, публикует сразу и решает по материалам на модерации. Администратор — всё, включая панель администратора. Роль действует и в разделе «Видео».',
             ])
             ->add('active', CheckboxType::class, ['label' => 'Активна (пользователь может входить)', 'required' => false])
             ->add('plainPassword', PasswordType::class, [
@@ -62,8 +71,10 @@ final class UserType extends AbstractType
             'data_class' => User::class,
             'is_new' => true,
             'is_admin' => false,
+            'position' => null,
             'ldap_enabled' => false,
         ]);
+        $resolver->setAllowedTypes('position', ['null', 'string']);
         $resolver->setAllowedTypes('is_new', 'bool');
         $resolver->setAllowedTypes('is_admin', 'bool');
         $resolver->setAllowedTypes('ldap_enabled', 'bool');

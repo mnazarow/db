@@ -11,6 +11,8 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=deploy/common.sh
 . "${SCRIPT_DIR}/common.sh"
+# shellcheck source=deploy/video.sh
+. "${SCRIPT_DIR}/video.sh"
 
 SOURCE_DIR=""
 ARCHIVE=""
@@ -35,7 +37,9 @@ TAGGED_PREVIOUS="0"
 SAVED_PREV="0"
 APP_IMAGE_NAME=""
 # Что не переносится между версиями кода в Docker-режиме (данные и настройки этой установки).
-PREV_EXCLUDES=(--exclude '/docker/.env' --exclude '/import/' --exclude '/backups/' --exclude '/var/' --exclude '/.env.local' --exclude '/.git/' --exclude '/docker/mysql-data/' --exclude '/maintenance/')
+# docker/nginx/video/ и docker/video/ — файлы раздела «Видео», созданные командой «docportal video enable».
+PREV_EXCLUDES=(--exclude '/docker/.env' --exclude '/import/' --exclude '/backups/' --exclude '/var/' --exclude '/.env.local' --exclude '/.git/' --exclude '/docker/mysql-data/' --exclude '/maintenance/'
+               --exclude '/docker/nginx/video/' --exclude '/docker/video/')
 
 usage() {
     cat <<EOF
@@ -289,7 +293,11 @@ if [[ "${INSTALL_MODE}" == "native" ]]; then
     chmod -R u+rwX,g+rX,o-rwx "${NEW_RELEASE}" 2>/dev/null || true
     chmod 751 "${NEW_RELEASE}"; chmod -R o+rX "${NEW_RELEASE}/public"
     chmod +x "${NEW_RELEASE}/bin/console" "${NEW_RELEASE}"/deploy/*.sh 2>/dev/null || true
+    [[ -d "${NEW_RELEASE}/video" ]] && chmod -R o+rX "${NEW_RELEASE}/video"
     if command -v restorecon >/dev/null 2>&1; then restorecon -R "${NEW_RELEASE}" >>"${LOG_FILE}" 2>&1 || true; fi
+    # Раздел «Видео»: зависимости и веб-интерфейс видеопортала в новом релизе — до переключения, пока
+    # прежняя версия продолжает работать (без них новая версия видеопортала не запустится).
+    video_update_prepare "${NEW_RELEASE}" "${PREV_RELEASE}"
 
     console() { runuser -u "${SERVICE_USER}" -- "${PHP_BIN}" -d memory_limit=512M "${NEW_RELEASE}/bin/console" "$@" --no-interaction --env=prod >>"${LOG_FILE}" 2>&1; }
 
@@ -316,6 +324,9 @@ if [[ "${INSTALL_MODE}" == "native" ]]; then
     ensure_cron_entries
     install_logrotate
     upgrade_native_system_config "${NEW_RELEASE}"
+    # Видеопортал перезапускается на новой версии; его ошибка — предупреждение (портал документов уже обновлён).
+    # Внутри — без отката обновления: портал к этому моменту обновлён и проверен.
+    ( ROLLBACK_ENABLED="0"; video_update_finish ) || warn "Раздел «Видео» не перезапущен — проверьте: ${APP_ID} video status"
     # Извлечение текста из PDF (API, LLM) появилось в 1.3.0 — пакет poppler-utils ставим при обновлении, если его нет.
     # Обновление к этому моменту уже выполнено и проверено, поэтому любая неудача здесь — только предупреждение.
     if ! command -v pdftotext >/dev/null 2>&1; then
@@ -351,9 +362,12 @@ else
     # /import/ — каталог импорта на сервере (IMPORT_HOST_DIR): его содержимое при обновлении не трогаем.
     # /maintenance/ — состояние режима обслуживания (каталог подключён в контейнер web).
     rsync -a --delete --exclude '/var/' --exclude '/.env.local' --exclude '/.git/' --exclude '/docker/.env' --exclude '/docker/mysql-data/' --exclude '/backups/' --exclude '/import/' \
-        --exclude '/maintenance/' "${SOURCE_DIR}/" "${APP_DIR}/" >>"${LOG_FILE}" 2>&1 || die "Не удалось скопировать файлы новой версии."
+        --exclude '/maintenance/' --exclude '/docker/nginx/video/' --exclude '/docker/video/' "${SOURCE_DIR}/" "${APP_DIR}/" >>"${LOG_FILE}" 2>&1 || die "Не удалось скопировать файлы новой версии."
     chmod +x "${APP_DIR}"/deploy/*.sh "${APP_DIR}/docker/entrypoint.sh" "${APP_DIR}/bin/console" 2>/dev/null || true
-    docker compose build --pull >>"${LOG_FILE}" 2>&1 || die "Сборка образа новой версии не удалась."
+    docker compose build --pull app >>"${LOG_FILE}" 2>&1 || die "Сборка образа новой версии не удалась."
+    # Раздел «Видео»: образ видеопортала собирается отдельно — его ошибка не мешает обновить портал
+    # (контейнеры видеопортала продолжат работать на прежнем образе).
+    video_update_prepare "${APP_DIR}"
     # Каталог импорта документов появился в 1.1.0: подключается в контейнеры как /var/www/html/var/import.
     if ! grep -q '^IMPORT_HOST_DIR=' "${APP_DIR}/docker/.env" 2>/dev/null; then
         printf '\n# Каталог импорта документов: путь на сервере или имя тома Docker.\nIMPORT_HOST_DIR=%s/import\n' "${APP_DIR}" >> "${APP_DIR}/docker/.env"
@@ -378,6 +392,8 @@ else
     # Задания приложения выполняет контейнер cron; на сервере остаётся только резервное копирование.
     ensure_cron_entries
     install_logrotate
+    # Внутри — без отката обновления: портал к этому моменту обновлён и проверен.
+    ( ROLLBACK_ENABLED="0"; video_update_finish ) || warn "Раздел «Видео» не перезапущен — проверьте: ${APP_ID} video status"
 fi
 
 APP_VERSION="${NEW_VERSION}"

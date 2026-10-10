@@ -13,6 +13,9 @@ use Doctrine\ORM\Mapping as ORM;
  *
  * Решение относится к конкретной редакции: после загрузки новой версии согласование
  * нужно запрашивать заново, а прежние решения остаются историей.
+ *
+ * Без согласующего (approver = null) запрос — это модерация: материал помощника маркетолога ждёт
+ * решения любого маркетолога (или модератора раздела), кто решил — записывается в decidedBy.
  */
 #[ORM\Entity(repositoryClass: DocumentApprovalRepository::class)]
 #[ORM\Table(name: 'document_approval')]
@@ -47,9 +50,15 @@ class DocumentApproval
     #[ORM\Column(name: 'version_number', type: Types::SMALLINT)]
     private int $versionNumber;
 
+    /** Назначенный согласующий; null — общая очередь модерации. */
     #[ORM\ManyToOne(targetEntity: User::class)]
-    #[ORM\JoinColumn(nullable: false, onDelete: 'CASCADE')]
-    private User $approver;
+    #[ORM\JoinColumn(nullable: true, onDelete: 'CASCADE')]
+    private ?User $approver = null;
+
+    /** Кто принял решение (при модерации — первый ответивший маркетолог). */
+    #[ORM\ManyToOne(targetEntity: User::class)]
+    #[ORM\JoinColumn(name: 'decided_by_id', nullable: true, onDelete: 'SET NULL')]
+    private ?User $decidedBy = null;
 
     #[ORM\ManyToOne(targetEntity: User::class)]
     #[ORM\JoinColumn(name: 'requested_by_id', nullable: true, onDelete: 'SET NULL')]
@@ -71,7 +80,7 @@ class DocumentApproval
     #[ORM\Column(name: 'decision_note', type: Types::TEXT, nullable: true)]
     private ?string $decisionNote = null;
 
-    public function __construct(Document $document, int $versionNumber, User $approver, ?User $requestedBy = null, ?string $requestNote = null)
+    public function __construct(Document $document, int $versionNumber, ?User $approver, ?User $requestedBy = null, ?string $requestNote = null)
     {
         $this->document = $document;
         $this->versionNumber = $versionNumber;
@@ -96,9 +105,32 @@ class DocumentApproval
         return $this->versionNumber;
     }
 
-    public function getApprover(): User
+    public function getApprover(): ?User
     {
         return $this->approver;
+    }
+
+    /** Запрос в общую очередь модерации (без конкретного согласующего). */
+    public function isModeration(): bool
+    {
+        return null === $this->approver;
+    }
+
+    public function getDecidedBy(): ?User
+    {
+        return $this->decidedBy ?? (self::PENDING !== $this->decision && self::CANCELLED !== $this->decision ? $this->approver : null);
+    }
+
+    /** Кому отправлено: имя согласующего или «модерация». */
+    public function getApproverLabel(): string
+    {
+        return $this->approver?->getDisplayName() ?? 'модерация (маркетологи)';
+    }
+
+    /** Кто решил: принявший решение, а без записи о нём — назначенный согласующий. */
+    public function getDeciderName(): string
+    {
+        return $this->getDecidedBy()?->getDisplayName() ?? $this->getApproverLabel();
     }
 
     public function getRequestedBy(): ?User
@@ -116,9 +148,16 @@ class DocumentApproval
         return $this->decision;
     }
 
+    public const MODERATION_LABELS = [
+        self::PENDING => 'на модерации',
+        self::APPROVED => 'одобрено',
+        self::REJECTED => 'возвращено на доработку',
+        self::CANCELLED => 'снято с модерации',
+    ];
+
     public function getDecisionLabel(): string
     {
-        return self::LABELS[$this->decision] ?? $this->decision;
+        return ($this->isModeration() ? self::MODERATION_LABELS : self::LABELS)[$this->decision] ?? $this->decision;
     }
 
     public function isPending(): bool
@@ -152,7 +191,7 @@ class DocumentApproval
     }
 
     /** Решение согласующего; повторно решение не меняется. */
-    public function decide(string $decision, ?string $note = null): static
+    public function decide(string $decision, ?string $note = null, ?User $by = null): static
     {
         if (!\in_array($decision, [self::APPROVED, self::REJECTED, self::CANCELLED], true)) {
             throw new \InvalidArgumentException('Недопустимое решение по согласованию: '.$decision);
@@ -163,6 +202,9 @@ class DocumentApproval
         $this->decision = $decision;
         $this->decisionNote = self::trimOrNull($note);
         $this->decidedAt = new \DateTimeImmutable();
+        if (null !== $by && self::CANCELLED !== $decision) {
+            $this->decidedBy = $by;
+        }
 
         return $this;
     }

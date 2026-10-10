@@ -2,13 +2,17 @@
 # =============================================================================
 #  Удаление портала документации.
 #  Использование: sudo ./deploy/uninstall.sh [--purge] [--no-backup] [--yes]
-#    без --purge  — удаляются код, конфигурация nginx, cron и CLI; база данных и резервные копии сохраняются;
-#    --purge      — дополнительно удаляются база данных, пользователь БД, тома Docker и файлы документов.
+#    без --purge  — удаляются код, конфигурация nginx, cron и CLI; база данных и резервные копии сохраняются
+#                   (раздел «Видео»: службы удаляются, база видеопортала и видеофайлы сохраняются);
+#    --purge      — дополнительно удаляются база данных, пользователь БД, тома Docker и файлы документов
+#                   (и база видеопортала, видеофайлы, пользователь службы видеопортала).
 #  Системные пакеты (nginx, PHP, MariaDB, Docker) не удаляются.
 # =============================================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=deploy/common.sh
 . "${SCRIPT_DIR}/common.sh"
+# shellcheck source=deploy/video.sh
+. "${SCRIPT_DIR}/video.sh"
 
 PURGE="0"
 DO_BACKUP="1"
@@ -73,7 +77,7 @@ if [[ "${INSTALL_MODE}" == "docker" ]]; then
         else
             docker compose down --remove-orphans >>"${LOG_FILE}" 2>&1 && ok "Контейнеры остановлены (тома с базой и файлами сохранены)" || warn "docker compose down завершился с ошибкой."
         fi
-        docker image rm "${APP_ID}:latest" "${APP_ID}:previous" >>"${LOG_FILE}" 2>&1 || true
+        docker image rm "${APP_ID}:latest" "${APP_ID}:previous" "${APP_ID}-video:latest" >>"${LOG_FILE}" 2>&1 || true
         cd / || true
     fi
 else
@@ -84,6 +88,11 @@ else
     if command -v semanage >/dev/null 2>&1; then semanage fcontext -d "$(maintenance_dir)(/.*)?" >/dev/null 2>&1 || true; fi
     rm -rf "$(maintenance_dir)"
     rmdir "/var/lib/${APP_ID}" 2>/dev/null || true
+    # Раздел «Видео»: службы, правила nginx; с --purge — база видеопортала и видеофайлы.
+    if [[ -f "/etc/systemd/system/${VIDEO_UNIT_API}.service" || -d "${VIDEO_NGINX_DIR}" || "${PURGE}" == "1" ]]; then
+        step "Удаление раздела «Видео»"
+        video_uninstall "${PURGE}"
+    fi
     if nginx -t >>"${LOG_FILE}" 2>&1; then svc reload nginx && ok "nginx перезагружен"; else warn "nginx -t сообщил об ошибке — проверьте конфигурацию вручную."; fi
     if [[ -n "${PHP_VERSION}" ]]; then
         rm -f "/etc/php/${PHP_VERSION}/fpm/conf.d/90-${APP_ID}.ini" "/etc/php/${PHP_VERSION}/cli/conf.d/90-${APP_ID}.ini" "/etc/php.d/90-${APP_ID}.ini" \

@@ -58,7 +58,7 @@
                         {% for a in history %}
                             <tr>
                                 <td>v{{ a.versionNumber }}</td>
-                                <td>{{ a.approver.displayName }}<div class="hints">запросил {{ a.requestedBy ? a.requestedBy.displayName : '—' }}</div></td>
+                                <td>{{ a.approverLabel }}<div class="hints">запросил {{ a.requestedBy ? a.requestedBy.displayName : '—' }}</div></td>
                                 <td>{{ m.approval_badge(a) }}</td>
                                 <td class="col-nowrap">{{ (a.decidedAt ?: a.requestedAt)|date('d.m.Y H:i') }}</td>
                                 <td class="col-comment">{{ a.decisionNote ?: a.requestNote ?: '—' }}</td>

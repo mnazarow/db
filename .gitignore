@@ -17,3 +17,16 @@
 *.log
 .DS_Store
 Thumbs.db
+
+# Раздел «Видео»: зависимости и сборка (в архив дистрибутива их кладёт scripts/build-release.sh),
+# локальные настройки и файлы, которые создаёт «docportal video enable» в Docker.
+/video/server/node_modules/
+/video/web/node_modules/
+/video/web/dist/
+/video/server/.env
+/video/server/data/
+/video/.env
+/video/deploy/mediamtx/mediamtx.yml
+/docker/nginx/video/
+/docker/video/
+/dist/

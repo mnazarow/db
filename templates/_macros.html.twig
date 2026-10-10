@@ -6,9 +6,10 @@
     <span class="badge badge--{{ cls }}" title="{{ document|validity_text }}"><span class="badge__dot"></span>{{ state|validity_label }}{% if with_text and document.validUntil %} · {{ document.validUntil|date('d.m.Y') }}{% endif %}</span>
 {%- endmacro %}
 
-{% macro status_badge(document) %}
+{# moderation — документ ждёт решения по модерации (материал помощника маркетолога), а не согласующего. #}
+{% macro status_badge(document, moderation = false) %}
     {%- set cls = {draft: 'shifted', review: 'soon', published: 'done', archived: 'none'}[document.status] -%}
-    <span class="badge badge--{{ cls }}"><span class="badge__dot"></span>{{ document.status|status_label }}</span>
+    <span class="badge badge--{{ cls }}"><span class="badge__dot"></span>{{ moderation and document.onReview ? 'На модерации' : document.status|status_label }}</span>
 {%- endmacro %}
 
 {% macro approval_badge(approval) %}

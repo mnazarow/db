@@ -1,0 +1,73 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+body{margin:0;background:#fff;font-family:Arial,sans-serif}
+.box{fill:#fff;stroke:#0F4382;stroke-width:2}
+.box2{fill:#EEF4FA;stroke:#0F4382;stroke-width:2}
+.hdr{font:700 19px Arial,sans-serif;fill:#0F4382;text-transform:uppercase;letter-spacing:.4px}
+.t{font:14px Arial,sans-serif;fill:#1e2a3a}
+.b{font:700 16px Arial,sans-serif;fill:#1e2a3a}
+.s{font:12px Arial,sans-serif;fill:#4a5a6e}
+.lbl{font:700 12.5px Arial,sans-serif;fill:#0F4382}
+.arr{stroke:#0F4382;stroke-width:2.2;fill:none;marker-end:url(#a)}
+.arr2{stroke:#79A7C6;stroke-width:2.2;fill:none;marker-end:url(#b);stroke-dasharray:7 5}
+.zone{fill:#F6F9FC;stroke:#C9D8E8;stroke-dasharray:6 4}
+.zt{font:700 13px Arial,sans-serif;fill:#79A7C6;letter-spacing:1.5px}
+</style></head><body>
+<svg width="1400" height="840" viewBox="0 0 1400 840" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<marker id="a" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#0F4382"/></marker>
+<marker id="b" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#79A7C6"/></marker>
+</defs>
+<rect class="zone" x="20" y="20" width="270" height="800" rx="18"/><text class="zt" x="40" y="48">КЛИЕНТЫ</text>
+<rect class="zone" x="310" y="20" width="1070" height="800" rx="18"/><text class="zt" x="1360" y="811" text-anchor="end">СЕРВЕР CORPVIDEO — DOCKER COMPOSE ИЛИ SYSTEMD</text>
+
+<!-- Col A -->
+<rect class="box" x="40" y="90" width="220" height="100" rx="14"/><text class="b" x="150" y="122" text-anchor="middle">Браузер</text><text class="s" x="150" y="146" text-anchor="middle">Vue 3 SPA, hls.js, WebSocket</text><text class="s" x="150" y="166" text-anchor="middle">компьютер и телефон</text>
+<rect class="box" x="40" y="230" width="220" height="100" rx="14"/><text class="b" x="150" y="262" text-anchor="middle">Скрипты и интеграции</text><text class="s" x="150" y="286" text-anchor="middle">JSON API, токен cv_…</text><text class="s" x="150" y="306" text-anchor="middle">oEmbed, iframe-встраивание</text>
+<rect class="box" x="40" y="400" width="220" height="150" rx="14" style="stroke-dasharray:5 4;stroke:#79A7C6"/><text class="b" x="150" y="430" text-anchor="middle" fill="#0F4382">Порты</text>
+<text class="s" x="58" y="458">80, 443/tcp — веб (HTTPS)</text><text class="s" x="58" y="478">1935/tcp — RTMP (OBS)</text><text class="s" x="58" y="498">8890/udp — SRT</text><text class="s" x="58" y="518">8189/udp+tcp — WebRTC (ICE)</text><text class="s" x="58" y="538">остальное — только localhost</text>
+<rect class="box" x="40" y="620" width="220" height="100" rx="14"/><text class="b" x="150" y="652" text-anchor="middle">OBS / энкодер</text><text class="s" x="150" y="676" text-anchor="middle">RTMP или SRT + ключ трансляции</text><text class="s" x="150" y="696" text-anchor="middle">либо эфир из браузера (WHIP)</text>
+
+<!-- nginx -->
+<rect class="box2" x="340" y="90" width="220" height="260" rx="14"/><text class="hdr" x="450" y="122" text-anchor="middle">nginx</text>
+<text class="s" x="450" y="144" text-anchor="middle">HTTPS: Let's Encrypt,</text><text class="s" x="450" y="160" text-anchor="middle">самоподписанный или свой</text>
+<text class="t" x="356" y="192">• статика веб-интерфейса</text><text class="t" x="356" y="216">• /api, /ws → API</text><text class="t" x="356" y="240">• /media → файлы напрямую</text><text class="s" x="372" y="258">sendfile, Range, auth_request</text><text class="t" x="356" y="284">• X-Accel: скачивание оригинала</text><text class="t" x="356" y="308">• /whip → MediaMTX, чанки 64 МБ</text><text class="t" x="356" y="332">• HLS эфиров без буферизации</text>
+
+<!-- MediaMTX -->
+<rect class="box2" x="340" y="620" width="220" height="170" rx="14"/><text class="hdr" x="450" y="652" text-anchor="middle">MediaMTX</text><text class="s" x="450" y="672" text-anchor="middle">сервер трансляций</text>
+<text class="t" x="356" y="700">• приём RTMP / SRT / WebRTC</text><text class="t" x="356" y="724">• ключ проверяется хуком API</text><text class="t" x="356" y="748">• HLS low-latency для зрителей</text><text class="t" x="356" y="772">• запись эфира в fMP4</text>
+
+<!-- API -->
+<rect class="box2" x="640" y="90" width="300" height="240" rx="14"/><text class="hdr" x="790" y="122" text-anchor="middle">API — Node.js / Fastify</text>
+<text class="t" x="656" y="154">• аутентификация, сессии, TOTP, LDAP</text><text class="t" x="656" y="178">• видео, поиск, комментарии, плейлисты</text><text class="t" x="656" y="202">• права на медиа для nginx (auth_request)</text><text class="t" x="656" y="226">• WebSocket: уведомления, чат, прогресс</text><text class="t" x="656" y="250">• панель администратора, журнал действий</text><text class="t" x="656" y="274">• хук авторизации и опрос MediaMTX,</text><text class="t" x="668" y="294">  HLS-прокси эфиров (ключ скрыт)</text><text class="t" x="656" y="318">• SPA с мета-тегами Open Graph</text>
+
+<!-- PostgreSQL -->
+<rect class="box2" x="640" y="400" width="300" height="150" rx="14"/><text class="hdr" x="790" y="432" text-anchor="middle">PostgreSQL 16</text>
+<text class="t" x="656" y="460">• пользователи, видео, комментарии,</text><text class="t" x="668" y="480">  плейлисты, подписки, уведомления, аудит</text><text class="t" x="656" y="504">• поиск: russian, unaccent, pg_trgm</text><text class="t" x="656" y="528">• очередь заданий (SKIP LOCKED), сессии</text>
+
+<!-- Worker -->
+<rect class="box2" x="640" y="620" width="300" height="170" rx="14"/><text class="hdr" x="790" y="652" text-anchor="middle">Воркер</text>
+<text class="t" x="656" y="682">• ffmpeg: HLS 240p–2160p, mp4, обложки,</text><text class="t" x="668" y="702">  раскадровка, извлечение аудио</text><text class="t" x="656" y="726">• субтитры через ASR, письма через SMTP</text><text class="t" x="656" y="750">• импорт записей эфиров как видео</text><text class="t" x="656" y="774">• обслуживание: очистка, статистика</text>
+
+<!-- Storage -->
+<rect class="box2" x="1020" y="90" width="340" height="240" rx="14"/><text class="hdr" x="1190" y="122" text-anchor="middle">Файловое хранилище</text><text class="s" x="1190" y="142" text-anchor="middle">DATA_DIR (по умолчанию /var/lib/corpvideo)</text>
+<text class="t" x="1036" y="172">media/videos/&lt;id&gt;/</text><text class="s" x="1052" y="192">hls/ master.m3u8 + 240p…2160p</text><text class="s" x="1052" y="210">video.mp4, original.*, thumbs/,</text><text class="s" x="1052" y="228">storyboard/, subtitles/</text>
+<text class="t" x="1036" y="254">media/avatars, banners, branding, live</text><text class="t" x="1036" y="278">uploads/ — части загрузок (докачка)</text><text class="t" x="1036" y="302">live/recordings/ — записи эфиров</text><text class="t" x="1036" y="322">postgres/ (docker), ssl/, backups/</text>
+
+<!-- External -->
+<rect class="box" x="1020" y="400" width="340" height="150" rx="14"/><text class="b" x="1190" y="432" text-anchor="middle">Внешние службы (по желанию)</text>
+<text class="t" x="1036" y="464">• Active Directory / LDAP — вход сотрудников</text><text class="t" x="1036" y="488">• SMTP — подтверждения, уведомления</text><text class="t" x="1036" y="512">• ASR-сервер (Whisper API) — автосубтитры</text><text class="s" x="1036" y="536">все три настраиваются в панели администратора</text>
+
+<!-- arrows -->
+<path class="arr" d="M260,140 L340,140"/><text class="lbl" x="300" y="132" text-anchor="middle">HTTPS</text>
+<path class="arr" d="M260,280 L340,280"/><text class="lbl" x="300" y="272" text-anchor="middle">HTTPS</text>
+<path class="arr" d="M260,670 L340,670"/><text class="lbl" x="300" y="662" text-anchor="middle">RTMP/SRT</text>
+<path class="arr" d="M450,350 L450,620"/><text class="lbl" x="462" y="480" text-anchor="start">/whip (WebRTC)</text>
+<path class="arr" d="M560,200 L640,200"/><text class="lbl" x="600" y="190" text-anchor="middle">/api, /ws</text><text class="lbl" x="600" y="216" text-anchor="middle">auth_request</text>
+<path class="arr" d="M560,110 L600,110 L600,55 L1190,55 L1190,90"/><text class="lbl" x="895" y="48" text-anchor="middle">/media — отдача файлов напрямую (sendfile, Range, X-Accel)</text>
+<path class="arr" d="M790,330 L790,400"/><text class="lbl" x="800" y="370" text-anchor="start">SQL, очередь, события</text>
+<path class="arr" d="M790,620 L790,550"/><text class="lbl" x="800" y="590" text-anchor="start">задания, LISTEN/NOTIFY</text>
+<path class="arr" d="M560,660 L600,660 L600,300 L640,300"/><text class="lbl" x="612" y="480" text-anchor="middle" transform="rotate(-90 612 480)">хук, API :9997, HLS :8888</text>
+<path class="arr" d="M560,760 L640,760"/><text class="lbl" x="600" y="752" text-anchor="middle">записи</text>
+<path class="arr" d="M940,700 L980,700 L980,250 L1020,250"/><text class="lbl" x="962" y="480" text-anchor="middle" transform="rotate(-90 962 480)">файлы: HLS, обложки, субтитры</text>
+<path class="arr2" d="M940,740 L1000,740 L1000,480 L1020,480"/><text class="lbl" x="1012" y="640" text-anchor="middle" transform="rotate(-90 1012 640)" fill="#79A7C6">LDAP · SMTP · ASR</text>
+</svg></body></html>

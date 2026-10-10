@@ -89,6 +89,12 @@ final class UserRepository extends ServiceEntityRepository
         return $count;
     }
 
+    /** @return list<User> активные маркетологи (модераторы всех разделов) — получатели материалов на модерации */
+    public function findActiveMarketers(): array
+    {
+        return array_values(array_filter($this->findBy(['active' => true], ['displayName' => 'ASC']), static fn (User $u) => $u->isMarketer() && !$u->isAdmin()));
+    }
+
     /** @return list<User> активные администраторы (для уведомлений) */
     public function findActiveAdmins(): array
     {

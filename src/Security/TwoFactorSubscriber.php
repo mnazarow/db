@@ -33,8 +33,8 @@ final class TwoFactorSubscriber implements EventSubscriberInterface
 
     public const MAX_ATTEMPTS = 5;
 
-    private const ALLOWED_ROUTES = ['app_2fa_verify', 'app_logout', 'app_login', 'app_health'];
-    private const SETUP_ROUTES = ['app_2fa_setup', 'app_2fa_verify', 'app_logout', 'app_login', 'app_health', 'app_password_change'];
+    private const ALLOWED_ROUTES = ['app_2fa_verify', 'app_logout', 'app_login', 'app_health', 'video_session'];
+    private const SETUP_ROUTES = ['app_2fa_setup', 'app_2fa_verify', 'app_logout', 'app_login', 'app_health', 'app_password_change', 'video_session'];
 
     public function __construct(
         private readonly Security $security,

@@ -1,0 +1,103 @@
+{% extends 'base.html.twig' %}
+{% import '_macros.html.twig' as m %}
+
+{% block title %}На модерации{% endblock %}
+{% block body_class %}page-moderation{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        <div class="eyebrow">Модерация материалов</div>
+        <div class="hero__row">
+            <div>
+                <h1 class="h-display">На модерации</h1>
+                <p class="hero__meta">{% if is_moderator %}Материалы помощников маркетолога ждут вашего решения: одобренный материал сразу публикуется, возвращённый на доработку остаётся черновиком с комментарием. Решает первый ответивший маркетолог.{% else %}Ваши материалы, отправленные маркетологам. Сотрудники увидят их после одобрения.{% endif %}</p>
+            </div>
+            <div class="hero__actions">
+                {% if video_enabled() %}
+                    <a class="btn btn--ghost" href="{{ video_url(is_moderator ? '/admin/moderation' : '/studio/videos') }}">{{ is_moderator ? 'Видео на модерации' : 'Мои видео' }}</a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</section>
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+
+    {% if is_moderator %}
+        <div class="card table-card">
+            <div class="card__head card__head--padded">
+                <h2 class="h-section">Ждут решения <span class="tag">{{ queue|length }}</span></h2>
+            </div>
+            {% if queue|length > 0 %}
+                <ul class="attention-list">
+                    {% for a in queue %}
+                        <li class="attention-item">
+                            <a href="{{ path('app_document_show', {id: a.document.id}) }}">{{ a.document.title }}</a>
+                            <span class="attention-item__meta">{{ a.document.section.fullName }} · {{ a.document.published ? 'новая редакция ' ~ a.versionNumber ~ ' опубликованного документа' : 'новый материал, редакция ' ~ a.versionNumber }} · {{ a.requestedBy ? a.requestedBy.displayName : '—' }}, {{ a.requestedAt|date('d.m.Y H:i') }}</span>
+                            {% if a.requestNote %}<p class="snippet__text">{{ a.requestNote }}</p>{% endif %}
+                            <form method="post" action="{{ path('app_approval_decide', {id: a.id}) }}" class="form ack-decide">
+                                <input type="hidden" name="_token" value="{{ csrf_token('approval_decide_' ~ a.id) }}">
+                                <input type="hidden" name="from_list" value="1">
+                                <input class="form-control form-control--inline" type="text" name="note" maxlength="2000" placeholder="Комментарий (обязателен при возврате на доработку)">
+                                <button type="submit" class="btn btn--pill btn--small" name="decision" value="approve">Одобрить и опубликовать</button>
+                                <button type="submit" class="btn btn--ghost btn--small btn--danger" name="decision" value="reject">Вернуть на доработку</button>
+                            </form>
+                        </li>
+                    {% endfor %}
+                </ul>
+            {% else %}
+                <p class="card__padded text-muted">Материалов на модерации нет.</p>
+            {% endif %}
+        </div>
+    {% endif %}
+
+    <div class="card table-card">
+        <div class="card__head card__head--padded"><h2 class="h-section">{{ is_moderator ? 'Отправлено мной' : 'Мои материалы' }}</h2></div>
+        {% if requested|length > 0 %}
+            <div class="table-scroll">
+                <table class="admin-table">
+                    <thead><tr><th>Материал</th><th>Раздел</th><th>Редакция</th><th>Состояние</th><th>Отправлен</th><th>Решение</th></tr></thead>
+                    <tbody>
+                    {% for a in requested %}
+                        <tr>
+                            <td><a class="doc-table__title" href="{{ path('app_document_show', {id: a.document.id}) }}">{{ a.document.title }}</a></td>
+                            <td>{{ a.document.section.fullName }}</td>
+                            <td>v{{ a.versionNumber }}</td>
+                            <td>{{ m.approval_badge(a) }}{% if not a.moderation %}<div class="hints">согласующий: {{ a.approverLabel }}</div>{% endif %}</td>
+                            <td class="col-nowrap">{{ a.requestedAt|date('d.m.Y H:i') }}</td>
+                            <td class="col-comment">{% if a.decidedAt %}{{ a.deciderName }}, {{ a.decidedAt|date('d.m.Y H:i') }}{% if a.decisionNote %}: «{{ a.decisionNote }}»{% endif %}{% else %}—{% endif %}</td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <p class="card__padded text-muted">{{ is_moderator ? 'Вы ничего не отправляли на согласование.' : 'Вы ещё не отправляли материалы на модерацию. Добавьте документ в раздел или загрузите файл в таблицу материалов — и отправьте его на модерацию.' }}</p>
+        {% endif %}
+    </div>
+
+    {% if is_moderator and decided|length > 0 %}
+        <div class="card table-card">
+            <div class="card__head card__head--padded"><h2 class="h-section">Мои решения</h2></div>
+            <div class="table-scroll">
+                <table class="admin-table">
+                    <thead><tr><th>Материал</th><th>Раздел</th><th>Редакция</th><th>Решение</th><th>Дата</th><th>Комментарий</th></tr></thead>
+                    <tbody>
+                    {% for a in decided %}
+                        <tr>
+                            <td><a class="doc-table__title" href="{{ path('app_document_show', {id: a.document.id}) }}">{{ a.document.title }}</a></td>
+                            <td>{{ a.document.section.fullName }}</td>
+                            <td>v{{ a.versionNumber }}</td>
+                            <td>{{ m.approval_badge(a) }}</td>
+                            <td class="col-nowrap">{{ a.decidedAt|date('d.m.Y H:i') }}</td>
+                            <td class="col-comment">{{ a.decisionNote ?: '—' }}</td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    {% endif %}
+</section>
+{% endblock %}

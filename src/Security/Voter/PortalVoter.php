@@ -26,10 +26,14 @@ final class PortalVoter extends Voter
     public const DOCUMENT_DELETE = 'DOCUMENT_DELETE';
     public const DOCUMENT_STATS = 'DOCUMENT_STATS';
     public const MODERATOR = 'MODERATOR';                // модерирует хотя бы один раздел
+    public const SECTION_CONTRIBUTE = 'SECTION_CONTRIBUTE';   // добавлять документы (модератор раздела или помощник маркетолога)
+    public const DOCUMENT_CONTRIBUTE = 'DOCUMENT_CONTRIBUTE'; // новая редакция, правка черновика, отправка на модерацию
+    public const CONTRIBUTOR = 'CONTRIBUTOR';            // добавляет документы хоть куда-нибудь
 
     private const ATTRIBUTES = [
-        self::SECTION_VIEW, self::SECTION_MANAGE, self::SECTION_MODERATORS,
-        self::DOCUMENT_VIEW, self::DOCUMENT_EDIT, self::DOCUMENT_DELETE, self::DOCUMENT_STATS, self::MODERATOR,
+        self::SECTION_VIEW, self::SECTION_MANAGE, self::SECTION_MODERATORS, self::SECTION_CONTRIBUTE,
+        self::DOCUMENT_VIEW, self::DOCUMENT_EDIT, self::DOCUMENT_DELETE, self::DOCUMENT_STATS, self::DOCUMENT_CONTRIBUTE,
+        self::MODERATOR, self::CONTRIBUTOR,
     ];
 
     public function __construct(private readonly Access $access)
@@ -43,9 +47,9 @@ final class PortalVoter extends Voter
         }
 
         return match ($attribute) {
-            self::SECTION_VIEW, self::SECTION_MANAGE, self::SECTION_MODERATORS => $subject instanceof Section,
-            self::DOCUMENT_VIEW, self::DOCUMENT_EDIT, self::DOCUMENT_DELETE, self::DOCUMENT_STATS => $subject instanceof Document,
-            self::MODERATOR => true,
+            self::SECTION_VIEW, self::SECTION_MANAGE, self::SECTION_MODERATORS, self::SECTION_CONTRIBUTE => $subject instanceof Section,
+            self::DOCUMENT_VIEW, self::DOCUMENT_EDIT, self::DOCUMENT_DELETE, self::DOCUMENT_STATS, self::DOCUMENT_CONTRIBUTE => $subject instanceof Document,
+            self::MODERATOR, self::CONTRIBUTOR => true,
         };
     }
 
@@ -68,6 +72,9 @@ final class PortalVoter extends Voter
             self::DOCUMENT_VIEW => $this->access->canViewDocument($user, $subject),
             self::DOCUMENT_EDIT, self::DOCUMENT_DELETE, self::DOCUMENT_STATS => $this->access->canEditDocument($user, $subject),
             self::MODERATOR => $this->access->isModerator($user),
+            self::SECTION_CONTRIBUTE => $this->access->canContribute($user, $subject),
+            self::DOCUMENT_CONTRIBUTE => $this->access->canContributeToDocument($user, $subject),
+            self::CONTRIBUTOR => $this->access->isContributor($user),
             default => false,
         };
     }

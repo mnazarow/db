@@ -24,7 +24,7 @@ final class DocumentApprovalRepository extends ServiceEntityRepository
     public function findPending(Document $document): ?DocumentApproval
     {
         return $this->createQueryBuilder('a')
-            ->join('a.approver', 'u')->addSelect('u')
+            ->leftJoin('a.approver', 'u')->addSelect('u')
             ->andWhere('a.document = :d')->setParameter('d', $document)
             ->andWhere('a.decision = :pending')->setParameter('pending', DocumentApproval::PENDING)
             ->orderBy('a.id', 'DESC')
@@ -36,7 +36,7 @@ final class DocumentApprovalRepository extends ServiceEntityRepository
     public function findDecided(Document $document, int $versionNumber): ?DocumentApproval
     {
         return $this->createQueryBuilder('a')
-            ->join('a.approver', 'u')->addSelect('u')
+            ->leftJoin('a.approver', 'u')->addSelect('u')
             ->andWhere('a.document = :d')->setParameter('d', $document)
             ->andWhere('a.versionNumber = :v')->setParameter('v', $versionNumber)
             ->andWhere('a.decision IN (:decided)')->setParameter('decided', [DocumentApproval::APPROVED, DocumentApproval::REJECTED])
@@ -63,7 +63,7 @@ final class DocumentApprovalRepository extends ServiceEntityRepository
     public function findForDocument(Document $document): array
     {
         return $this->createQueryBuilder('a')
-            ->join('a.approver', 'u')->addSelect('u')
+            ->leftJoin('a.approver', 'u')->addSelect('u')
             ->leftJoin('a.requestedBy', 'r')->addSelect('r')
             ->andWhere('a.document = :d')->setParameter('d', $document)
             ->orderBy('a.id', 'DESC')
@@ -89,6 +89,68 @@ final class DocumentApprovalRepository extends ServiceEntityRepository
     }
 
     /**
+     * Очередь модерации: материалы помощников маркетолога, ждущие решения, в указанных разделах
+     * (null — во всех разделах, для маркетолога и администратора).
+     *
+     * @param list<int>|null $sectionIds
+     *
+     * @return list<DocumentApproval>
+     */
+    public function findModerationQueue(?array $sectionIds, int $limit = 100): array
+    {
+        if ([] === $sectionIds) {
+            return [];
+        }
+        $qb = $this->createQueryBuilder('a')
+            ->join('a.document', 'd')->addSelect('d')
+            ->join('d.section', 's')->addSelect('s')
+            ->leftJoin('a.requestedBy', 'r')->addSelect('r')
+            ->andWhere('a.approver IS NULL')
+            ->andWhere('a.decision = :pending')->setParameter('pending', DocumentApproval::PENDING)
+            ->orderBy('a.requestedAt', 'ASC')
+            ->setMaxResults($limit);
+        if (null !== $sectionIds) {
+            $qb->andWhere('d.section IN (:sections)')->setParameter('sections', $sectionIds);
+        }
+
+        return $qb->getQuery()->getResult();
+    }
+
+    /** @param list<int>|null $sectionIds */
+    public function countModerationQueue(?array $sectionIds): int
+    {
+        if ([] === $sectionIds) {
+            return 0;
+        }
+        $qb = $this->createQueryBuilder('a')->select('COUNT(a.id)')
+            ->join('a.document', 'd')
+            ->andWhere('a.approver IS NULL')
+            ->andWhere('a.decision = :pending')->setParameter('pending', DocumentApproval::PENDING);
+        if (null !== $sectionIds) {
+            $qb->andWhere('d.section IN (:sections)')->setParameter('sections', $sectionIds);
+        }
+
+        return (int) $qb->getQuery()->getSingleScalarResult();
+    }
+
+    /**
+     * Что сотрудник отправлял на согласование и модерацию (последние запросы, новые сверху).
+     *
+     * @return list<DocumentApproval>
+     */
+    public function findRequestedBy(User $user, int $limit = 50): array
+    {
+        return $this->createQueryBuilder('a')
+            ->join('a.document', 'd')->addSelect('d')
+            ->join('d.section', 's')->addSelect('s')
+            ->leftJoin('a.approver', 'u')->addSelect('u')
+            ->andWhere('a.requestedBy = :u')->setParameter('u', $user)
+            ->orderBy('a.id', 'DESC')
+            ->setMaxResults($limit)
+            ->getQuery()->getResult();
+    }
+
+    /**
      * История решений сотрудника.
      *
      * @return list<DocumentApproval>
@@ -98,7 +160,7 @@ final class DocumentApprovalRepository extends ServiceEntityRepository
         return $this->createQueryBuilder('a')
             ->join('a.document', 'd')->addSelect('d')
             ->join('d.section', 's')->addSelect('s')
-            ->andWhere('a.approver = :u')->setParameter('u', $user)
+            ->andWhere('a.approver = :u OR a.decidedBy = :u')->setParameter('u', $user)
             ->andWhere('a.decision IN (:decided)')->setParameter('decided', [DocumentApproval::APPROVED, DocumentApproval::REJECTED])
             ->orderBy('a.decidedAt', 'DESC')
             ->setMaxResults($limit)
@@ -133,7 +195,7 @@ final class DocumentApprovalRepository extends ServiceEntityRepository
         return $this->createQueryBuilder('a')
             ->join('a.document', 'd')->addSelect('d')
             ->join('d.section', 's')->addSelect('s')
-            ->join('a.approver', 'u')->addSelect('u')
+            ->leftJoin('a.approver', 'u')->addSelect('u')
             ->leftJoin('a.requestedBy', 'r')->addSelect('r')
             ->andWhere('a.decision = :pending')->setParameter('pending', DocumentApproval::PENDING)
             ->orderBy('a.requestedAt', 'ASC')

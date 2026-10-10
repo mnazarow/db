@@ -165,6 +165,17 @@ final class SsoController extends AbstractController
             $values = array_map('strval', \is_array($value) ? $value : [$value]);
             $this->userManager->syncAdminFromDirectory($user, \in_array($sso['admin_value'], $values, true), 'SSO');
         }
+        // Роли «Маркетолог» и «Помощник маркетолога» — по тому же утверждению, если заданы их значения.
+        if ('' !== $sso['admin_claim'] && ('' !== $sso['marketer_value'] || '' !== $sso['assistant_value'])) {
+            $value = $claims[$sso['admin_claim']] ?? null;
+            $values = array_map('strval', \is_array($value) ? $value : [$value]);
+            $position = match (true) {
+                '' !== $sso['marketer_value'] && \in_array($sso['marketer_value'], $values, true) => User::POSITION_MARKETER,
+                '' !== $sso['assistant_value'] && \in_array($sso['assistant_value'], $values, true) => User::POSITION_ASSISTANT,
+                default => User::POSITION_USER,
+            };
+            $this->userManager->syncPositionFromDirectory($user, $position, 'SSO');
+        }
         if (null === $existing) {
             $this->em->persist($user);
         }

@@ -45,16 +45,19 @@ final class SectionController extends AbstractController
     {
         $guest = null === $user;
         $canManage = $this->access->canManageSection($user, $section);
-        $filter = (string) $request->query->get('status', $canManage ? 'all' : 'published');
+        $canContribute = $this->access->canContribute($user, $section);
+        // Черновики и материалы на модерации видят модераторы раздела и помощники маркетолога (готовят их).
+        $seesDrafts = $canManage || $canContribute;
+        $filter = (string) $request->query->get('status', $seesDrafts ? 'all' : 'published');
         $sort = (string) $request->query->get('sort', 'title');
         $statuses = match ($filter) {
             'draft' => [Document::STATUS_DRAFT],
             'review' => [Document::STATUS_REVIEW],
             'archived' => [Document::STATUS_ARCHIVED],
-            'all' => $canManage ? Document::STATUSES : [Document::STATUS_PUBLISHED],
+            'all' => $seesDrafts ? Document::STATUSES : [Document::STATUS_PUBLISHED],
             default => [Document::STATUS_PUBLISHED],
         };
-        if (!$canManage) {
+        if (!$seesDrafts) {
             $statuses = [Document::STATUS_PUBLISHED];
             $filter = 'published';
         }
@@ -72,11 +75,13 @@ final class SectionController extends AbstractController
             'sort' => $sort,
             'by_status' => $byStatus,
             'can_manage' => $canManage,
+            'can_contribute' => $canContribute,
+            'sees_drafts' => $seesDrafts,
             'moderators' => $section->getModerators(),
             'expiring' => $canManage ? $this->stats->expiring($this->sections->findSubtreeIds($section), 5) : [],
             'subscriptions_enabled' => $this->subscriptions->isEnabled(),
             'subscribed' => $this->subscriptions->isSubscribedToSection($user, $section),
-            'templates' => $canManage ? $this->templates->findForSection($section) : [],
+            'templates' => $canContribute ? $this->templates->findForSection($section) : [],
         ]);
     }
 

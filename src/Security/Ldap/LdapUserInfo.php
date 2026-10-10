@@ -22,6 +22,11 @@ final class LdapUserInfo
         public readonly bool $isAdmin,
         /** Задана ли группа администраторов: только тогда права синхронизируются (в том числе снимаются). */
         public readonly bool $adminGroupConfigured = false,
+        /**
+         * Роль по группам «Маркетолог» / «Помощник маркетолога» (marketer, assistant или user) либо null,
+         * если эти группы не заданы — тогда роль ведётся в панели администратора.
+         */
+        public readonly ?string $position = null,
     ) {
     }
 }

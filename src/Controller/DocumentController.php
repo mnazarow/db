@@ -77,15 +77,15 @@ final class DocumentController extends AbstractController
     }
 
     #[Route('/new', name: 'app_document_new', methods: ['GET', 'POST'])]
-    #[IsGranted(PortalVoter::MODERATOR)]
+    #[IsGranted(PortalVoter::CONTRIBUTOR)]
     public function new(Request $request, #[CurrentUser] User $user): Response
     {
         $sectionId = (int) $request->query->get('section');
         $section = $sectionId > 0 ? $this->sections->find($sectionId) : null;
-        if (null !== $section && !$this->access->canManageSection($user, $section)) {
+        if (null !== $section && !$this->access->canContribute($user, $section)) {
             throw $this->createAccessDeniedException('Нет прав на добавление документов в этот раздел.');
         }
-        $choices = $this->access->managedSections($user);
+        $choices = $this->access->contributableSections($user);
         if ([] === $choices) {
             $this->addFlash('warning', 'У вас нет разделов, в которые можно добавлять документы.');
 
@@ -107,7 +107,7 @@ final class DocumentController extends AbstractController
             $template = $this->templateRepository->find($templateId);
             if (null !== $template && $template->isActive()) {
                 $templateBody = $this->templates->prepare($template, $document);
-                if (!$this->access->canManageSection($user, $document->getSection())) {
+                if (!$this->access->canContribute($user, $document->getSection())) {
                     $document->setSection($section ?? $choices[0]);
                 }
                 $this->templates->markUsed($template);
@@ -115,10 +115,13 @@ final class DocumentController extends AbstractController
             }
         }
 
+        // Помощник маркетолога (не модератор выбранного раздела) публикует только через модерацию.
+        $moderation = $this->access->isAssistant($user) && !$this->access->isModerator($user);
         $form = $this->createForm(DocumentType::class, $document, [
             'section_choices' => $choices,
             'is_new' => true,
             'accept' => $this->acceptList(),
+            'moderation' => $moderation,
         ]);
         if (null !== $templateBody) {
             $form->get('content')->setData($templateBody);
@@ -126,11 +129,13 @@ final class DocumentController extends AbstractController
         $form->handleRequest($request);
 
         if ($form->isSubmitted() && $form->isValid()) {
-            if (!$this->access->canManageSection($user, $document->getSection())) {
+            if (!$this->access->canContribute($user, $document->getSection())) {
                 $form->get('section')->addError(new FormError('У вас нет прав на выбранный раздел.'));
             } else {
                 /** @var UploadedFile|null $file */
                 $file = $form->get('file')->getData();
+                $needsModeration = $this->access->needsModeration($user, $document->getSection());
+                $publish = (bool) $form->get('publish')->getData();
                 try {
                     $this->manager->create(
                         $document,
@@ -138,15 +143,19 @@ final class DocumentController extends AbstractController
                         $form->get('content')->getData(),
                         $form->get('changeNote')->getData(),
                         $user,
-                        // При обязательном согласовании новый документ всегда сохраняется черновиком.
-                        (bool) $form->get('publish')->getData() && !$this->approvals->isRequired(),
+                        // При обязательном согласовании и у помощника маркетолога новый документ сохраняется черновиком.
+                        $publish && !$this->approvals->isRequired() && !$needsModeration,
                         $request->getClientIp(),
                     );
-                    $this->addFlash('success', $document->isPublished()
-                        ? 'Документ опубликован.'
-                        : ($this->approvals->isRequired() && (bool) $form->get('publish')->getData()
-                            ? 'Документ сохранён как черновик: по настройкам портала публикация возможна только после согласования.'
-                            : 'Документ сохранён как черновик.'));
+                    if ($needsModeration) {
+                        $this->flashModeration($document, $publish, $user);
+                    } else {
+                        $this->addFlash('success', $document->isPublished()
+                            ? 'Документ опубликован.'
+                            : ($this->approvals->isRequired() && $publish
+                                ? 'Документ сохранён как черновик: по настройкам портала публикация возможна только после согласования.'
+                                : 'Документ сохранён как черновик.'));
+                    }
                     $this->autoDescribe($document, $user, $request);
 
                     return $this->redirectToRoute('app_document_show', ['id' => $document->getId()]);
@@ -163,7 +172,48 @@ final class DocumentController extends AbstractController
             'storage' => $this->manager->getStorage(),
             'template' => $template,
             'templates' => $this->templateRepository->findForSection($document->getSection()),
+            'moderation' => $moderation,
+            'card_locked' => false,
         ]);
+    }
+
+    /** Отправляет материал помощника маркетолога на модерацию (если он попросил) и сообщает, что дальше. */
+    private function flashModeration(Document $document, bool $submit, User $user): void
+    {
+        if (null !== $this->approvalRepository->findPending($document)) {
+            $this->addFlash('success', 'Изменения сохранены. Материал уже на модерации — решение примет маркетолог.');
+
+            return;
+        }
+        if (!$submit) {
+            $this->addFlash('success', 'Материал сохранён как черновик. Когда он будет готов, нажмите в карточке «Отправить на модерацию».');
+
+            return;
+        }
+        try {
+            $this->approvals->submitForModeration($document, null, $user);
+            $this->addFlash('success', $document->isPublished()
+                ? 'Новая редакция отправлена на модерацию: она вступит в силу после одобрения маркетологом, до этого сотрудники видят прежнюю.'
+                : 'Материал отправлен на модерацию: сотрудники увидят его после одобрения маркетологом.');
+        } catch (\DomainException $e) {
+            $this->addFlash('warning', 'Сохранено, но на модерацию не отправлено: '.$e->getMessage());
+        }
+    }
+
+    /** Помощник маркетолога отправляет черновик или новую редакцию на модерацию. */
+    #[Route('/{id}/moderation', name: 'app_document_moderation_submit', requirements: ['id' => '\d+'], methods: ['POST'])]
+    #[IsGranted(PortalVoter::DOCUMENT_CONTRIBUTE, subject: 'document')]
+    public function submitModeration(Document $document, Request $request, #[CurrentUser] User $user): Response
+    {
+        $this->checkToken($request, $document);
+        try {
+            $this->approvals->submitForModeration($document, (string) $request->request->get('note'), $user);
+            $this->addFlash('success', 'Материал отправлен на модерацию. Маркетологи получили уведомление.');
+        } catch (\DomainException $e) {
+            $this->addFlash('danger', $e->getMessage());
+        }
+
+        return $this->redirectToRoute('app_document_show', ['id' => $document->getId()]);
     }
 
     #[Route('/{id}', name: 'app_document_show', requirements: ['id' => '\d+'], methods: ['GET'])]
@@ -172,8 +222,10 @@ final class DocumentController extends AbstractController
     {
         $this->trackView($document, $request, $user);
         $canManage = $this->access->canEditDocument($user, $document);
+        $canContribute = $this->access->canContributeToDocument($user, $document);
         $current = $document->getCurrentVersion();
-        $pendingVersion = $canManage || $this->access->isPendingApprover($user, $document) ? $document->getPendingVersion() : null;
+        $approval = $this->approvalRepository->findPending($document);
+        $pendingVersion = $canContribute || $this->access->isPendingApprover($user, $document) ? $document->getPendingVersion() : null;
         $comments = $this->comments->isEnabled() ? $this->comments->forDocument($document) : [];
         $editable = $deletable = [];
         foreach ($comments as $comment) {
@@ -197,8 +249,15 @@ final class DocumentController extends AbstractController
             'preview_ready' => null !== $current && $this->previewer->isAvailable() && $this->previewer->supports($current) && $this->previewer->isReady($current),
             'preview_failed' => null !== $current && $this->previewer->isAvailable() && $this->previewer->supports($current) && $this->previewer->hasFailed($current),
             'preview_extensions' => $this->previewer->isAvailable() ? DocumentPreviewer::CONVERTIBLE : [],
-            // Согласование: текущий запрос, решение по текущей редакции и правило публикации.
-            'approval' => $this->approvalRepository->findPending($document),
+            // Согласование и модерация: текущий запрос, решение по текущей редакции и правило публикации.
+            'approval' => $approval,
+            'can_decide' => null !== $approval && $this->approvals->canDecide($approval, $user),
+            'can_contribute' => $canContribute,
+            'can_edit_card' => $this->access->canEditCard($user, $document),
+            'needs_moderation' => $this->access->needsModeration($user, $document->getSection()),
+            // Помощник отправляет на модерацию черновик или новую редакцию опубликованного документа.
+            'can_submit_moderation' => null === $approval && !$canManage && $canContribute && null !== $current
+                && (!$document->isPublished() || null !== $document->getPendingVersion()),
             'approval_decided' => null !== $current ? $this->approvalRepository->findDecided($document, $current->getNumber()) : null,
             'approval_required' => $this->approvals->isRequired(),
             'can_publish' => $canManage && $this->approvals->canPublish($document),
@@ -277,19 +336,23 @@ final class DocumentController extends AbstractController
     }
 
     #[Route('/{id}/edit', name: 'app_document_edit', requirements: ['id' => '\d+'], methods: ['GET', 'POST'])]
-    #[IsGranted(PortalVoter::DOCUMENT_EDIT, subject: 'document')]
+    #[IsGranted(PortalVoter::DOCUMENT_CONTRIBUTE, subject: 'document')]
     public function edit(Document $document, Request $request, #[CurrentUser] User $user): Response
     {
         $previousSection = $document->getSection();
+        $moderation = $this->access->needsModeration($user, $document->getSection());
+        $cardLocked = !$this->access->canEditCard($user, $document);
         $form = $this->createForm(DocumentType::class, $document, [
-            'section_choices' => $this->access->managedSections($user),
+            'section_choices' => $this->access->contributableSections($user),
             'is_new' => false,
             'accept' => $this->acceptList(),
+            'moderation' => $moderation,
+            'card_locked' => $cardLocked,
         ]);
         $form->handleRequest($request);
 
         if ($form->isSubmitted() && $form->isValid()) {
-            if (!$this->access->canManageSection($user, $document->getSection())) {
+            if (!$this->access->canContribute($user, $document->getSection())) {
                 $form->get('section')->addError(new FormError('У вас нет прав на выбранный раздел.'));
             } else {
                 try {
@@ -305,10 +368,18 @@ final class DocumentController extends AbstractController
                     } else {
                         $newVersion = $this->manager->addPageVersion($document, $form->get('content')->getData(), $note, $user, $ip);
                     }
-                    $this->manager->updateMetadata($document, $previousSection, $user, $ip);
-                    // Название и тип документа — это название и тип строки таблицы материалов.
-                    $this->materials->syncFromDocument($document, $user);
-                    if (null !== $newVersion && !$document->isVersionReleased($newVersion)) {
+                    if (!$cardLocked) {
+                        $this->manager->updateMetadata($document, $previousSection, $user, $ip);
+                        // Название и тип документа — это название и тип строки таблицы материалов.
+                        $this->materials->syncFromDocument($document, $user);
+                    }
+                    if ($moderation) {
+                        if (null === $newVersion && $cardLocked) {
+                            $this->addFlash('info', 'Новая редакция не загружена — изменений нет.');
+                        } else {
+                            $this->flashModeration($document, (bool) $form->get('submitModeration')->getData(), $user);
+                        }
+                    } elseif (null !== $newVersion && !$document->isVersionReleased($newVersion)) {
                         $this->addFlash('warning', \sprintf('Сохранена редакция %d. По настройкам портала она вступит в силу после согласования — отправьте её на согласование; до решения сотрудники видят редакцию %d.', $newVersion->getNumber(), $document->getCurrentVersion()?->getNumber() ?? 0));
                     } else {
                         $this->addFlash('success', null !== $newVersion ? \sprintf('Сохранена версия %d.', $newVersion->getNumber()) : 'Карточка документа сохранена.');
@@ -328,6 +399,8 @@ final class DocumentController extends AbstractController
             'storage' => $this->manager->getStorage(),
             'template' => null,
             'templates' => [],
+            'moderation' => $moderation,
+            'card_locked' => $cardLocked,
         ]);
     }
 

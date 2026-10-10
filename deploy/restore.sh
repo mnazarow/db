@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # =============================================================================
 #  Восстановление портала документации из резервной копии.
-#  Использование: sudo ./deploy/restore.sh АРХИВ.tar.gz [--db-only|--files-only] [--yes]
-#  ВНИМАНИЕ: текущие данные базы и файлы документов будут заменены содержимым архива.
+#  Использование: sudo ./deploy/restore.sh АРХИВ.tar.gz [--db-only|--files-only] [--no-video] [--yes]
+#  ВНИМАНИЕ: текущие данные базы и файлы документов будут заменены содержимым архива (при полном
+#  восстановлении — и данные раздела «Видео», если они есть в архиве и раздел включён).
 #  Перед восстановлением создаётся страховочная копия текущего состояния.
 # =============================================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=deploy/common.sh
 . "${SCRIPT_DIR}/common.sh"
+# shellcheck source=deploy/video.sh
+. "${SCRIPT_DIR}/video.sh"
 
 ARCHIVE=""
 DB_ONLY="0"
@@ -15,6 +18,7 @@ FILES_ONLY="0"
 ASSUME_YES="0"
 SAFETY_BACKUP="1"
 SAFETY=""
+NO_VIDEO="0"
 # Режим обслуживания на время замены данных: включил ли его этот запуск, начались ли изменения, завершено ли.
 MAINT_SET="0"
 DATA_CHANGED="0"
@@ -27,6 +31,8 @@ usage() {
 Использование: sudo $0 АРХИВ.tar.gz [параметры]
   --db-only             Восстановить только базу данных.
   --files-only          Восстановить только файлы документов.
+  --no-video            Не восстанавливать раздел «Видео» (база видеопортала и видеофайлы остаются текущими).
+                        С --db-only и --files-only раздел «Видео» не восстанавливается.
   --no-safety-backup    Не создавать страховочную копию текущего состояния перед восстановлением.
   --yes, -y             Не спрашивать подтверждения.
   --help                Справка.
@@ -37,6 +43,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --db-only) DB_ONLY="1"; shift ;;
         --files-only) FILES_ONLY="1"; shift ;;
+        --no-video) NO_VIDEO="1"; shift ;;
         --no-safety-backup) SAFETY_BACKUP="0"; shift ;;
         --yes|-y) ASSUME_YES="1"; shift ;;
         --help|-h) usage; exit 0 ;;
@@ -340,6 +347,11 @@ if [[ "${DB_ONLY}" != "1" ]]; then
         restorecon -R "$(readlink -f "${APP_DIR}/shared/storage")" >>"${LOG_FILE}" 2>&1 || true
     fi
     ok "Файлы восстановлены (${restored} шт.)"
+fi
+
+# Раздел «Видео» — только при полном восстановлении. Его ошибка — предупреждение: данные портала уже восстановлены.
+if [[ "${DB_ONLY}" != "1" && "${FILES_ONLY}" != "1" && "${NO_VIDEO}" != "1" && -f "${SRC}/video/db.dump" ]]; then
+    ( video_restore "${SRC}" ) || warn "Раздел «Видео» не восстановлен (см. журнал ${LOG_FILE}). Повторить: ${APP_ID} restore ${ARCHIVE} — или вручную, по docs/РУКОВОДСТВО.md."
 fi
 
 app_console cache:clear >>"${LOG_FILE}" 2>&1 || warn "Не удалось очистить кэш приложения — выполните: ${APP_ID} console cache:clear"

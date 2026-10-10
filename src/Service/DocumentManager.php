@@ -12,6 +12,7 @@ use App\Entity\DocumentVersion;
 use App\Entity\Section;
 use App\Entity\User;
 use App\Repository\DocumentApprovalRepository;
+use App\Security\Access;
 use App\Service\Html\PageHtml;
 use App\Service\Preview\DocumentPreviewer;
 use App\Service\Text\TextIndexer;
@@ -37,7 +38,14 @@ final class DocumentManager
         private readonly ?DocumentKindService $kinds = null,
         private readonly ?PortalSettings $settings = null,
         private readonly ?DocumentApprovalRepository $approvals = null,
+        private readonly ?Access $access = null,
     ) {
+    }
+
+    /** Публикует ли этот сотрудник только через модерацию (помощник маркетолога вне своих разделов). */
+    public function needsModeration(?User $actor, Section $section): bool
+    {
+        return null !== $this->access && $this->access->needsModeration($actor, $section);
     }
 
     public function getStorage(): FileStorage
@@ -133,6 +141,10 @@ final class DocumentManager
      */
     private function createWith(Document $document, callable $fillVersion, ?string $changeNote, User $actor, bool $publish, ?string $ip, ?array $details, ?callable $undo = null): Document
     {
+        // Помощник маркетолога сам не публикует: документ остаётся черновиком до решения модератора.
+        if ($publish && $this->needsModeration($actor, $document->getSection())) {
+            $publish = false;
+        }
         $document->setOwner($actor)->setStatus(Document::STATUS_DRAFT);
         $this->em->persist($document);
         $this->em->flush(); // нужен id для каталога хранилища
@@ -245,9 +257,10 @@ final class DocumentManager
      * Новые редакции опубликованного документа при обязательном согласовании не становятся текущими
      * сразу: сотрудники видят прежнюю редакцию, пока новая не будет согласована (см. promoteVersion()).
      */
-    public function holdsNewVersions(Document $document): bool
+    public function holdsNewVersions(Document $document, ?User $actor = null): bool
     {
-        return $document->isPublished() && $this->approvalRequired();
+        // Новая редакция от помощника маркетолога тоже ждёт решения: сотрудники до модерации видят прежнюю.
+        return $document->isPublished() && ($this->approvalRequired() || $this->needsModeration($actor, $document->getSection()));
     }
 
     /** Включено ли «Публиковать только после согласования». */
@@ -280,7 +293,7 @@ final class DocumentManager
     private function addVersionWith(Document $document, string $kind, callable $fillVersion, ?string $changeNote, User $actor, ?string $ip, string $eventType, array $details, string $logMessage, ?callable $undo = null): DocumentVersion
     {
         $this->assertVersionsEditable($document);
-        $hold = $this->holdsNewVersions($document);
+        $hold = $this->holdsNewVersions($document, $actor);
         $connection = $this->em->getConnection();
         $connection->beginTransaction();
         $version = null;

@@ -74,6 +74,15 @@
                     <label class="form-label" for="sso-admin-value">Значение для администратора</label>
                     <input class="form-control" id="sso-admin-value" name="admin_value" value="{{ sso.admin_value }}" placeholder="docportal-admins">
                 </div>
+                <div class="form-row">
+                    <label class="form-label" for="sso-marketer-value">Значение для маркетолога</label>
+                    <input class="form-control" id="sso-marketer-value" name="marketer_value" value="{{ sso.marketer_value|default('') }}" placeholder="marketing">
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="sso-assistant-value">Значение для помощника маркетолога</label>
+                    <input class="form-control" id="sso-assistant-value" name="assistant_value" value="{{ sso.assistant_value|default('') }}" placeholder="marketing-assistants">
+                    <p class="form-help">Если задано значение для маркетолога или помощника, роль сотрудника при каждом входе через SSO берётся из утверждения с ролями (иначе роли назначаются в карточке пользователя).</p>
+                </div>
             </div>
             <div class="form-actions">
                 <button type="submit" class="btn btn--pill btn--small">Сохранить</button>

@@ -1,5 +1,6 @@
 # Проверки портала на каждое изменение: синтаксис конфигурации и шаблонов, соответствие миграций
-# схеме, автотесты PHPUnit на MariaDB и проверка скриптов развёртывания shellcheck.
+# схеме, автотесты PHPUnit на MariaDB, раздел «Видео» (тесты общего входа, сборка интерфейса)
+# и проверка скриптов развёртывания shellcheck.
 name: CI
 
 on:
@@ -55,6 +56,26 @@ jobs:
           rm -rf var/cache/test
           vendor/bin/phpunit
 
+  video:
+    name: Раздел «Видео» (Node.js)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Сервер видеопортала — модульные тесты общего входа
+        working-directory: video/server
+        run: |
+          npm ci --no-audit --no-fund
+          for f in $(find src -name '*.js'); do node --check "$f"; done
+          npm run test:unit
+      - name: Веб-интерфейс видеопортала — сборка для /video/
+        working-directory: video/web
+        run: |
+          npm ci --no-audit --no-fund
+          VITE_BASE=/video/ npm run build
+
   shell:
     name: Скрипты развёртывания (shellcheck)
     runs-on: ubuntu-24.04
@@ -64,5 +85,6 @@ jobs:
         run: |
           sudo apt-get update -q && sudo apt-get install -y -q shellcheck
           shellcheck -x -S warning -e SC2034 deploy/*.sh docker/entrypoint.sh scripts/*.sh
+          shellcheck -S warning video/deploy/docker/entrypoint.sh
       - name: Синтаксис bash
         run: for f in deploy/*.sh docker/entrypoint.sh scripts/*.sh; do bash -n "$f"; done

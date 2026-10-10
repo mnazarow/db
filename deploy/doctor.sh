@@ -6,6 +6,8 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=deploy/common.sh
 . "${SCRIPT_DIR}/common.sh"
+# shellcheck source=deploy/video.sh
+. "${SCRIPT_DIR}/video.sh"
 
 require_root "$@"
 LOG_FILE="/dev/null"
@@ -87,6 +89,9 @@ if [[ "${SSL_ENABLED:-0}" == "1" && -n "${DOMAIN:-}" ]]; then
         else warn "Не найден таймер/cron автопродления certbot — проверьте: systemctl status certbot.timer"; fi
     fi
 fi
+
+# Раздел «Видео» (видеопортал по адресу /video).
+video_doctor check
 
 free_mb=$(free_space_mb "${APP_DIR}")
 if [[ -n "${free_mb}" ]]; then

@@ -197,6 +197,14 @@ final class LdapClient
         $name = $first($entry, $this->settings->nameAttr) ?? $first($entry, 'cn') ?? $username;
         $groups = array_map('strval', $entry->hasAttribute('memberOf') ? ($entry->getAttribute('memberOf') ?? []) : []);
         $isAdmin = '' !== trim($this->settings->adminGroup) && $this->isMemberOf($ldap, $entry, $groups, $this->settings->adminGroup);
+        $position = null;
+        if ($this->settings->rolesFromGroups()) {
+            $position = match (true) {
+                '' !== trim($this->settings->marketerGroup) && $this->isMemberOf($ldap, $entry, $groups, $this->settings->marketerGroup) => \App\Entity\User::POSITION_MARKETER,
+                '' !== trim($this->settings->assistantGroup) && $this->isMemberOf($ldap, $entry, $groups, $this->settings->assistantGroup) => \App\Entity\User::POSITION_ASSISTANT,
+                default => \App\Entity\User::POSITION_USER,
+            };
+        }
 
         return new LdapUserInfo(
             $username,
@@ -207,6 +215,7 @@ final class LdapClient
             $groups,
             $isAdmin,
             '' !== trim($this->settings->adminGroup),
+            $position,
         );
     }
 

@@ -18,9 +18,15 @@ use Symfony\Component\Validator\Constraints as Assert;
 /**
  * Пользователь портала.
  *
- * Роли: ROLE_USER (чтение опубликованных документов) и ROLE_ADMIN (панель администратора, всё остальное).
- * Права модератора не хранятся в ролях — они выдаются на конкретные разделы (см. SectionModerator)
- * и распространяются на все вложенные подразделы.
+ * Роли (одна на учётную запись, действуют во всём портале — в документах и в видео):
+ * - ROLE_USER — пользователь: видит опубликованные документы и одобренные видео;
+ * - ROLE_ASSISTANT — помощник маркетолога: добавляет документы, новые редакции и видео, но они
+ *   публикуются только после модерации;
+ * - ROLE_MARKETER — маркетолог (модератор): ведёт все разделы, публикует сразу, решает по материалам
+ *   на модерации;
+ * - ROLE_ADMIN — администратор: всё, включая панель администратора.
+ * Кроме того, права модератора можно выдать на отдельные разделы (см. SectionModerator) — они
+ * распространяются на все вложенные подразделы.
  *
  * Источник учётной записи: local (пароль хранится в портале) или ldap (проверка пароля в Active Directory).
  */
@@ -33,7 +39,26 @@ use Symfony\Component\Validator\Constraints as Assert;
 class User implements UserInterface, PasswordAuthenticatedUserInterface, EquatableInterface
 {
     public const ROLE_USER = 'ROLE_USER';
+    public const ROLE_ASSISTANT = 'ROLE_ASSISTANT';
+    public const ROLE_MARKETER = 'ROLE_MARKETER';
     public const ROLE_ADMIN = 'ROLE_ADMIN';
+
+    /** Роль пользователя одним значением (форма пользователя, синхронизация с каталогом, видео). */
+    public const POSITION_USER = 'user';
+    public const POSITION_ASSISTANT = 'assistant';
+    public const POSITION_MARKETER = 'marketer';
+    public const POSITION_ADMIN = 'admin';
+
+    public const POSITIONS = [self::POSITION_USER, self::POSITION_ASSISTANT, self::POSITION_MARKETER, self::POSITION_ADMIN];
+
+    public const POSITION_LABELS = [
+        self::POSITION_USER => 'Пользователь',
+        self::POSITION_ASSISTANT => 'Помощник маркетолога',
+        self::POSITION_MARKETER => 'Маркетолог',
+        self::POSITION_ADMIN => 'Администратор',
+    ];
+
+    private const POSITION_ROLES = [self::ROLE_ASSISTANT, self::ROLE_MARKETER, self::ROLE_ADMIN];
 
     public const SOURCE_LOCAL = 'local';
     public const SOURCE_LDAP = 'ldap';
@@ -242,6 +267,51 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface, Equatab
         }
 
         return $this->setRoles($roles);
+    }
+
+    /** Маркетолог (модератор всех разделов). Администратор маркетологом не считается, хотя может то же самое. */
+    public function isMarketer(): bool
+    {
+        return \in_array(self::ROLE_MARKETER, $this->roles, true);
+    }
+
+    /** Помощник маркетолога: добавляет материалы, публикация — после модерации. */
+    public function isAssistant(): bool
+    {
+        return \in_array(self::ROLE_ASSISTANT, $this->roles, true) && !$this->isMarketer() && !$this->isAdmin();
+    }
+
+    /** Роль одним значением: admin, marketer, assistant или user. */
+    public function getPosition(): string
+    {
+        return match (true) {
+            $this->isAdmin() => self::POSITION_ADMIN,
+            $this->isMarketer() => self::POSITION_MARKETER,
+            \in_array(self::ROLE_ASSISTANT, $this->roles, true) => self::POSITION_ASSISTANT,
+            default => self::POSITION_USER,
+        };
+    }
+
+    public function getPositionLabel(): string
+    {
+        return self::POSITION_LABELS[$this->getPosition()];
+    }
+
+    /** Назначает роль одним значением; прочие роли (если появятся) сохраняются. */
+    public function setPosition(string $position): static
+    {
+        if (!\in_array($position, self::POSITIONS, true)) {
+            throw new \InvalidArgumentException(\sprintf('Неизвестная роль «%s».', $position));
+        }
+        $roles = array_values(array_diff($this->roles, self::POSITION_ROLES));
+        $roles[] = match ($position) {
+            self::POSITION_ADMIN => self::ROLE_ADMIN,
+            self::POSITION_MARKETER => self::ROLE_MARKETER,
+            self::POSITION_ASSISTANT => self::ROLE_ASSISTANT,
+            default => self::ROLE_USER,
+        };
+
+        return $this->setRoles(array_values(array_diff($roles, [self::ROLE_USER])));
     }
 
     public function getPassword(): string

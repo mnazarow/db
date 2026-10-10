@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # =============================================================================
 #  Резервная копия портала документации: база данных + файлы документов + настройки.
-#  Использование: sudo ./deploy/backup.sh [--dir КАТАЛОГ] [--keep N] [--quiet] [--no-remote]
+#  Использование: sudo ./deploy/backup.sh [--dir КАТАЛОГ] [--keep N] [--quiet] [--no-remote] [--with-video-media]
+#  Раздел «Видео» (если включён): база видеопортала — всегда, видеофайлы — по VIDEO_BACKUP_MEDIA=1 или --with-video-media.
 #  Результат: КАТАЛОГ/docportal-backup-ГГГГММДД-ЧЧММСС.tar.gz; если настроено внешнее хранилище
 #  (docportal remote-backup set …), ночная копия отправляется и туда.
 # =============================================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=deploy/common.sh
 . "${SCRIPT_DIR}/common.sh"
+# shellcheck source=deploy/video.sh
+. "${SCRIPT_DIR}/video.sh"
 
 KEEP=14
 QUIET="0"
@@ -29,6 +32,7 @@ usage() {
   --quiet        Минимум вывода (для cron).
   --no-remote    Не отправлять копию во внешнее хранилище (docportal remote-backup).
   --remote       Отправить во внешнее хранилище и копию с меткой (--tag).
+  --with-video-media  Включить в копию видеофайлы раздела «Видео» (база видеопортала входит всегда).
   --help         Справка.
 EOF
 }
@@ -41,6 +45,7 @@ while [[ $# -gt 0 ]]; do
         --quiet) QUIET="1"; shift ;;
         --no-remote) REMOTE_MODE="no"; shift ;;
         --remote) REMOTE_MODE="yes"; shift ;;
+        --with-video-media) BACKUP_VIDEO_MEDIA="1"; shift ;;
         --help|-h) usage; exit 0 ;;
         *) usage; die "Неизвестный параметр: $1" ;;
     esac
@@ -159,6 +164,13 @@ else
 fi
 ok "Файлов документов: ${files_count}"
 
+# Раздел «Видео»: база видеопортала (и видеофайлы, если включено) — в каталог video/ архива.
+video_backup "${WORK}/${NAME}" "${NAME}"
+VIDEO_NOTE=""
+if video_enabled; then
+    VIDEO_NOTE=", video/ (раздел «Видео»: db.dump$( [[ -d "${WORK}/${NAME}/video/media" || ${#VIDEO_TAR_ARGS[@]} -gt 0 ]] && echo ', media/ — видеофайлы'))"
+fi
+
 cat > "${WORK}/${NAME}/MANIFEST.txt" <<EOF
 Портал: ${APP_TITLE}
 Версия приложения: ${APP_VERSION}
@@ -167,7 +179,7 @@ cat > "${WORK}/${NAME}/MANIFEST.txt" <<EOF
 Хост: $(hostname)
 База данных: ${DB_NAME}
 Файлов документов: ${files_count}
-Содержимое: db.sql.gz (SQL-дамп), storage/ (файлы версий документов), install.conf, $( [[ "${INSTALL_MODE}" == "docker" ]] && echo docker.env || echo env.local )
+Содержимое: db.sql.gz (SQL-дамп), storage/ (файлы версий документов), install.conf, $( [[ "${INSTALL_MODE}" == "docker" ]] && echo docker.env || echo env.local )${VIDEO_NOTE}
 Восстановление: sudo ${APP_ID} restore ${ARCHIVE}
 EOF
 
@@ -178,7 +190,7 @@ tar_rc=0
 # Служебные каталоги незавершённого восстановления (.restore-*) и lost+found в копию не входят.
 tar --warning=no-file-changed --warning=no-file-removed --warning=no-file-shrank \
     --exclude='./.restore-*' --exclude='./lost+found' \
-    -czf "${ARCHIVE}.part" -C "${WORK}" "${NAME}" "${STORAGE_ARGS[@]}" 2>>"${LOG_FILE}" || tar_rc=$?
+    -czf "${ARCHIVE}.part" -C "${WORK}" "${NAME}" "${STORAGE_ARGS[@]}" "${VIDEO_TAR_ARGS[@]}" 2>>"${LOG_FILE}" || tar_rc=$?
 if [[ ${tar_rc} -eq 1 ]]; then
     warn "Файлы документов менялись во время копирования (загрузка или импорт): в архив попало их состояние на момент чтения."
 elif [[ ${tar_rc} -ne 0 ]]; then

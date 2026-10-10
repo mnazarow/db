@@ -65,6 +65,8 @@ final class SecurityController extends AbstractController
             'department_claim' => (string) $request->request->get('department_claim'),
             'admin_claim' => (string) $request->request->get('admin_claim'),
             'admin_value' => (string) $request->request->get('admin_value'),
+            'marketer_value' => (string) $request->request->get('marketer_value'),
+            'assistant_value' => (string) $request->request->get('assistant_value'),
         ], $user);
         $this->addFlash('success', 'Настройки входа через SSO сохранены.');
 

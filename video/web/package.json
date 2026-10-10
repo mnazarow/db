@@ -1,0 +1,26 @@
+{
+  "name": "corpvideo-web",
+  "version": "1.13.0",
+  "description": "CorpVideo — веб-интерфейс корпоративного видеохостинга",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@fontsource/oswald": "^5.2.6",
+    "@fontsource/roboto": "^5.2.6",
+    "@mdi/js": "^7.4.47",
+    "hls.js": "^1.6.12",
+    "pinia": "^3.0.3",
+    "qrcode": "^1.5.4",
+    "vue": "^3.5.21",
+    "vue-router": "^4.5.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.1",
+    "vite": "^7.1.7"
+  }
+}

@@ -43,6 +43,8 @@ final class HomeController extends AbstractController
         $counts = self::subtreeCounts($tree, $this->documents->countPerSection($guest, $viewer));
         $managedIds = $guest ? [] : $this->access->managedSectionIds($user);
         $isModerator = !$guest && $this->access->isModerator($user);
+        // Помощник маркетолога видит черновики всех разделов: он их готовит к модерации.
+        $isAssistant = !$guest && !$isModerator && $this->access->isAssistant($user);
 
         // Подразделы берутся из уже загруженного дерева: обращение к $section->getChildren() в шаблоне
         // догружало бы каждую коллекцию отдельным запросом.
@@ -60,8 +62,9 @@ final class HomeController extends AbstractController
             'counts' => $counts,
             'recent' => $this->documents->findRecentPublished(8, $guest, $viewer),
             'expiring' => $isModerator ? $this->stats->expiring($managedIds, 8) : [],
-            'drafts' => $isModerator ? $this->documents->findDrafts($managedIds, 6) : [],
+            'drafts' => $isModerator ? $this->documents->findDrafts($managedIds, 6) : ($isAssistant ? $this->documents->findDrafts(null, 6) : []),
             'is_moderator' => $isModerator,
+            'is_assistant' => $isAssistant,
             'total_published' => $this->documents->countByStatus(null, $guest, $viewer)[Document::STATUS_PUBLISHED],
             // Что сотруднику нужно прочитать под подпись.
             'to_acknowledge' => $guest ? [] : $this->acknowledgements->findPendingForUser($user, 6, $viewer),
@@ -79,7 +82,7 @@ final class HomeController extends AbstractController
         $content = [];
         $query = SearchQuery::parse($q);
         if (mb_strlen($q) >= 2) {
-            $statuses = null !== $user && $this->access->isModerator($user) ? Document::STATUSES : [Document::STATUS_PUBLISHED];
+            $statuses = null !== $user && $this->access->isContributor($user) ? Document::STATUSES : [Document::STATUS_PUBLISHED];
             $viewer = $this->access->viewer($user);
             $results = $this->documents->search($q, $statuses, $section, 100, null === $user, $viewer);
             // Черновики и архив видны только тем, кто управляет разделом; гостям — только открытые документы.

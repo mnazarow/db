@@ -1,0 +1,33 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+body{margin:0;background:#fff;font-family:Arial,sans-serif}
+.st{fill:#EEF4FA;stroke:#0F4382;stroke-width:2}
+.st2{fill:#fff;stroke:#79A7C6;stroke-width:2}
+.dec{fill:#FFF7E6;stroke:#D98E04;stroke-width:2}
+.h{font:700 15px Arial,sans-serif;fill:#0F4382}
+.t{font:13px Arial,sans-serif;fill:#1e2a3a}
+.s{font:12px Arial,sans-serif;fill:#4a5a6e}
+.lbl{font:700 12px Arial,sans-serif;fill:#0F4382}
+.arr{stroke:#0F4382;stroke-width:2.2;fill:none;marker-end:url(#a)}
+.arr2{stroke:#79A7C6;stroke-width:2;fill:none;marker-end:url(#b);stroke-dasharray:6 4}
+.title{font:700 20px Arial,sans-serif;fill:#0F4382;text-transform:uppercase;letter-spacing:.5px}
+</style></head><body>
+<svg width="1400" height="600" viewBox="0 0 1400 600" xmlns="http://www.w3.org/2000/svg">
+<defs><marker id="a" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#0F4382"/></marker>
+<marker id="b" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#79A7C6"/></marker></defs>
+<text class="title" x="30" y="40">Регистрация сотрудника</text>
+<rect class="st" x="30" y="70" width="210" height="100" rx="12"/><text class="h" x="135" y="98" text-anchor="middle">Форма регистрации</text><text class="t" x="135" y="120" text-anchor="middle">имя, e-mail, пароль</text><text class="s" x="135" y="140" text-anchor="middle">или приглашение по ссылке</text><text class="s" x="135" y="156" text-anchor="middle">от администратора</text>
+<rect class="dec" x="300" y="70" width="210" height="100" rx="12"/><text class="h" x="405" y="98" text-anchor="middle" fill="#8a5a00">Домен почты разрешён?</text><text class="t" x="405" y="120" text-anchor="middle">список доменов в панели</text><text class="t" x="405" y="138" text-anchor="middle">(с автоодобрением или без)</text><text class="s" x="405" y="158" text-anchor="middle">нет → отказ с подсказкой</text>
+<rect class="st" x="570" y="70" width="210" height="100" rx="12"/><text class="h" x="675" y="98" text-anchor="middle">Подтверждение e-mail</text><text class="t" x="675" y="120" text-anchor="middle">письмо со ссылкой (24 ч)</text><text class="s" x="675" y="140" text-anchor="middle">можно отключить в настройках</text><text class="s" x="675" y="156" text-anchor="middle">статус: pending_email</text>
+<rect class="dec" x="840" y="70" width="210" height="100" rx="12"/><text class="h" x="945" y="98" text-anchor="middle" fill="#8a5a00">Одобрение админом</text><text class="t" x="945" y="120" text-anchor="middle">уведомление администраторам,</text><text class="t" x="945" y="138" text-anchor="middle">кнопки «Одобрить» / «Отклонить»</text><text class="s" x="945" y="158" text-anchor="middle">статус: pending_approval</text>
+<rect class="st" x="1110" y="70" width="260" height="100" rx="12"/><text class="h" x="1240" y="98" text-anchor="middle">Активен</text><text class="t" x="1240" y="120" text-anchor="middle">письмо «Доступ открыт», вход,</text><text class="t" x="1240" y="138" text-anchor="middle">канал @handle, загрузка и эфиры</text><text class="s" x="1240" y="158" text-anchor="middle">роль: user · moderator · admin</text>
+<path class="arr" d="M240,120 L300,120"/><path class="arr" d="M510,120 L570,120"/><text class="lbl" x="540" y="62" text-anchor="middle">да</text><path class="arr" d="M780,120 L840,120"/><path class="arr" d="M1050,120 L1110,120"/><text class="lbl" x="1080" y="62" text-anchor="middle">одобрен</text>
+<path class="arr2" d="M405,170 L405,215 L1240,215 L1240,170"/><text class="lbl" x="820" y="232" text-anchor="middle" fill="#79A7C6">домен с автоодобрением, LDAP-вход или приглашение — сразу активен (после подтверждения e-mail, если оно включено)</text>
+<rect class="st2" x="30" y="260" width="1340" height="60" rx="12"/><text class="t" x="700" y="285" text-anchor="middle">Дополнительно: блокировка с причиной · сброс пароля по ссылке · двухфакторная аутентификация (TOTP) · ограничение попыток входа и блокировка на 15 мин · сессии в БД с выходом со всех устройств · API-токены</text><text class="s" x="700" y="306" text-anchor="middle">Вход через Active Directory / LDAP: учётная запись создаётся при первом успешном входе; пароль в портале не хранится; можно требовать членство в группе и назначать администраторов по группе</text>
+<text class="title" x="30" y="380">Прямая трансляция</text>
+<rect class="st" x="30" y="410" width="230" height="100" rx="12"/><text class="h" x="145" y="438" text-anchor="middle">Студия → Трансляции</text><text class="t" x="145" y="460" text-anchor="middle">создать: название, доступ,</text><text class="t" x="145" y="478" text-anchor="middle">чат, запись, расписание</text><text class="s" x="145" y="498" text-anchor="middle">выдаётся ключ и адреса</text>
+<rect class="st" x="320" y="410" width="230" height="100" rx="12"/><text class="h" x="435" y="438" text-anchor="middle">Источник</text><text class="t" x="435" y="460" text-anchor="middle">OBS: rtmp://host:1935/live + ключ</text><text class="t" x="435" y="478" text-anchor="middle">SRT · «Эфир из браузера» (WHIP)</text><text class="s" x="435" y="498" text-anchor="middle">MediaMTX проверяет ключ хуком API</text>
+<rect class="st" x="610" y="410" width="230" height="100" rx="12"/><text class="h" x="725" y="438" text-anchor="middle">В эфире</text><text class="t" x="725" y="460" text-anchor="middle">HLS через API-прокси, чат (WS),</text><text class="t" x="725" y="478" text-anchor="middle">зрители, уведомления подписчикам</text><text class="s" x="725" y="498" text-anchor="middle">статус по опросу MediaMTX раз в 3 с</text>
+<rect class="st" x="900" y="410" width="230" height="100" rx="12"/><text class="h" x="1015" y="438" text-anchor="middle">Завершение</text><text class="t" x="1015" y="460" text-anchor="middle">источник отключился или</text><text class="t" x="1015" y="478" text-anchor="middle">кнопка «Завершить эфир»</text><text class="s" x="1015" y="498" text-anchor="middle">чат сохраняется</text>
+<rect class="st" x="1190" y="410" width="180" height="100" rx="12"/><text class="h" x="1280" y="438" text-anchor="middle">Запись → видео</text><text class="t" x="1280" y="460" text-anchor="middle">fMP4 склеивается,</text><text class="t" x="1280" y="478" text-anchor="middle">импорт и обработка</text><text class="s" x="1280" y="498" text-anchor="middle">на канале автора</text>
+<path class="arr" d="M260,460 L320,460"/><path class="arr" d="M550,460 L610,460"/><path class="arr" d="M840,460 L900,460"/><path class="arr" d="M1130,460 L1190,460"/>
+</svg></body></html>

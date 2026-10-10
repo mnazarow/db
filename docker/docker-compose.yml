@@ -2,6 +2,7 @@
 #  Docker Compose для портала документации.
 #  Запуск:  cd docker && cp .env.example .env && (отредактируйте .env) && docker compose up -d --build
 #  Переменные берутся из файла docker/.env (создаётся скриптом deploy/install.sh --mode docker).
+#  Раздел «Видео» (видеопортал по адресу /video) — профили «video» и «video-live»: docportal video enable.
 # =============================================================================
 name: ${COMPOSE_PROJECT_NAME:-docportal}
 
@@ -101,6 +102,8 @@ services:
       - ../public:/var/www/html/public:ro
       # Режим обслуживания: флаг, страница и список разрешённых адресов (docportal maintenance on|off).
       - ../maintenance:/var/www/maintenance:ro
+      # Раздел «Видео»: медиафайлы отдаёт nginx после проверки прав в API видеопортала (только чтение).
+      - video-media:/var/lib/docportal-video/media:ro
     depends_on:
       - app
     restart: unless-stopped
@@ -108,8 +111,132 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "5" }
 
+  # --- Раздел «Видео» -----------------------------------------------------------------------------------
+  # Видеопортал по адресу /video (вход и роли — общие с порталом). Контейнеры включаются профилями:
+  # «video» — база, API и обработка видео; «video-live» — сервер прямых трансляций (MediaMTX).
+  # Включение: docportal video enable (добавляет профили в COMPOSE_PROFILES файла docker/.env).
+  video-db:
+    image: ${VIDEO_POSTGRES_IMAGE:-postgres:16-alpine}
+    profiles: ["video"]
+    environment:
+      POSTGRES_USER: corpvideo
+      POSTGRES_PASSWORD: ${VIDEO_DB_PASSWORD:-}
+      POSTGRES_DB: corpvideo
+      POSTGRES_INITDB_ARGS: "--locale=C.UTF-8 --encoding=UTF8"
+      TZ: ${TZ:-Europe/Moscow}
+    volumes:
+      - video-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U corpvideo -d corpvideo"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  # API видеопортала. Секреты портала (docker/.env) сюда не передаются — только переменные VIDEO_*.
+  video-api:
+    build:
+      context: ../video
+      dockerfile: deploy/docker/Dockerfile
+      args:
+        NODE_IMAGE: ${VIDEO_NODE_IMAGE:-node:22-bookworm-slim}
+        VITE_BASE: ${VIDEO_BASE_PATH:-/video}/
+        TZ: ${TZ:-Europe/Moscow}
+    image: ${VIDEO_IMAGE:-docportal-video:latest}
+    profiles: ["video"]
+    command: ["node", "server/src/index.js"]
+    environment: &video-env
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3000"
+      BASE_PATH: ${VIDEO_BASE_PATH:-/video}
+      BASE_URL: ${VIDEO_BASE_URL:-http://localhost/video}
+      SECRET_KEY: ${VIDEO_SECRET_KEY:-}
+      DATABASE_URL: "postgres://corpvideo:${VIDEO_DB_PASSWORD:-}@video-db:5432/corpvideo"
+      DATA_DIR: /data
+      WEB_DIST: /app/web/dist
+      NGINX_ACCEL: "1"
+      TRUST_PROXY: "1"
+      TZ: ${TZ:-Europe/Moscow}
+      LOG_LEVEL: ${VIDEO_LOG_LEVEL:-info}
+      WORKER_CONCURRENCY: ${VIDEO_WORKER_CONCURRENCY:-2}
+      # Общий вход: проверка сессии портала через внутренний сервер nginx контейнера web (порт 8079).
+      PORTAL_INTERNAL_URL: http://web:8079
+      PORTAL_SHARED_SECRET: ${VIDEO_SHARED_SECRET:-}
+      PORTAL_NAME: ${APP_NAME:-Портал документации}
+      # Трансляции
+      MEDIAMTX_API_URL: http://mediamtx:9997
+      MEDIAMTX_HLS_URL: http://mediamtx:8888
+      MEDIAMTX_PLAYBACK_URL: http://mediamtx:9996
+      MEDIAMTX_HOOK_SECRET: ${VIDEO_HOOK_SECRET:-}
+      LIVE_RTMP_URL: ${VIDEO_LIVE_RTMP_URL:-}
+      LIVE_SRT_URL: ${VIDEO_LIVE_SRT_URL:-}
+      LIVE_WHIP_URL: ${VIDEO_LIVE_WHIP_URL:-}
+    volumes: &video-volumes
+      - video-media:/data/media
+      - video-uploads:/data/uploads
+      - video-live:/data/live
+      - video-import:/data/import
+    depends_on:
+      video-db:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+  # Обработка видео: перекодирование, субтитры, письма, импорт.
+  video-worker:
+    image: ${VIDEO_IMAGE:-docportal-video:latest}
+    profiles: ["video"]
+    command: ["node", "server/src/worker.js"]
+    environment:
+      <<: *video-env
+      WORKER_ID: docker-worker
+    volumes: *video-volumes
+    healthcheck:
+      disable: true
+    depends_on:
+      video-db:
+        condition: service_healthy
+      video-api:
+        condition: service_started
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+  # Сервер прямых трансляций: RTMP (OBS), SRT, WebRTC (эфир из браузера). Записи эфиров — в томе video-live
+  # от имени пользователя видеопортала (uid 1000).
+  mediamtx:
+    image: ${MEDIAMTX_IMAGE:-bluenviron/mediamtx:1.9.3}
+    profiles: ["video-live"]
+    user: "1000:1000"
+    ports:
+      - "1935:1935"
+      - "8890:8890/udp"
+      - "8189:8189/udp"
+      - "8189:8189/tcp"
+    volumes:
+      - ./video/mediamtx.yml:/mediamtx.yml:ro
+      - video-live:/data/live
+    depends_on:
+      - video-api
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
 volumes:
   db-data:
   storage:
   logs:
   import:
+  video-db-data:
+  video-media:
+  video-uploads:
+  video-live:
+  video-import:

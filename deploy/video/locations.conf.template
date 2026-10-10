@@ -1,0 +1,176 @@
+# Раздел «Видео» портала документации (видеопортал CorpVideo по адресу ${VIDEO_PATH}/).
+# Подключается внутри server{} портала (рядом с правилом режима обслуживания), создаётся скриптом
+# deploy/video.sh из шаблона deploy/video/locations.conf.template. Подстановки:
+#   ${VIDEO_PATH}   — префикс раздела (/video);
+#   ${VIDEO_API}    — адрес API видеопортала (127.0.0.1:3100 на сервере, video-api:3000 в Docker);
+#   ${MEDIAMTX}     — адрес WebRTC сервера трансляций (127.0.0.1:8889 / mediamtx:8889);
+#   ${MEDIA_ROOT}   — каталог медиафайлов (их отдаёт nginx после проверки прав в API);
+#   ${RESOLVER}     — «resolver …;» для Docker (имена контейнеров), на сервере пусто.
+# Адреса задаются переменными: nginx запускается и тогда, когда видеопортал ещё не работает.
+# (set не наследуется вложенными location'ами — переменная задаётся в каждом, где нужна.)
+${RESOLVER}
+
+# Проверка сессии портала для видеопортала доступна только изнутри (отдельный сервер на 127.0.0.1).
+location ^~ /internal/ {
+    return 404;
+}
+
+location = ${VIDEO_PATH} {
+    return 301 ${VIDEO_PATH}/;
+}
+
+# Всё под ${VIDEO_PATH}/: «^~» — регулярные location'ы портала (статика .css/.js…) сюда не вмешиваются.
+location ^~ ${VIDEO_PATH}/ {
+    set $docportal_video http://${VIDEO_API};
+    client_max_body_size 8m;
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css application/json application/javascript application/vnd.apple.mpegurl text/vtt image/svg+xml application/xml application/rss+xml application/atom+xml;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Accel-Supported 1;
+    proxy_set_header Connection "";
+    proxy_read_timeout 120s;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+
+    # Медиафайлы (HLS-сегменты, миниатюры, субтитры): права проверяет API, файлы отдаёт nginx.
+    location ^~ ${VIDEO_PATH}/media/ {
+        auth_request /__docportal_video_media_auth;
+        alias ${MEDIA_ROOT}/;
+        sendfile on;
+        tcp_nopush on;
+        add_header Cache-Control $docportal_video_media_cache;
+        add_header Accept-Ranges bytes;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Content-Security-Policy "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; sandbox" always;
+        types {
+            application/vnd.apple.mpegurl m3u8;
+            video/mp2t ts;
+            video/mp4 mp4 m4v;
+            video/iso.segment m4s;
+            text/vtt vtt;
+            image/jpeg jpg jpeg;
+            image/png png;
+            image/webp webp;
+            image/svg+xml svg;
+            video/x-matroska mkv;
+            video/quicktime mov;
+            video/webm webm;
+            audio/mpeg mp3;
+        }
+    }
+
+    # Снаружи внутренняя проверка прав API недоступна.
+    location = ${VIDEO_PATH}/api/media/auth {
+        internal;
+    }
+
+    # Загрузка видео: адрес без косой черты — точным location (иначе nginx ответит 301 и POST потеряет тело).
+    location = ${VIDEO_PATH}/api/uploads {
+        set $docportal_video http://${VIDEO_API};
+        rewrite ^${VIDEO_PATH}(/.*)$ $1 break;
+        proxy_pass $docportal_video;
+    }
+    location ^~ ${VIDEO_PATH}/api/uploads/simple {
+        set $docportal_video http://${VIDEO_API};
+        rewrite ^${VIDEO_PATH}(/.*)$ $1 break;
+        client_max_body_size 0;
+        proxy_request_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_pass $docportal_video;
+    }
+    location ^~ ${VIDEO_PATH}/api/uploads/ {
+        set $docportal_video http://${VIDEO_API};
+        rewrite ^${VIDEO_PATH}(/.*)$ $1 break;
+        client_max_body_size 64m;
+        proxy_request_buffering off;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+        proxy_pass $docportal_video;
+    }
+
+    # HLS прямых трансляций (через API с проверкой прав, без буферизации).
+    location ~ ^${VIDEO_PATH}/api/live/[^/]+/hls/ {
+        set $docportal_video http://${VIDEO_API};
+        rewrite ^${VIDEO_PATH}(/.*)$ $1 break;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_pass $docportal_video;
+    }
+
+    # WebSocket: уведомления, ход обработки, чат эфира.
+    location = ${VIDEO_PATH}/ws {
+        set $docportal_video http://${VIDEO_API};
+        rewrite ^${VIDEO_PATH}(/.*)$ $1 break;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $docportal_video_upgrade;
+        proxy_read_timeout 3600s;
+        proxy_pass $docportal_video;
+    }
+
+    # WHIP: эфир из браузера (сигналинг WebRTC на сервер трансляций).
+    location = ${VIDEO_PATH}/whip {
+        set $docportal_video_whip http://${MEDIAMTX}/;
+        proxy_set_header Host $host;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_pass $docportal_video_whip;
+    }
+    location ^~ ${VIDEO_PATH}/whip/ {
+        set $docportal_video_whip http://${MEDIAMTX};
+        rewrite ^${VIDEO_PATH}/whip(/.*)$ $1 break;
+        proxy_set_header Host $host;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_redirect ~^/(.*)$ ${VIDEO_PATH}/whip/$1;
+        proxy_pass $docportal_video_whip;
+    }
+
+    # Service worker: всегда свежий, область — весь раздел.
+    location = ${VIDEO_PATH}/sw.js {
+        set $docportal_video http://${VIDEO_API};
+        rewrite ^${VIDEO_PATH}(/.*)$ $1 break;
+        proxy_hide_header Cache-Control;
+        add_header Cache-Control "no-cache";
+        add_header Service-Worker-Allowed "${VIDEO_PATH}/";
+        proxy_pass $docportal_video;
+    }
+
+    # Остальное (API, страницы, статика интерфейса) — API видеопортала без префикса.
+    rewrite ^${VIDEO_PATH}(/.*)$ $1 break;
+    proxy_pass $docportal_video;
+}
+
+# Подзапрос auth_request: права на медиафайл проверяет API (адрес запроса — в X-Original-URI, с префиксом).
+location = /__docportal_video_media_auth {
+    internal;
+    set $docportal_video_auth http://${VIDEO_API}/api/media/auth;
+    proxy_pass $docportal_video_auth;
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Original-URI $request_uri;
+    proxy_set_header Cookie $http_cookie;
+    proxy_set_header Authorization $http_authorization;
+}
+
+# Скачивание оригиналов через X-Accel-Redirect (ответ API указывает на этот внутренний адрес).
+location ^~ /__corpvideo_internal_media/ {
+    internal;
+    alias ${MEDIA_ROOT}/;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Content-Security-Policy "default-src 'none'; sandbox" always;
+}

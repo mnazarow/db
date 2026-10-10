@@ -15,3 +15,5 @@ node_modules
 .github
 .gitlab-ci.yml
 maintenance
+video
+**/node_modules

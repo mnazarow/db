@@ -123,7 +123,7 @@ final class PortalAuthenticator extends AbstractLoginFormAuthenticator
             $this->removeTargetPath($request->getSession(), $firewallName);
             $user = $token->getUser();
             // Страницу панели администратора после входа показываем только администратору.
-            $adminPage = str_contains((string) parse_url($target, \PHP_URL_PATH), '/admin');
+            $adminPage = str_starts_with((string) parse_url($target, \PHP_URL_PATH), '/admin');
             if (!$adminPage || ($user instanceof User && $user->isAdmin())) {
                 return new RedirectResponse($target);
             }

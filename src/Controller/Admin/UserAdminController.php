@@ -63,12 +63,13 @@ final class UserAdminController extends AbstractController
         $form->handleRequest($request);
 
         if ($form->isSubmitted() && $form->isValid()) {
-            $isAdmin = 'admin' === $form->get('role')->getData();
+            $position = (string) $form->get('role')->getData();
+            $isAdmin = User::POSITION_ADMIN === $position;
             $plain = (string) $form->get('plainPassword')->getData();
             try {
                 if ($user->isLdap()) {
                     $created = $this->userManager->createLdapUser($user->getUsername(), $user->getDisplayName(), $isAdmin, $user->getEmail(), $actor);
-                    $created->setDepartment($user->getDepartment())->setActive($user->isActive());
+                    $created->setDepartment($user->getDepartment())->setActive($user->isActive())->setPosition($position);
                     $this->userManager->save($created, $actor);
                     $this->addFlash('success', \sprintf('Доменная учётная запись «%s» добавлена. Пароль проверяется в домене при входе.', $created->getUsername()));
                 } else {
@@ -78,7 +79,7 @@ final class UserAdminController extends AbstractController
                         $generated = true;
                     }
                     $created = $this->userManager->create($user->getUsername(), $user->getDisplayName(), $plain, $isAdmin, $user->getEmail(), (bool) $form->get('mustChangePassword')->getData() || $generated, $actor);
-                    $created->setDepartment($user->getDepartment())->setActive($user->isActive());
+                    $created->setDepartment($user->getDepartment())->setActive($user->isActive())->setPosition($position);
                     $this->userManager->save($created, $actor);
                     $this->addFlash('success', \sprintf('Пользователь «%s» создан.', $created->getUsername()));
                     if ($generated) {
@@ -103,18 +104,22 @@ final class UserAdminController extends AbstractController
     #[Route('/{id}/edit', name: 'admin_user_edit', requirements: ['id' => '\d+'], methods: ['GET', 'POST'])]
     public function edit(User $user, Request $request, #[CurrentUser] User $actor): Response
     {
-        $form = $this->createForm(UserType::class, $user, ['is_new' => false, 'is_admin' => $user->isAdmin(), 'ldap_enabled' => $this->ldap->isEnabled()]);
+        $form = $this->createForm(UserType::class, $user, ['is_new' => false, 'is_admin' => $user->isAdmin(), 'position' => $user->getPosition(), 'ldap_enabled' => $this->ldap->isEnabled()]);
         $form->handleRequest($request);
 
         if ($form->isSubmitted() && $form->isValid()) {
-            $willBeAdmin = 'admin' === $form->get('role')->getData();
+            $position = (string) $form->get('role')->getData();
+            $willBeAdmin = User::POSITION_ADMIN === $position;
             $plain = (string) $form->get('plainPassword')->getData();
             try {
                 if ($actor->getId() === $user->getId() && (!$willBeAdmin || !$user->isActive())) {
                     throw new \DomainException('Нельзя снять права администратора или заблокировать собственную учётную запись.');
                 }
                 $this->userManager->assertNotLastAdmin($user, $willBeAdmin, $user->isActive());
-                $user->setAdmin($willBeAdmin);
+                if ($user->getPosition() !== $position) {
+                    $this->auditLogger->info('Изменена роль пользователя', ['user' => $user->getUsername(), 'from' => $user->getPosition(), 'to' => $position, 'by' => $actor->getUsername()]);
+                }
+                $user->setPosition($position);
                 if ($user->isLdap()) {
                     $user->setPassword('')->setMustChangePassword(false);
                 } elseif ('' !== $plain) {

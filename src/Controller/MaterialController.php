@@ -87,7 +87,10 @@ final class MaterialController extends AbstractController
                 'kinds' => array_map(static fn ($k): array => ['id' => $k->getId(), 'name' => $k->getName()], $this->kinds->all()),
                 'states' => MaterialState::CSS,
                 'maxBytes' => $this->storage->getUploadMaxBytes(),
+                // Помощник маркетолога правит строки и загружает файлы, но не меняет устройство таблицы.
+                'canStructure' => $this->access->canManageSection($user, $section),
             ],
+            'can_structure' => $this->access->canManageSection($user, $section),
         ]);
     }
 
@@ -95,7 +98,7 @@ final class MaterialController extends AbstractController
     #[Route('/enable', name: 'app_section_materials_enable', methods: ['POST'])]
     public function enable(Section $section, Request $request, #[CurrentUser] User $user): Response
     {
-        $this->checkAccess($section, $user);
+        $this->checkAccess($section, $user, true);
         $this->checkFormToken($request, $section);
         try {
             $this->materials->enable($section, $user);
@@ -122,7 +125,7 @@ final class MaterialController extends AbstractController
     #[Route('/disable', name: 'app_section_materials_disable', methods: ['POST'])]
     public function disable(Section $section, Request $request, #[CurrentUser] User $user): Response
     {
-        $this->checkAccess($section, $user);
+        $this->checkAccess($section, $user, true);
         $this->checkFormToken($request, $section);
         $this->materials->disable($section, $user);
         $this->addFlash('success', 'Таблица материалов скрыта. Строки и столбцы сохранены — при повторном включении они вернутся.');
@@ -163,7 +166,7 @@ final class MaterialController extends AbstractController
     #[Route('/rows/{row}/delete', name: 'app_section_materials_row_delete', requirements: ['row' => '\d+'], methods: ['POST'])]
     public function deleteRow(Section $section, int $row, Request $request, #[CurrentUser] User $user): JsonResponse
     {
-        $this->checkApi($request, $section, $user);
+        $this->checkApi($request, $section, $user, true);
         $this->materials->deleteRow($this->row($section, $row), $user);
 
         return $this->json(['ok' => true, 'summary' => $this->summary->forSection($section)]);
@@ -205,7 +208,7 @@ final class MaterialController extends AbstractController
     #[Route('/rows/{row}/detach', name: 'app_section_materials_row_detach', requirements: ['row' => '\d+'], methods: ['POST'])]
     public function detach(Section $section, int $row, Request $request, #[CurrentUser] User $user): JsonResponse
     {
-        $this->checkApi($request, $section, $user);
+        $this->checkApi($request, $section, $user, true);
         $material = $this->row($section, $row);
         $this->materials->detach($material, $user);
 
@@ -276,7 +279,7 @@ final class MaterialController extends AbstractController
     #[Route('/parameters', name: 'app_section_materials_parameter_add', methods: ['POST'])]
     public function addParameter(Section $section, Request $request, #[CurrentUser] User $user): JsonResponse
     {
-        $this->checkApi($request, $section, $user);
+        $this->checkApi($request, $section, $user, true);
         try {
             $parameter = $this->materials->addParameter($section, (string) $request->request->get('name'), (string) $request->request->get('kind', MaterialParameter::KIND_TEXT), (string) $request->request->get('options', ''), $user);
         } catch (\DomainException $e) {
@@ -289,7 +292,7 @@ final class MaterialController extends AbstractController
     #[Route('/parameters/{parameter}', name: 'app_section_materials_parameter_update', requirements: ['parameter' => '\d+'], methods: ['POST'])]
     public function updateParameter(Section $section, int $parameter, Request $request, #[CurrentUser] User $user): JsonResponse
     {
-        $this->checkApi($request, $section, $user);
+        $this->checkApi($request, $section, $user, true);
         $column = $this->parameter($section, $parameter);
         try {
             $this->materials->updateParameter(
@@ -310,7 +313,7 @@ final class MaterialController extends AbstractController
     #[Route('/parameters/{parameter}/delete', name: 'app_section_materials_parameter_delete', requirements: ['parameter' => '\d+'], methods: ['POST'])]
     public function deleteParameter(Section $section, int $parameter, Request $request, #[CurrentUser] User $user): JsonResponse
     {
-        $this->checkApi($request, $section, $user);
+        $this->checkApi($request, $section, $user, true);
         $this->materials->deleteParameter($this->parameter($section, $parameter), $user);
 
         return $this->json(['ok' => true]);
@@ -319,7 +322,7 @@ final class MaterialController extends AbstractController
     #[Route('/parameters/{parameter}/move', name: 'app_section_materials_parameter_move', requirements: ['parameter' => '\d+'], methods: ['POST'])]
     public function moveParameter(Section $section, int $parameter, Request $request, #[CurrentUser] User $user): JsonResponse
     {
-        $this->checkApi($request, $section, $user);
+        $this->checkApi($request, $section, $user, true);
         $this->materials->moveParameter($this->parameter($section, $parameter), (int) $request->request->get('direction', 1));
 
         return $this->json(['ok' => true]);
@@ -336,11 +339,21 @@ final class MaterialController extends AbstractController
 
     // ---- Служебное ------------------------------------------------------------------------------------
 
-    private function checkAccess(Section $section, User $user): void
+    /**
+     * Таблицу ведут модераторы раздела (маркетологи); помощник маркетолога добавляет и правит строки и
+     * загружает файлы (они уходят на модерацию), но не меняет устройство таблицы ($structure).
+     */
+    private function checkAccess(Section $section, User $user, bool $structure = false): void
     {
-        if (!$this->access->canManageSection($user, $section)) {
-            throw $this->createAccessDeniedException('Таблица материалов доступна администраторам и модераторам раздела.');
+        if ($this->access->canManageSection($user, $section)) {
+            return;
         }
+        if (!$structure && $this->access->isAssistant($user)) {
+            return;
+        }
+        throw $this->createAccessDeniedException($structure
+            ? 'Устройство таблицы материалов (столбцы, включение, удаление строк) меняют маркетологи и модераторы раздела.'
+            : 'Таблица материалов доступна маркетологам, их помощникам, модераторам раздела и администраторам.');
     }
 
     private function checkFormToken(Request $request, Section $section): void
@@ -350,9 +363,9 @@ final class MaterialController extends AbstractController
         }
     }
 
-    private function checkApi(Request $request, Section $section, User $user): void
+    private function checkApi(Request $request, Section $section, User $user, bool $structure = false): void
     {
-        $this->checkAccess($section, $user);
+        $this->checkAccess($section, $user, $structure);
         $token = (string) ($request->headers->get('X-CSRF-Token') ?? $request->request->get('_token'));
         if (!$this->isCsrfTokenValid('materials_'.$section->getId(), $token)) {
             throw $this->createAccessDeniedException('Неверный CSRF-токен — обновите страницу.');

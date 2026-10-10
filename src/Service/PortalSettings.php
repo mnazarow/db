@@ -81,6 +81,8 @@ final class PortalSettings
     public const SSO_DEPARTMENT_CLAIM = 'sso.department_claim';
     public const SSO_ADMIN_CLAIM = 'sso.admin_claim';
     public const SSO_ADMIN_VALUE = 'sso.admin_value';
+    public const SSO_MARKETER_VALUE = 'sso.marketer_value';
+    public const SSO_ASSISTANT_VALUE = 'sso.assistant_value';
 
     public const SSO_DEFAULT_SCOPES = 'openid profile email';
     public const SSO_DEFAULT_BUTTON = 'Войти через SSO';
@@ -317,7 +319,7 @@ final class PortalSettings
     /**
      * Настройки входа через внешнего провайдера.
      *
-     * @return array{enabled: bool, issuer: string, client_id: string, client_secret: string, scopes: string, button: string, create_users: bool, username_claim: string, name_claim: string, email_claim: string, department_claim: string, admin_claim: string, admin_value: string}
+     * @return array{enabled: bool, issuer: string, client_id: string, client_secret: string, scopes: string, button: string, create_users: bool, username_claim: string, name_claim: string, email_claim: string, department_claim: string, admin_claim: string, admin_value: string, marketer_value: string, assistant_value: string}
      */
     public function sso(): array
     {
@@ -339,6 +341,8 @@ final class PortalSettings
             'department_claim' => trim((string) $this->get(self::SSO_DEPARTMENT_CLAIM, '')),
             'admin_claim' => trim((string) $this->get(self::SSO_ADMIN_CLAIM, '')),
             'admin_value' => trim((string) $this->get(self::SSO_ADMIN_VALUE, '')),
+            'marketer_value' => trim((string) $this->get(self::SSO_MARKETER_VALUE, '')),
+            'assistant_value' => trim((string) $this->get(self::SSO_ASSISTANT_VALUE, '')),
         ];
     }
 
@@ -365,6 +369,8 @@ final class PortalSettings
             self::SSO_DEPARTMENT_CLAIM => trim((string) ($values['department_claim'] ?? '')),
             self::SSO_ADMIN_CLAIM => trim((string) ($values['admin_claim'] ?? '')),
             self::SSO_ADMIN_VALUE => trim((string) ($values['admin_value'] ?? '')),
+            self::SSO_MARKETER_VALUE => trim((string) ($values['marketer_value'] ?? '')),
+            self::SSO_ASSISTANT_VALUE => trim((string) ($values['assistant_value'] ?? '')),
         ];
         if (null !== ($values['client_secret'] ?? null)) {
             $update[self::SSO_CLIENT_SECRET] = (string) $values['client_secret'];

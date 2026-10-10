@@ -121,6 +121,10 @@ final class UserManager
         if ($info->adminGroupConfigured) {
             $this->syncAdminFromDirectory($user, $info->isAdmin, 'AD');
         }
+        // Роли «Маркетолог» и «Помощник маркетолога» — по группам AD, если они заданы.
+        if (null !== $info->position) {
+            $this->syncPositionFromDirectory($user, $info->position, 'AD');
+        }
         if ($created) {
             $this->em->persist($user);
         }
@@ -146,6 +150,20 @@ final class UserManager
         }
         $user->setAdmin($isAdmin);
         $this->auditLogger->info($isAdmin ? 'Выданы права администратора по данным каталога' : 'Сняты права администратора по данным каталога', ['user' => $user->getUsername(), 'source' => $source]);
+    }
+
+    /**
+     * Роль маркетолога или помощника по данным каталога (группы AD, утверждение SSO). Администратора не
+     * трогает: права администратора синхронизируются отдельно (syncAdminFromDirectory()).
+     */
+    public function syncPositionFromDirectory(User $user, string $position, string $source): void
+    {
+        if ($user->isAdmin() || !\in_array($position, [User::POSITION_USER, User::POSITION_ASSISTANT, User::POSITION_MARKETER], true) || $user->getPosition() === $position) {
+            return;
+        }
+        $previous = $user->getPosition();
+        $user->setPosition($position);
+        $this->auditLogger->info('Роль изменена по данным каталога', ['user' => $user->getUsername(), 'from' => $previous, 'to' => $position, 'source' => $source]);
     }
 
     public function save(User $user, ?User $actor = null): void
@@ -196,7 +214,7 @@ final class UserManager
 
         return [
             'acknowledgements' => (int) $this->em->createQuery('SELECT COUNT(a.id) FROM App\Entity\DocumentAcknowledgement a WHERE a.user = :u')->setParameter('u', $user)->getSingleScalarResult(),
-            'approvals' => (int) $this->em->createQuery('SELECT COUNT(a.id) FROM App\Entity\DocumentApproval a WHERE a.approver = :u')->setParameter('u', $user)->getSingleScalarResult(),
+            'approvals' => (int) $this->em->createQuery('SELECT COUNT(a.id) FROM App\Entity\DocumentApproval a WHERE a.approver = :u OR a.decidedBy = :u')->setParameter('u', $user)->getSingleScalarResult(),
         ];
     }
 

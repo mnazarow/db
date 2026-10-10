@@ -13,6 +13,9 @@
         <server name="APP_ENV" value="test" force="true"/>
         <server name="KERNEL_CLASS" value="App\Kernel"/>
         <server name="SHELL_VERBOSITY" value="-1"/>
+        <!-- Раздел «Видео»: проверка сессии для видеопортала (tests/Functional/VideoSessionTest.php). -->
+        <server name="VIDEO_ENABLED" value="1"/>
+        <server name="VIDEO_SHARED_SECRET" value="test-video-secret-0123456789abcdef"/>
     </php>
     <testsuites>
         <testsuite name="Портал документации">

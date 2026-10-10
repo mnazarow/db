@@ -7,7 +7,8 @@
 #    sudo ./deploy/install.sh --domain docs.example.ru --ssl-email admin@example.ru
 #    sudo ./deploy/install.sh --domain docs.example.ru --ldap-host dc1.example.local --ldap-base-dn "DC=example,DC=local" --ldap-upn-suffix example.local
 #    sudo ./deploy/install.sh --mode docker --port 8080      # установка в Docker
-#    sudo ./deploy/install.sh --archive docportal-1.6.0.tar.gz --yes
+#    sudo ./deploy/install.sh --archive docportal-1.8.0.tar.gz --yes
+#    sudo ./deploy/install.sh --domain docs.example.ru --with-video   # вместе с разделом «Видео» (/video)
 #
 #  Полный список параметров: ./deploy/install.sh --help
 # =============================================================================
@@ -59,6 +60,9 @@ Active Directory / LDAP (вход по доменным учётным запи�
   --ldap-bind-password PASS Пароль служебной учётной записи.
   --ldap-upn-suffix DOMAIN  Суффикс UPN для входа без служебной учётной записи (например, example.local).
   --ldap-admin-group DN     Группа AD, членам которой выдаются права администратора портала.
+  --ldap-marketer-group DN  Группа AD для роли «Маркетолог» (модератор всех разделов и видео).
+  --ldap-assistant-group DN Группа AD для роли «Помощник маркетолога» (добавляет материалы на модерацию).
+                            С любой из этих групп роль сотрудника при входе через домен берётся из AD.
   --ldap-user-group DN      Группа AD, обязательная для входа (пусто — все пользователи домена).
 
 Почта (уведомления о сроках актуальности):
@@ -67,6 +71,12 @@ Active Directory / LDAP (вход по доменным учётным запи�
 
 Docker:
   --docker-mirror URL       Зеркало Docker Hub (например, https://mirror.gcr.io) — записывается в /etc/docker/daemon.json.
+
+Раздел «Видео» (видеопортал по адресу /video: вход и роли общие с порталом):
+  --with-video              Установить и включить раздел «Видео» (PostgreSQL, Node.js, ffmpeg, MediaMTX;
+                            в Docker — контейнеры профилей video и video-live). Позже: ${APP_ID} video enable.
+  --video-no-live           Без сервера прямых трансляций (MediaMTX, порты 1935, 8890/udp, 8189).
+  --video-backup-media      Видеофайлы входят в ежедневные резервные копии (по умолчанию — только база видео).
 
 Прочее:
   --backup-dir DIR          Каталог резервных копий (по умолчанию ${DEFAULT_BACKUP_DIR}).
@@ -101,6 +111,8 @@ LDAP_BIND_DN=""
 LDAP_BIND_PASSWORD=""
 LDAP_UPN_SUFFIX=""
 LDAP_ADMIN_GROUP=""
+LDAP_MARKETER_GROUP=""
+LDAP_ASSISTANT_GROUP=""
 LDAP_USER_GROUP=""
 MAIL_DSN=""
 MAIL_FROM=""
@@ -118,6 +130,9 @@ BACKUP_DIR="${DEFAULT_BACKUP_DIR}"
 BACKUP_CRON="1"
 WITH_PREVIEW="0"
 WITH_OCR="0"
+WITH_VIDEO="0"
+VIDEO_LIVE="1"
+VIDEO_BACKUP_MEDIA="0"
 ASSUME_YES="0"
 VERBOSE="0"
 SERVICE_USER=""
@@ -159,6 +174,8 @@ parse_args() {
             --ldap-bind-password) LDAP_BIND_PASSWORD="${2:-}"; shift 2 ;;
             --ldap-upn-suffix) LDAP_UPN_SUFFIX="${2:-}"; shift 2 ;;
             --ldap-admin-group) LDAP_ADMIN_GROUP="${2:-}"; shift 2 ;;
+            --ldap-marketer-group) LDAP_MARKETER_GROUP="${2:-}"; shift 2 ;;
+            --ldap-assistant-group) LDAP_ASSISTANT_GROUP="${2:-}"; shift 2 ;;
             --ldap-user-group) LDAP_USER_GROUP="${2:-}"; shift 2 ;;
             --mail-dsn) MAIL_DSN="${2:-}"; shift 2 ;;
             --mail-from) MAIL_FROM="${2:-}"; shift 2 ;;
@@ -168,6 +185,9 @@ parse_args() {
             --with-preview) WITH_PREVIEW="1"; shift ;;
             --with-ocr) WITH_OCR="1"; shift ;;
             --with-extras) WITH_PREVIEW="1"; WITH_OCR="1"; shift ;;
+            --with-video) WITH_VIDEO="1"; shift ;;
+            --video-no-live) VIDEO_LIVE="0"; shift ;;
+            --video-backup-media) VIDEO_BACKUP_MEDIA="1"; shift ;;
             --yes|-y) ASSUME_YES="1"; shift ;;
             --verbose) VERBOSE="1"; shift ;;
             --help|-h) usage; exit 0 ;;
@@ -611,6 +631,8 @@ LDAP_BIND_DN=$(env_quote "${LDAP_BIND_DN}")
 LDAP_BIND_PASSWORD=$(env_quote "${LDAP_BIND_PASSWORD}")
 LDAP_UPN_SUFFIX=$(env_quote "${LDAP_UPN_SUFFIX}")
 LDAP_ADMIN_GROUP=$(env_quote "${LDAP_ADMIN_GROUP}")
+LDAP_MARKETER_GROUP=$(env_quote "${LDAP_MARKETER_GROUP}")
+LDAP_ASSISTANT_GROUP=$(env_quote "${LDAP_ASSISTANT_GROUP}")
 LDAP_USER_GROUP=$(env_quote "${LDAP_USER_GROUP}")
 EOF
     umask 022
@@ -628,6 +650,8 @@ set_permissions() {
     chmod -R u+rwX,g+rX,o-rwx "${rel}" 2>/dev/null || true
     chmod 751 "${rel}"
     chmod -R o+rX "${rel}/public"
+    # Код раздела «Видео» читает пользователь службы видеопортала (секретов в нём нет).
+    [[ -d "${rel}/video" ]] && chmod -R o+rX "${rel}/video"
     chmod 750 "${APP_DIR}/shared/storage" "${APP_DIR}/shared/log"
     # Настройки читает пользователь службы, но изменить их он не может (владелец — root).
     [[ -f "${APP_DIR}/shared/.env.local" ]] && chown "root:${SERVICE_USER}" "${APP_DIR}/shared/.env.local" && chmod 640 "${APP_DIR}/shared/.env.local"
@@ -999,6 +1023,8 @@ LDAP_BIND_DN=$(compose_env_value "${LDAP_BIND_DN}")
 LDAP_BIND_PASSWORD=$(compose_env_value "${LDAP_BIND_PASSWORD}")
 LDAP_UPN_SUFFIX=$(compose_env_value "${LDAP_UPN_SUFFIX}")
 LDAP_ADMIN_GROUP=$(compose_env_value "${LDAP_ADMIN_GROUP}")
+LDAP_MARKETER_GROUP=$(compose_env_value "${LDAP_MARKETER_GROUP}")
+LDAP_ASSISTANT_GROUP=$(compose_env_value "${LDAP_ASSISTANT_GROUP}")
 LDAP_USER_GROUP=$(compose_env_value "${LDAP_USER_GROUP}")
 
 # Первый администратор создаётся при первом запуске; пароль удаляется из файла после успешной установки.
@@ -1056,10 +1082,16 @@ EOF
     printf ' Параметры:          %s\n' "${CONF_FILE}"
     printf ' Учётные данные:     %s (удалите после первого входа)\n' "${CONF_DIR}/admin-credentials.txt"
     printf ' Журнал установки:   %s\n' "${LOG_FILE}"
-    printf ' Управление:         %s status | update | backup | restore | maintenance | console | logs | uninstall\n' "${APP_ID}"
+    printf ' Управление:         %s status | update | backup | restore | maintenance | video | console | logs | uninstall\n' "${APP_ID}"
+    case "${VIDEO_RESULT:-}" in
+        ok) printf ' Раздел «Видео»:     %s/video/ (вход — через портал)\n' "${url}" ;;
+        error) printf ' Раздел «Видео»:     %sне включён%s — см. предупреждение выше; повторить: %s video enable\n' "${C_YELLOW}" "${C_RESET}" "${APP_ID}" ;;
+    esac
     printf '%s\n' "=============================================================="
     printf ' Дальше: войдите под администратором, смените пароль (шапка → имя пользователя),\n'
     printf ' создайте разделы и назначьте модераторов в «Панель администратора → Разделы и модераторы».\n'
+    printf ' Роли (Панель администратора → Пользователи): маркетолог — модератор всех разделов и видео;\n'
+    printf ' помощник маркетолога — добавляет материалы, они публикуются после модерации; пользователь — просмотр.\n'
     [[ -n "${LDAP_HOST}" ]] && printf ' Проверьте вход через домен: %s console app:ldap:test ЛОГИН\n' "${APP_ID}"
     printf '\n'
 }
@@ -1091,10 +1123,24 @@ main() {
     DB_CREATED_BY_INSTALL="${CREATED_DB}"; DB_USER_CREATED_BY_INSTALL="${CREATED_DB_USER}"
     [[ "${INSTALL_MODE}" == "docker" ]] && { DB_CREATED_BY_INSTALL="1"; DB_USER_CREATED_BY_INSTALL="1"; }
     save_conf; CREATED_CONF="1"
-    [[ -n "${CREATED_TMP}" ]] && rm -rf "${CREATED_TMP}" || true
     ROLLBACK_ENABLED="0"
     trap - ERR
     set +e
+    # Раздел «Видео» ставится после портала отдельным шагом: его ошибка (нет доступа к npm, Docker Hub,
+    # github.com) не отменяет установку портала — раздел можно включить позже командой «${APP_ID} video enable».
+    VIDEO_RESULT=""
+    if [[ "${WITH_VIDEO}" == "1" ]]; then
+        local video_args=(enable)
+        [[ "${VIDEO_LIVE}" == "1" ]] || video_args+=(--no-live)
+        [[ "${VIDEO_BACKUP_MEDIA}" == "1" ]] && video_args+=(--backup-media)
+        if bash "${SCRIPT_DIR}/video.sh" "${video_args[@]}"; then
+            VIDEO_RESULT="ok"
+        else
+            VIDEO_RESULT="error"
+            warn "Портал установлен, но раздел «Видео» включить не удалось (журнал — ${LOG_DIR}/video-enable-*.log). Исправьте причину и выполните: ${APP_ID} video enable"
+        fi
+    fi
+    [[ -n "${CREATED_TMP}" ]] && rm -rf "${CREATED_TMP}" || true
     print_summary
     exit 0
 }

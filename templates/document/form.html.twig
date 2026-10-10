@@ -19,6 +19,9 @@
 
 <section class="container section">
     {% include '_flashes.html.twig' %}
+    {% if moderation|default(false) %}
+        <div class="alert alert--info">{% if card_locked|default(false) %}Документ опубликован: вы можете загрузить новую редакцию — она вступит в силу после одобрения маркетологом, а до тех пор сотрудники видят текущую. Карточку документа меняет маркетолог.{% else %}Вы добавляете материал как помощник маркетолога: сотрудники увидят его после того, как маркетолог одобрит его на модерации.{% endif %}</div>
+    {% endif %}
     {% if is_new and templates|default([])|length > 0 %}
         <div class="card card--info template-picker">
             <h2 class="h-section">Создать по шаблону</h2>
@@ -86,6 +89,7 @@
 
                 {{ form_row(form.changeNote) }}
                 {% if is_new %}{{ form_row(form.publish) }}{% endif %}
+                {% if form.submitModeration is defined %}{{ form_row(form.submitModeration) }}{% endif %}
                 {{ form_row(form.public) }}
                 {{ form_row(form.restricted) }}
                 <div class="restricted-fields" data-restricted-fields>
@@ -102,7 +106,11 @@
                     <li><b>Файл</b> — любой документ из списка форматов; каждая новая загрузка становится новой версией, старые версии сохраняются.</li>
                     <li><b>Страница</b> — текст пишется прямо здесь; история версий и сравнение работают так же.</li>
                     <li><b>Актуален до</b> — по этой дате портал подсвечивает истекающие документы и уведомляет ответственных за {{ expiry_soon_days }} дней.</li>
-                    <li><b>Черновик</b> виден только модераторам раздела; после проверки нажмите «Опубликовать».</li>
+                    {% if moderation|default(false) %}
+                    <li><b>Модерация</b> — материал уходит маркетологам; одобренный публикуется сразу, возвращённый на доработку снова становится черновиком с комментарием.</li>
+                    {% else %}
+                    <li><b>Черновик</b> виден только модераторам раздела и помощникам маркетолога; после проверки нажмите «Опубликовать».</li>
+                    {% endif %}
                 </ul>
             </div>
             <div class="card">

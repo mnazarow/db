@@ -5,10 +5,13 @@
 документы и загружают новые версии, все старые версии сохраняются; портал следит за сроком
 актуальности каждого документа, рассылает уведомления и ведёт полную статистику просмотров,
 скачиваний и изменений. Вход — по локальным учётным записям и/или через Active Directory (LDAP).
+Помощники маркетолога готовят материалы, маркетологи публикуют их после модерации. Раздел
+«Видео» (`/video`) — встроенный корпоративный видеопортал с общим входом и ролями.
 Оформление выполнено в стиле сайта vodokomfort.ru (фирменный логотип и шрифты DIN Condensed
 и Roboto входят в поставку).
 
 * Стек: PHP 8.2+, Symfony 7.4 LTS, MySQL 8 / MariaDB 10.6+ (полнотекстовый индекс InnoDB), nginx, редактор Quill.
+  Раздел «Видео»: Node.js 22 (Fastify), Vue 3, PostgreSQL, ffmpeg, MediaMTX (каталог `video/`).
 * Полное руководство (методология, установка, настройка, использование, эксплуатация):
   **docs/РУКОВОДСТВО.md** (и docs/РУКОВОДСТВО.docx).
 
@@ -16,6 +19,9 @@
 
 | Возможность | Кому доступна |
 |---|---|
+| Роли «Маркетолог» (модератор всех разделов и видео) и «Помощник маркетолога» (материалы публикуются после модерации); назначение в панели администратора, группами AD или по токену SSO | администраторам |
+| Модерация: страница «На модерации» — очередь материалов помощников, решение первого ответившего маркетолога, письма и Telegram | маркетологам / помощникам |
+| Раздел «Видео» (`/video`): загрузка и просмотр видео, каналы, плейлисты, комментарии, поиск, трансляции, автосубтитры; общий вход и роли с порталом | всем сотрудникам (загрузка — маркетологам и помощникам) |
 | Просмотр дерева разделов и открытых опубликованных документов без входа — отовсюду, только из указанных подсетей или выключено (настраивается в панели администратора); документы только для сотрудников помечаются как внутренние | гостям |
 | Разделы любой вложенности, карточки разделов с описанием и счётчиками | всем (просмотр) |
 | Документы-файлы (PDF, Word, Excel, чертежи, архивы…) и документы-страницы (текст в редакторе) | всем (просмотр опубликованных) |
@@ -55,12 +61,13 @@
 ## Установка на чистый сервер одной командой
 
 ```bash
-tar -xzf docportal-1.7.0.tar.gz && cd docportal
+tar -xzf docportal-1.8.0.tar.gz && cd docportal
 sudo ./deploy/install.sh                                   # nginx + PHP-FPM + MariaDB на этом сервере
 sudo ./deploy/install.sh --domain docs.example.ru --ssl-email it@example.ru \
      --ldap-host dc1.example.local --ldap-base-dn "DC=example,DC=local" --ldap-upn-suffix example.local
 sudo ./deploy/install.sh --mode docker                     # в контейнерах Docker Compose
 sudo ./deploy/install.sh --with-extras                     # + предпросмотр офисных файлов и распознавание сканов
+sudo ./deploy/install.sh --with-video                      # + раздел «Видео» (позже: docportal video enable)
 ```
 
 Поддерживаются Debian 11/12/13, Ubuntu 22.04/24.04/26.04 (AlmaLinux/Rocky 9 — экспериментально).
@@ -88,6 +95,7 @@ docportal reindex --status                   # состояние индекса
 docportal telegram --status                  # уведомления в Telegram: настройки и привязанные чаты
 docportal console app:audit:export --format=cef --since="2026-09-01"   # журнал аудита в SIEM
 docportal console app:materials:import "Продуктовые материалы.xlsx" --dry-run   # таблицы материалов из Excel
+docportal video enable                # раздел «Видео»: видеопортал по адресу /video (status | restart | logs | disable)
 docportal uninstall                   # удаление (с --purge — вместе с базой данных)
 sudo /opt/docportal/current/deploy/refresh.sh   # обновить команду управления, cron и пакеты по текущему релизу
 ```
@@ -104,6 +112,8 @@ php bin/console app:demo:load        # демонстрационные разд
 ```
 
 Автотесты: `php vendor/bin/phpunit` (нужна база `docportal_test`, см. `.env.test`).
+Раздел «Видео»: `cd video/server && npm ci && npm run test:unit`; интерфейс — `cd video/web && npm ci && VITE_BASE=/video/ npm run build`.
+Сборка дистрибутива: `./scripts/build-release.sh` (нужны `vendor/`, Composer и npm).
 Сквозная проверка через браузер и скриншоты: `python3 tests/e2e_screens.py http://127.0.0.1:8080 docs/images var/import [http://127.0.0.1:8090/v1]`
 (третий аргумент — каталог импорта проверяемого сервера, четвёртый — адрес заглушки LLM `python3 tests/mock_llm_server.py 8090`).
 
@@ -120,7 +130,8 @@ REST API для внешних систем: `curl -H "Authorization: Bearer dp_
 | `src/Security/` | аутентификатор (локальные + LDAP), правила доступа (`Access`), voter, гостевой доступ, клиент LDAP; `Api/` — ключи API |
 | `src/Command/` | консольные команды `app:*` (пользователи, проверка, сроки, LDAP, импорт, ключи API, описания через LLM, демо-данные) |
 | `templates/`, `public/css`, `public/js`, `public/vendor/quill` | интерфейс (Twig, CSS, JS без сборки, редактор страниц) |
-| `deploy/` | скрипты установки, обновления, резервного копирования, диагностики, удаления |
+| `deploy/` | скрипты установки, обновления, резервного копирования, диагностики, удаления; `video.sh` и `video/` — раздел «Видео» |
+| `video/` | видеопортал (раздел «Видео»): `server/` (Node.js), `web/` (Vue 3), образ Docker, шаблон MediaMTX — см. `video/README.md` |
 | `docker/` | Dockerfile, docker-compose.yml, nginx, PHP и планировщик для контейнеров |
 | `docs/` | руководство, схемы, скриншоты |
 | `tests/` | автотесты PHPUnit и сквозная проверка через браузер |

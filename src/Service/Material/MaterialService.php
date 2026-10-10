@@ -177,6 +177,20 @@ final class MaterialService implements ResetInterface
      * править документ: иначе документ, который перенесли в чужой раздел, правился бы в обход прав.
      * $by = null — системные операции (импорт из консоли).
      */
+    /**
+     * Можно ли загрузить в строку новую версию её документа: модератор раздела — всегда, помощник
+     * маркетолога — тоже (новая редакция уйдёт на модерацию).
+     */
+    public function canUploadTo(MaterialRow $row, ?User $by): bool
+    {
+        $document = $row->getDocument();
+        if (null === $document || !$document->getSection()->isSameOrDescendantOf($row->getSection())) {
+            return false;
+        }
+
+        return null === $by || $this->access->canContributeToDocument($by, $document);
+    }
+
     public function canManageDocument(MaterialRow $row, ?User $by): bool
     {
         $document = $row->getDocument();
@@ -401,7 +415,7 @@ final class MaterialService implements ResetInterface
         $versionLabel = $row->getValue($this->roleParameter($section, MaterialParameter::ROLE_VERSION));
         $note = 'Загружено из таблицы материалов'.('' !== $versionLabel ? ', версия '.$versionLabel : '');
         $document = $row->getDocument();
-        if (null !== $document && !$this->canManageDocument($row, $by)) {
+        if (null !== $document && !$this->canUploadTo($row, $by)) {
             throw new \DomainException('Документ этой строки перенесён в другой раздел или недоступен вам для правки — новую версию из таблицы загрузить нельзя. Отвяжите файл от строки, чтобы загрузить новый документ.');
         }
 
@@ -440,9 +454,18 @@ final class MaterialService implements ResetInterface
             $row->setValue($link, $this->portalUrl->absolute('app_document_show', ['id' => $document->getId()]));
         }
         $row->touch($by);
+        $moderation = $this->access->needsModeration($by, $document->getSection());
         $this->history?->record($row, MaterialRowChange::UPLOAD, $by, 'file', 'Файл', null, \sprintf('«%s», версия %d%s',
-            $file->getClientOriginalName(), $version->getNumber(), $document->isVersionReleased($version) ? '' : ' (ждёт согласования)'));
+            $file->getClientOriginalName(), $version->getNumber(), $moderation ? ' (на модерации)' : ($document->isVersionReleased($version) ? '' : ' (ждёт согласования)')));
         $this->em->flush();
+        // Файл помощника маркетолога сразу уходит на модерацию: публикует маркетолог.
+        if ($moderation && null === $this->approvals->pendingFor($document)) {
+            try {
+                $this->approvals->submitForModeration($document, 'Загружено из таблицы материалов «'.$section->getName().'»: '.$row->getTitle(), $by);
+            } catch (\DomainException $e) {
+                $this->auditLogger->warning('Файл из таблицы материалов не отправлен на модерацию', ['document' => $document->getId(), 'error' => $e->getMessage()]);
+            }
+        }
         $this->auditLogger->info('Загружен файл из таблицы материалов', [
             'section' => $section->getFullName(),
             'material' => $row->getTitle(),
@@ -459,7 +482,11 @@ final class MaterialService implements ResetInterface
     public function uploadMessage(DocumentVersion $version): string
     {
         $document = $version->getDocument();
+        $pending = $this->approvals->pendingFor($document);
         $hint = match (true) {
+            null !== $pending && $pending->isModeration() => $document->isPublished()
+                ? ' — отправлен на модерацию: до одобрения маркетологом сотрудники видят прежнюю редакцию'
+                : ' — отправлен на модерацию: сотрудники увидят его после одобрения маркетологом',
             !$document->isVersionReleased($version) => ' — ждёт согласования: пока его нет, сотрудники видят прежнюю редакцию',
             $document->isPublished() => '',
             $document->isArchived() => ' — документ в архиве: верните его из архива, чтобы сотрудники увидели файл',
@@ -557,7 +584,7 @@ final class MaterialService implements ResetInterface
         return [
             'id' => $document->getId(),
             'hidden' => false,
-            'manageable' => $this->canManageDocument($row, $viewer),
+            'manageable' => $this->canUploadTo($row, $viewer),
             'title' => $document->getTitle(),
             'status' => $document->getStatus(),
             'url' => $this->urls->generate('app_document_show', ['id' => $document->getId()]),
