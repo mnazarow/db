@@ -66,11 +66,24 @@ _log_raw() { [[ -n "${LOG_FILE}" ]] && printf '%s\n' "$*" >> "${LOG_FILE}" || tr
 
 info()    { printf '%s[%s]%s %s\n' "${C_BLUE}" "$(_ts)" "${C_RESET}" "$*"; _log_raw "[INFO ] $*"; }
 ok()      { printf '%s[%s] ✔%s %s\n' "${C_GREEN}" "$(_ts)" "${C_RESET}" "$*"; _log_raw "[ OK  ] $*"; }
-warn()    { printf '%s[%s] ⚠ %s%s\n' "${C_YELLOW}" "$(_ts)" "$*" "${C_RESET}" >&2; _log_raw "[WARN ] $*"; }
+# Предупреждения за запуск собираются для итоговой сводки (print_warnings_summary); промежуточные
+# сообщения о повторах (warn_transient) в сводку не попадают.
+WARNINGS=()
+warn()    { WARNINGS+=("$*"); printf '%s[%s] ⚠ %s%s\n' "${C_YELLOW}" "$(_ts)" "$*" "${C_RESET}" >&2; _log_raw "[WARN ] $*"; }
+warn_transient() { printf '%s[%s] … %s%s\n' "${C_YELLOW}" "$(_ts)" "$*" "${C_RESET}" >&2; _log_raw "[RETRY] $*"; }
 # Текст последней ошибки — для отметки о неудачном задании в мониторинге (record_job).
 LAST_ERROR=""
 error()   { LAST_ERROR="$*"; printf '%s[%s] ✖ %s%s\n' "${C_RED}" "$(_ts)" "$*" "${C_RESET}" >&2; _log_raw "[ERROR] $*"; }
-step()    { printf '\n%s%s▶ %s%s\n' "${C_BOLD}" "${C_BLUE}" "$*" "${C_RESET}"; _log_raw "[STEP ] $*"; }
+# Строка журнала, с которой начался текущий шаг: при ошибке подсказки ищутся только в выводе этого шага.
+_STEP_LOG_LINE=0
+CURRENT_STEP=""
+step()    {
+    CURRENT_STEP="$*"
+    printf '\n%s%s▶ %s%s\n' "${C_BOLD}" "${C_BLUE}" "$*" "${C_RESET}"
+    _log_raw "[STEP ] $*"
+    if [[ -n "${LOG_FILE}" && -r "${LOG_FILE}" ]]; then _STEP_LOG_LINE=$(wc -l < "${LOG_FILE}" 2>/dev/null || echo 0); fi
+    return 0
+}
 debug()   { _log_raw "[DEBUG] $*"; [[ "${VERBOSE:-0}" == "1" ]] && printf '%s   %s%s\n' "${C_DIM}" "$*" "${C_RESET}" || true; }
 
 # Откат (функция rollback определяется в конкретном скрипте) выполняется один раз и только
@@ -87,17 +100,28 @@ maybe_rollback() {
 
 die() {
     error "$*"
+    if [[ -n "${CURRENT_STEP}" ]]; then
+        _log_raw "[ERROR] шаг: ${CURRENT_STEP}"
+        show_step_log_tail 10 || true
+    fi
+    explain_failure || true
     maybe_rollback
-    [[ -n "${LOG_FILE}" ]] && error "Подробности в журнале: ${LOG_FILE}"
+    [[ -n "${LOG_FILE}" && "${LOG_FILE}" != "/dev/null" ]] && error "Подробности в журнале: ${LOG_FILE}"
+    # Для отметки в мониторинге и файла .failed-<версия> — сама причина, а не строка про журнал.
+    LAST_ERROR="$*"
     exit 1
 }
 
-# Вызывается ловушкой ERR: печатает место ошибки и завершает работу.
+# Вызывается ловушкой ERR: печатает место ошибки (строка, команда, цепочка функций) и завершает работу.
 on_error() {
     local exit_code=$? line=$1 cmd=$2
     error "Ошибка (код ${exit_code}) в строке ${line}: ${cmd}"
+    _log_raw "[ERROR] функции: ${FUNCNAME[*]:1}; шаг: ${CURRENT_STEP:-—}"
+    show_step_log_tail 10 || true
+    explain_failure || true
     maybe_rollback
-    [[ -n "${LOG_FILE}" ]] && error "Подробности в журнале: ${LOG_FILE}"
+    [[ -n "${LOG_FILE}" && "${LOG_FILE}" != "/dev/null" ]] && error "Подробности в журнале: ${LOG_FILE}"
+    LAST_ERROR="Ошибка (код ${exit_code}) в строке ${line}: ${cmd}"
     exit "${exit_code}"
 }
 
@@ -196,7 +220,7 @@ retry() {
         if [[ ${n} -ge ${attempts} ]]; then
             return 1
         fi
-        warn "Попытка ${n}/${attempts} не удалась, повтор через ${delay} с: $*"
+        warn_transient "Попытка ${n}/${attempts} не удалась, повтор через ${delay} с: $*"
         sleep "${delay}"
         n=$((n + 1))
     done
@@ -259,26 +283,72 @@ detect_os() {
 apt_update_once() {
     if [[ "${_APT_UPDATED:-0}" != "1" ]]; then
         info "Обновление списка пакетов…"
-        if ! retry 2 5 env DEBIAN_FRONTEND=noninteractive apt-get update -q >>"${LOG_FILE}" 2>&1; then
-            # Часто причина — недоступный сторонний репозиторий; пробуем продолжить с теми индексами, что удалось получить.
-            warn "apt-get update завершился с ошибкой (см. журнал). Возможно, недоступен один из сторонних репозиториев — продолжаем."
+        local attempt out failed=""
+        out=$(mktemp)
+        for attempt in 1 2 3; do
+            apt_wait_lock
+            local rc=0
+            apt_get update -q >"${out}" 2>&1 9>&- || rc=$?
+            cat "${out}" >> "${LOG_FILE:-/dev/null}"
+            # apt-get update завершается успешно, даже когда репозитории недоступны («W: Failed to fetch»).
+            failed=$(grep -E '^(W|E): (Failed to fetch|The repository .* (does not have|is not signed)|Some index files failed)' "${out}" | head -n1 || true)
+            [[ ${rc} -eq 0 && -z "${failed}" ]] && break
+            [[ -n "${failed}" ]] || failed="apt-get update: код ${rc}"
+            [[ ${attempt} -lt 3 ]] || break
+            warn_transient "Списки пакетов обновились не полностью (попытка ${attempt}/3) — повтор через $((attempt * 10)) с"
+            apt_recover_lists || true
+            sleep $((attempt * 10))
+            failed=""
+        done
+        rm -f "${out}"
+        if [[ -n "${failed}" ]]; then
+            # Часто недоступен один сторонний репозиторий — продолжаем с теми индексами, что удалось получить.
+            warn "Списки пакетов обновились не полностью: ${failed:0:200} — продолжаем; если пакеты не установятся, проверьте доступ к репозиториям (прокси, брандмауэр, /etc/apt/sources.list)."
         fi
         _APT_UPDATED=1
     fi
 }
 
+# Очистка повреждённых списков пакетов (Hash Sum mismatch, незавершённая загрузка).
+apt_recover_lists() {
+    local tail
+    tail=$(tail -n 60 "${LOG_FILE:-/dev/null}" 2>/dev/null || true)
+    rm -rf /var/lib/apt/lists/partial/* 2>/dev/null || true
+    if grep_has -Ei 'Hash Sum mismatch|File has unexpected size|Clearsigned file isn.t valid' <<<"${tail}"; then
+        rm -rf /var/lib/apt/lists/* 2>/dev/null || true
+        apt_get clean >>"${LOG_FILE:-/dev/null}" 2>&1 9>&- || true
+    fi
+    return 0
+}
+
 pkg_install() {
-    # pkg_install пакет1 пакет2 …
+    # pkg_install пакет1 пакет2 … — до трёх попыток; между ними — разбор причины и восстановление
+    # (прерванный dpkg, повреждённые списки пакетов, занятая блокировка, неполные зависимости).
     [[ $# -eq 0 ]] && return 0
     info "Установка пакетов: $*"
+    local n
     case "${PKG}" in
         apt)
             apt_update_once
-            retry 3 10 env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends "$@" >>"${LOG_FILE}" 2>&1 9>&- \
-                || die "Не удалось установить пакеты: $*. См. журнал ${LOG_FILE}"
+            for n in 1 2 3; do
+                apt_wait_lock
+                apt_get install -y -q --no-install-recommends "$@" >>"${LOG_FILE}" 2>&1 9>&- && return 0
+                [[ ${n} -lt 3 ]] || break
+                warn_transient "Установка пакетов не удалась (попытка ${n}/3) — восстановление и повтор"
+                apt_recover || true
+                sleep $((n * 10))
+            done
+            die "Не удалось установить пакеты: $*."
             ;;
         dnf)
-            retry 3 10 dnf install -y -q "$@" >>"${LOG_FILE}" 2>&1 9>&- || die "Не удалось установить пакеты: $*. См. журнал ${LOG_FILE}"
+            for n in 1 2 3; do
+                timeout 3600 dnf install -y -q --setopt=retries=10 "$@" >>"${LOG_FILE}" 2>&1 9>&- && return 0
+                [[ ${n} -lt 3 ]] || break
+                warn_transient "Установка пакетов не удалась (попытка ${n}/3) — очистка кэша dnf и повтор"
+                dnf clean metadata >>"${LOG_FILE}" 2>&1 9>&- || true
+                sleep $((n * 10))
+            done
+            die "Не удалось установить пакеты: $*."
             ;;
     esac
 }
@@ -309,8 +379,16 @@ pkg_install_optional() {
     detect_pkg_quiet || return 1
     info "Установка пакетов (необязательных): $*"
     case "${PKG}" in
-        apt) apt_update_once; env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends "$@" >>"${LOG_FILE}" 2>&1 9>&- ;;
-        dnf) dnf install -y -q "$@" >>"${LOG_FILE}" 2>&1 9>&- ;;
+        apt)
+            apt_update_once
+            apt_wait_lock
+            apt_get install -y -q --no-install-recommends "$@" >>"${LOG_FILE}" 2>&1 9>&- && return 0
+            # Одна повторная попытка после восстановления (прерванный dpkg, устаревшие списки пакетов).
+            apt_recover || true
+            apt_wait_lock
+            apt_get install -y -q --no-install-recommends "$@" >>"${LOG_FILE}" 2>&1 9>&-
+            ;;
+        dnf) timeout 3600 dnf install -y -q --setopt=retries=10 "$@" >>"${LOG_FILE}" 2>&1 9>&- ;;
         *) return 1 ;;
     esac
 }
@@ -366,7 +444,8 @@ save_conf() {
         for var in INSTALL_MODE APP_DIR APP_VERSION BACKUP_DIR DOMAIN HTTP_PORT SERVICE_USER PHP_VERSION PHP_FPM_SERVICE \
                    PHP_FPM_SOCK DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD DB_SERVER_VERSION DB_LOCAL DB_SERVICE \
                    DB_CREATED_BY_INSTALL DB_USER_CREATED_BY_INSTALL SSL_ENABLED INSTALLED_AT BACKUP_REMOTE BACKUP_REMOTE_KEEP \
-                   VIDEO_ENABLED VIDEO_LIVE VIDEO_PATH VIDEO_PORT VIDEO_DATA_DIR VIDEO_BACKUP_MEDIA; do
+                   VIDEO_ENABLED VIDEO_LIVE VIDEO_PATH VIDEO_PORT VIDEO_INTERNAL_PORT VIDEO_DB_PORT VIDEO_DATA_DIR VIDEO_BACKUP_MEDIA \
+                   AUTO_UPDATE; do
             printf '%s=%q\n' "${var}" "${!var:-}"
         done
     } > "${tmp}"
@@ -443,7 +522,7 @@ php_missing_extensions() {
     # php_missing_extensions /usr/bin/php → список отсутствующих расширений
     local phpbin=$1 ext missing=()
     local loaded
-    loaded=$("${phpbin}" -m 2>/dev/null | tr '[:upper:]' '[:lower:]')
+    loaded=$("${phpbin}" -m 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)
     for ext in "${REQUIRED_PHP_EXTENSIONS[@]}"; do
         if ! grep_has -x "${ext}" <<<"${loaded}"; then
             if [[ "${ext}" == "opcache" ]] && grep_has -x "zend opcache" <<<"${loaded}"; then continue; fi
@@ -694,7 +773,7 @@ DEXEC=(docker compose exec -u www-data)
 [[ -t 0 && -t 1 ]] || DEXEC+=(-T)
 cmd="\${1:-help}"; shift || true
 case "\${cmd}" in
-    update|backup|restore|uninstall|status|doctor|maintenance|verify-backup|remote-backup|video)
+    update|backup|restore|uninstall|status|doctor|maintenance|verify-backup|remote-backup|video|auto-update)
         [[ "\${cmd}" == "status" ]] && cmd="doctor"
         exec "\${DEPLOY}/\${cmd}.sh" "\$@" ;;
     console)
@@ -747,7 +826,9 @@ case "\${cmd}" in
         cat <<HELP
 Использование: ${APP_ID} <команда>
   status              Состояние портала и диагностика
-  update [--source DIR|--archive FILE]   Обновление до новой версии
+  update [--archive FILE|--source DIR]   Обновление до новой версии без вопросов (без параметров — архив
+                      новее установленного ищется в /var/lib/${APP_ID}/updates, текущем каталоге, /root, /tmp)
+  auto-update on [--time ЧЧ:ММ] | off | status | run   Обновление по расписанию из /var/lib/${APP_ID}/updates
   backup              Резервная копия (база данных + файлы; --no-remote — без отправки во внешнее хранилище)
   restore ARCHIVE     Восстановление из резервной копии
   verify-backup [ARCHIVE]   Пробное восстановление копии во временную базу (по умолчанию — последней)
@@ -1302,4 +1383,321 @@ remote_backup_test() {
     if [[ "${got}" == "ok" ]]; then REMOTE_RESULT="запись в ${dest} работает"; return 0; fi
     REMOTE_RESULT="не удалось записать файл в ${dest} (подробности в журнале ${log})"
     return 1
+}
+
+# =============================================================================
+#  Надёжность (1.8.0): пакеты без вопросов, загрузки с повторами, порты, память,
+#  разбор причин ошибок. Используется установкой, обновлением и разделом «Видео».
+# =============================================================================
+
+# apt без вопросов: конфигурационные файлы остаются прежними, needrestart (Ubuntu) не открывает диалог,
+# блокировку dpkg (её держит, например, unattended-upgrades) apt ждёт до 10 минут; зависшая загрузка
+# прерывается по таймауту.
+apt_get() {
+    env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1 UCF_FORCE_CONFFOLD=1 APT_LISTCHANGES_FRONTEND=none \
+        timeout "${APT_TIMEOUT:-3600}" apt-get \
+        -o DPkg::Lock::Timeout=600 -o Acquire::Retries=3 -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60 \
+        -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "$@"
+}
+
+# Процесс менеджера пакетов, который сейчас работает (пусто — свободен). Постоянно запущенный в Ubuntu
+# unattended-upgrade-shutdown (ждёт выключения сервера) пакеты не ставит и не учитывается.
+apt_busy_process() {
+    command -v pgrep >/dev/null 2>&1 || return 0
+    pgrep -a -f '(^|/)(apt|apt-get|aptitude|dpkg)( |$)|/unattended-upgrade( |$)|apt\.systemd\.daily' 2>/dev/null \
+        | grep -v -e 'unattended-upgrade-shutdown' -e 'pgrep' | head -n1 || true
+}
+
+# Ожидание, пока закончит работу другой менеджер пакетов (автообновление ОС после загрузки сервера,
+# установка из другой консоли) — до APT_LOCK_WAIT секунд (900).
+apt_wait_lock() {
+    [[ "${PKG:-}" == "apt" ]] || return 0
+    local max=${APT_LOCK_WAIT:-900} waited=0 who
+    while who=$(apt_busy_process) && [[ -n "${who}" ]]; do
+        if [[ ${waited} -eq 0 ]]; then
+            info "Менеджер пакетов занят другим процессом (${who:0:90}) — ожидание до $((max / 60)) мин…"
+        fi
+        if [[ ${waited} -ge ${max} ]]; then
+            warn "Менеджер пакетов занят дольше $((max / 60)) мин (${who:0:90}) — продолжаем; при ошибке повторите позже."
+            return 1
+        fi
+        sleep 10; waited=$((waited + 10))
+    done
+    return 0
+}
+
+# Восстановление после типичных сбоев apt по выводу последней команды в журнале:
+#   прерванная установка (dpkg was interrupted) → dpkg --configure -a;
+#   повреждённые или устаревшие списки (Hash Sum mismatch, …not valid yet) → очистка списков и apt-get update;
+#   неполные зависимости → apt-get -f install; пакет не найден → обновление списков.
+apt_recover() {
+    [[ "${PKG:-}" == "apt" ]] || return 0
+    local tail
+    tail=$(tail -n 80 "${LOG_FILE:-/dev/null}" 2>/dev/null || true)
+    if grep_has -Ei 'dpkg was interrupted|dpkg --configure -a|E: Sub-process /usr/bin/dpkg returned' <<<"${tail}" || [[ -n "$(dpkg --audit 2>/dev/null | head -n1)" ]]; then
+        info "Восстановление прерванной установки пакетов (dpkg --configure -a)…"
+        apt_wait_lock
+        env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a timeout 1800 dpkg --configure -a --force-confdef --force-confold >>"${LOG_FILE}" 2>&1 9>&- || true
+        apt_get install -f -y -q >>"${LOG_FILE}" 2>&1 9>&- || true
+    fi
+    if grep_has -Ei 'Hash Sum mismatch|File has unexpected size|Release file .* is not valid yet|is not valid yet|Mirror sync in progress|Clearsigned file isn.t valid|NO_PUBKEY' <<<"${tail}"; then
+        info "Очистка списков пакетов и повторная загрузка…"
+        apt_recover_lists
+        _APT_UPDATED=0
+    fi
+    if grep_has -Ei 'Unmet dependencies|held broken packages|apt --fix-broken install|apt-get -f install' <<<"${tail}"; then
+        info "Исправление зависимостей пакетов (apt-get -f install)…"
+        apt_get install -f -y -q >>"${LOG_FILE}" 2>&1 9>&- || true
+    fi
+    if grep_has -Ei 'Unable to locate package|has no installation candidate|Unable to fetch some archives|404  Not Found' <<<"${tail}"; then
+        _APT_UPDATED=0
+    fi
+    [[ "${_APT_UPDATED:-0}" == "1" ]] || apt_update_once
+    return 0
+}
+
+# Перед началом работы: менеджер пакетов в порядке (прерванная установка завершается).
+pkg_preflight() {
+    case "${PKG:-}" in
+        apt)
+            if [[ -n "$(dpkg --audit 2>/dev/null | head -n1)" ]]; then
+                warn_transient "Менеджер пакетов в незавершённом состоянии — восстановление (dpkg --configure -a)…"
+                apt_wait_lock
+                env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a timeout 1800 dpkg --configure -a --force-confdef --force-confold >>"${LOG_FILE}" 2>&1 9>&- || true
+                apt_get install -f -y -q >>"${LOG_FILE}" 2>&1 9>&- || true
+                [[ -z "$(dpkg --audit 2>/dev/null | head -n1)" ]] && ok "Менеджер пакетов восстановлен" \
+                    || warn "dpkg сообщает о незавершённых пакетах (dpkg --audit) — установка пакетов может завершиться ошибкой."
+            fi
+            ;;
+    esac
+    return 0
+}
+
+# Загрузка файла с повторами и таймаутами. download URL ФАЙЛ — код 0, если файл получен и не пуст.
+download() {
+    local url=$1 dest=$2 tmp
+    tmp="${dest}.part.$$"
+    if curl -fsSL --retry 5 --retry-delay 5 --retry-connrefused --connect-timeout 20 --max-time "${DOWNLOAD_MAX_TIME:-900}" \
+            -o "${tmp}" "${url}" 2>>"${LOG_FILE:-/dev/null}" 9>&- && [[ -s "${tmp}" ]]; then
+        mv -f "${tmp}" "${dest}"
+        return 0
+    fi
+    rm -f "${tmp}"
+    _log_raw "Не удалось скачать ${url}"
+    return 1
+}
+
+# Доступен ли узел по TCP (без HTTP-запроса): net_reachable ХОСТ [ПОРТ=443]
+net_reachable() {
+    local host=$1 port=${2:-443}
+    timeout 8 bash -c "exec 3<>/dev/tcp/${host}/${port}" 2>/dev/null
+}
+
+# Проверка доступа к узлам, нужным установке: check_hosts "описание|хост|порт" … — печатает недоступные
+# (если задан прокси http(s)_proxy, проверка прямого доступа не показательна и пропускается).
+UNREACHABLE_HOSTS=()
+check_hosts() {
+    UNREACHABLE_HOSTS=()
+    if [[ -n "${https_proxy:-}${HTTPS_PROXY:-}${http_proxy:-}${HTTP_PROXY:-}" ]]; then
+        info "Задан прокси (https_proxy/http_proxy) — прямой доступ к узлам не проверяется."
+        return 0
+    fi
+    local item desc host port
+    for item in "$@"; do
+        IFS='|' read -r desc host port <<<"${item}"
+        if net_reachable "${host}" "${port:-443}"; then
+            debug "доступен ${host}:${port:-443} (${desc})"
+        else
+            UNREACHABLE_HOSTS+=("${desc} — ${host}")
+        fi
+    done
+    [[ ${#UNREACHABLE_HOSTS[@]} -eq 0 ]]
+}
+
+# Свободен ли порт: port_busy ПОРТ [tcp|udp] — код 0, если порт уже кем-то прослушивается.
+port_busy() {
+    local port=$1 proto=${2:-tcp} flags=-ltn
+    [[ "${proto}" == "udp" ]] && flags=-lun
+    if command -v ss >/dev/null 2>&1; then
+        ss "${flags}" "sport = :${port}" 2>/dev/null | awk 'NR > 1' | grep_has .
+        return
+    fi
+    # Без ss (минимальная система): TCP — пробное подключение к локальному адресу; UDP проверить нечем.
+    [[ "${proto}" == "tcp" ]] || return 1
+    timeout 3 bash -c "exec 3<>/dev/tcp/127.0.0.1/${port}" 2>/dev/null
+}
+
+# Первый свободный TCP-порт, начиная с заданного: free_port 3100 → 3100 или 3101…
+free_port() {
+    local p=$1 last=$(( $1 + 100 ))
+    while (( p <= last )); do
+        port_busy "${p}" tcp || { printf '%s' "${p}"; return 0; }
+        p=$((p + 1))
+    done
+    return 1
+}
+
+mem_total_mb() { awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 0; }
+swap_total_mb() { awk '/SwapTotal/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 0; }
+
+# Файл подкачки на серверах с малой памятью: без него сборка интерфейса, Composer, MariaDB и обработка
+# видео завершаются ошибкой «Killed» (OOM). ensure_swap [нужно_памяти_с_подкачкой_МБ=2048] [размер_МБ=2048]
+# Отключить: NO_SWAP=1 (параметр --no-swap). Ошибка создания — только предупреждение.
+ensure_swap() {
+    local need=${1:-2048} size=${2:-2048} mem swap file="/${APP_ID}.swap"
+    [[ "${NO_SWAP:-0}" == "1" ]] && return 0
+    mem=$(mem_total_mb); swap=$(swap_total_mb)
+    (( mem > 0 && mem + swap < need )) || return 0
+    if [[ -e "${file}" ]]; then
+        swapon --show=NAME 2>/dev/null | grep_has -x "${file}" || swapon "${file}" >>"${LOG_FILE}" 2>&1 || true
+        return 0
+    fi
+    local free
+    free=$(free_space_mb / 2>/dev/null || echo 0)
+    if (( free < size + 2048 )); then
+        warn "Памяти ${mem} МБ, подкачки ${swap} МБ, а места для файла подкачки мало (${free} МБ) — при нехватке памяти сборка может прерваться."
+        return 0
+    fi
+    info "Памяти ${mem} МБ, подкачки ${swap} МБ — создаётся файл подкачки ${file} (${size} МБ)…"
+    if { fallocate -l "${size}M" "${file}" 2>>"${LOG_FILE}" || dd if=/dev/zero of="${file}" bs=1M count="${size}" status=none 2>>"${LOG_FILE}"; } \
+        && chmod 600 "${file}" && mkswap "${file}" >>"${LOG_FILE}" 2>&1 && swapon "${file}" >>"${LOG_FILE}" 2>&1; then
+        grep_has -E "^${file}[[:space:]]" /etc/fstab || printf '%s none swap sw 0 0\n' "${file}" >> /etc/fstab
+        ok "Подключён файл подкачки ${file} (${size} МБ; запись в /etc/fstab)"
+    else
+        swapoff "${file}" >/dev/null 2>&1 || true
+        rm -f "${file}"
+        warn "Не удалось создать файл подкачки (в контейнере или на этой файловой системе это бывает невозможно) — при нехватке памяти сборка может прерваться."
+    fi
+}
+
+# Проверка поддерживаемой версии ОС (после detect_os): слишком старые — остановка, незнакомые — предупреждение.
+check_os_supported() {
+    local major=${OS_VERSION%%.*}
+    case "${OS_ID}" in
+        debian)
+            [[ "${major}" =~ ^[0-9]+$ && ${major} -lt 11 ]] && die "Debian ${OS_VERSION} слишком старый: нужен Debian 11 или новее."
+            [[ "${major}" =~ ^[0-9]+$ && ${major} -gt 13 ]] && warn "Debian ${OS_VERSION} ещё не проверялся — установка продолжается."
+            ;;
+        ubuntu)
+            [[ "${major}" =~ ^[0-9]+$ && ${major} -lt 20 ]] && die "Ubuntu ${OS_VERSION} слишком старая: нужна Ubuntu 22.04 или новее."
+            [[ "${major}" =~ ^[0-9]+$ && ${major} -lt 22 ]] && warn "Ubuntu ${OS_VERSION} устарела (поддерживаются 22.04 и новее) — установка продолжается без гарантий."
+            ;;
+    esac
+    case "$(uname -m)" in
+        x86_64|amd64|aarch64|arm64) ;;
+        *) warn "Архитектура $(uname -m) не проверялась — возможны ошибки установки пакетов." ;;
+    esac
+    return 0
+}
+
+# Часы сервера: при сильно неверной дате не проходят проверки сертификатов (HTTPS, репозитории).
+check_clock() {
+    local year
+    year=$(date +%Y)
+    if [[ ${year} -lt 2025 ]]; then
+        warn "Дата на сервере — $(date '+%d.%m.%Y'): при неверных часах не проверяются сертификаты HTTPS. Настройте время (timedatectl set-ntp true)."
+        return 1
+    fi
+    if command -v timedatectl >/dev/null 2>&1 && timedatectl show -p NTPSynchronized --value 2>/dev/null | grep_has -x no; then
+        debug "Время не синхронизировано с NTP (timedatectl)."
+    fi
+    return 0
+}
+
+# Подсказки по типичным причинам ошибки — по выводу текущего шага в журнале (с начала шага).
+explain_failure() {
+    [[ -n "${LOG_FILE}" && "${LOG_FILE}" != "/dev/null" && -r "${LOG_FILE}" ]] || return 0
+    local text hints=() from=$(( ${_STEP_LOG_LINE:-0} + 1 ))
+    text=$(tail -n "+${from}" "${LOG_FILE}" 2>/dev/null | tail -n 400 || true)
+    [[ -n "${text}" ]] || return 0
+    _hint() { if grep_has -Ei "$1" <<<"${text}"; then hints+=("$2"); fi; }
+    _hint 'Failed to fetch|Invalid response from proxy|Some index files failed to download|Could not connect to|Unable to connect to' \
+        'Нет доступа к репозиториям пакетов (адреса — в строках «Failed to fetch» журнала): проверьте интернет, прокси (/etc/apt/apt.conf.d/, http_proxy) и брандмауэр; во внутренней сети укажите локальное зеркало в /etc/apt/sources.list.'
+    _hint 'No space left on device|Not enough free space|You don.t have enough free space' \
+        'Закончилось место на диске (df -h). Освободите место — старые резервные копии, journalctl --vacuum-size=200M, apt-get clean, docker system prune — и повторите.'
+    _hint 'Could not resolve|Temporary failure (in name )?resolution|Name or service not known|getaddrinfo|ENOTFOUND|EAI_AGAIN' \
+        'Сервер не может разрешить имена (DNS): проверьте /etc/resolv.conf и доступ в интернет; в сети с прокси задайте http_proxy/https_proxy.'
+    _hint 'Connection timed out|Operation timed out|Failed to connect|Connection refused|Network is unreachable|No route to host|ETIMEDOUT|ECONNRESET|ECONNREFUSED|socket hang up' \
+        'Нет связи с внешним узлом (таймаут или отказ соединения): проверьте брандмауэр и прокси; повторный запуск продолжит с того же места, ранее загруженное не скачивается заново.'
+    _hint 'Could not get lock|Unable to acquire the dpkg frontend lock|is another process using it' \
+        'Менеджер пакетов занят другим процессом (часто — автообновление ОС после загрузки). Подождите несколько минут и повторите.'
+    _hint 'dpkg was interrupted' \
+        'Предыдущая установка пакетов прервалась: выполните dpkg --configure -a и повторите.'
+    _hint 'Hash Sum mismatch|is not valid yet|Release file .* is expired' \
+        'Списки пакетов повреждены или часы сервера неверны: проверьте дату (date), выполните rm -rf /var/lib/apt/lists/* && apt-get update.'
+    _hint 'certificate verify failed|SSL certificate problem|unable to get local issuer certificate|self.signed certificate|CERT_' \
+        'Ошибка проверки сертификата HTTPS: проверьте дату и время сервера; если трафик проходит через прокси с подменой сертификатов — добавьте его корневой сертификат (update-ca-certificates).'
+    _hint 'toomanyrequests|You have reached your pull rate limit' \
+        'Docker Hub ограничил число загрузок: подождите или укажите зеркало — install.sh --docker-mirror https://mirror.gcr.io.'
+    _hint 'Cannot connect to the Docker daemon|Is the docker daemon running' \
+        'Служба Docker не запущена: systemctl start docker; журнал — journalctl -u docker.'
+    _hint 'address already in use|bind\(\) to .* failed|port is already allocated|EADDRINUSE' \
+        'Порт уже занят другой программой: ss -ltnp | grep ПОРТ — освободите его или укажите другой (--port).'
+    _hint 'Killed|Out of memory|out of memory|ENOMEM|JavaScript heap out of memory|Cannot allocate memory' \
+        'Не хватило оперативной памяти: добавьте памяти или файл подкачки (скрипт создаёт его сам, если не задан --no-swap) и повторите.'
+    _hint 'Access denied for user' \
+        'База данных отклонила пароль: проверьте параметры --db-* (или DB_* в /etc/docportal/install.conf).'
+    _hint 'Permission denied' \
+        'Отказано в доступе: запускайте от root (sudo), проверьте права на каталоги установки и режим SELinux/AppArmor.'
+    _hint 'npm ERR!|npm error' \
+        'npm не смог загрузить пакеты: нужен доступ к registry.npmjs.org (или ставьте из архива дистрибутива — в нём зависимости уже собраны).'
+    _hint 'Unable to locate package|has no installation candidate' \
+        'В подключённых репозиториях ОС нет нужного пакета: проверьте /etc/apt/sources.list (включены ли main/universe) и выполните apt-get update.'
+    _hint 'nginx: \[emerg\]' \
+        'nginx не принимает конфигурацию: nginx -t покажет файл и строку.'
+    unset -f _hint
+    [[ ${#hints[@]} -gt 0 ]] || return 0
+    printf '%sВозможная причина и что сделать:%s\n' "${C_BOLD}" "${C_RESET}" >&2
+    local h
+    for h in "${hints[@]}"; do
+        printf '  • %s\n' "${h}" >&2
+        _log_raw "[HINT ] ${h}"
+    done
+    return 0
+}
+
+# Последние строки журнала текущего шага (для сообщения об ошибке на экране).
+show_step_log_tail() {
+    [[ -n "${LOG_FILE}" && "${LOG_FILE}" != "/dev/null" && -r "${LOG_FILE}" ]] || return 0
+    local from=$(( ${_STEP_LOG_LINE:-0} + 1 )) lines
+    lines=$(tail -n "+${from}" "${LOG_FILE}" 2>/dev/null | grep -v -e '^\[\(INFO\|STEP\| OK  \|DEBUG\|RETRY\|ERROR\|HINT \|WARN \)\]' -e '^=====' | tail -n "${1:-12}" || true)
+    [[ -n "${lines}" ]] || return 0
+    printf '%sПоследние строки журнала:%s\n' "${C_DIM}" "${C_RESET}" >&2
+    printf '%s\n' "${lines}" | cut -c1-220 | sed 's/^/   | /' >&2
+}
+
+# Итоговая сводка предупреждений (в конце установки и обновления).
+print_warnings_summary() {
+    [[ ${#WARNINGS[@]} -gt 0 ]] || return 0
+    local w seen="" unique=()
+    for w in "${WARNINGS[@]}"; do
+        # Одинаковые предупреждения — один раз.
+        [[ "${seen}" == *"|${w}|"* ]] && continue
+        seen+="|${w}|"
+        unique+=("${w}")
+    done
+    printf '\n%sТребует внимания (%d):%s\n' "${C_YELLOW}${C_BOLD}" "${#unique[@]}" "${C_RESET}"
+    for w in "${unique[@]}"; do printf '  • %s\n' "${w}"; done
+}
+
+# Состояние служб и последние ошибки — когда портал не ответил (на экран и в журнал).
+collect_diagnostics() {
+    # Диагностика не должна сама прерывать скрипт (set -e) — параметры оболочки здесь локальные.
+    local -
+    set +e
+    local out=""
+    if [[ "${INSTALL_MODE}" == "docker" ]]; then
+        out+=$'Контейнеры:\n'"$(cd "${APP_DIR}/docker" 2>/dev/null && ${COMPOSE_CMD:-docker compose} ps 2>&1 | head -n 15)"$'\n'
+        out+=$'Журнал app (последние строки):\n'"$(cd "${APP_DIR}/docker" 2>/dev/null && ${COMPOSE_CMD:-docker compose} logs --tail=15 app 2>&1)"$'\n'
+        out+=$'Журнал web (последние строки):\n'"$(cd "${APP_DIR}/docker" 2>/dev/null && ${COMPOSE_CMD:-docker compose} logs --tail=8 web 2>&1)"
+    else
+        out+="nginx -t: $(nginx -t 2>&1 | tail -n 2 | tr '\n' ' ')"$'\n'
+        out+="Службы: nginx — $(svc status nginx && echo работает || echo 'не работает'); ${PHP_FPM_SERVICE:-php-fpm} — $(svc status "${PHP_FPM_SERVICE:-php-fpm}" && echo работает || echo 'не работает'); ${DB_SERVICE:-mariadb} — $(svc status "${DB_SERVICE:-mariadb}" && echo работает || echo 'не работает/внешняя')"$'\n'
+        out+=$'Ошибки nginx:\n'"$(tail -n 8 "/var/log/nginx/${APP_ID}.error.log" 2>/dev/null)"$'\n'
+        out+=$'Журнал приложения:\n'"$(tail -n 12 "$(ls -t "${APP_DIR}"/shared/log/prod*.log 2>/dev/null | head -n1)" 2>/dev/null | cut -c1-300)"
+    fi
+    _log_raw "----- Диагностика -----"
+    _log_raw "${out}"
+    printf '%sДиагностика:%s\n' "${C_BOLD}" "${C_RESET}" >&2
+    printf '%s\n' "${out}" | sed 's/^/   | /' | head -n 60 >&2
 }

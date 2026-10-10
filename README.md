@@ -62,13 +62,18 @@
 
 ```bash
 tar -xzf docportal-1.8.0.tar.gz && cd docportal
-sudo ./deploy/install.sh                                   # nginx + PHP-FPM + MariaDB на этом сервере
+sudo ./deploy/install.sh                                   # nginx + PHP-FPM + MariaDB + раздел «Видео», без вопросов
 sudo ./deploy/install.sh --domain docs.example.ru --ssl-email it@example.ru \
      --ldap-host dc1.example.local --ldap-base-dn "DC=example,DC=local" --ldap-upn-suffix example.local
 sudo ./deploy/install.sh --mode docker                     # в контейнерах Docker Compose
 sudo ./deploy/install.sh --with-extras                     # + предпросмотр офисных файлов и распознавание сканов
-sudo ./deploy/install.sh --with-video                      # + раздел «Видео» (позже: docportal video enable)
+sudo ./deploy/install.sh --no-video                        # без раздела «Видео» (позже: docportal video enable)
 ```
+
+Установка идёт без вопросов: проверяет ОС, место, память (при нехватке создаёт файл подкачки), порты
+и доступ к репозиториям, ждёт освобождения apt, повторяет сетевые операции, а при ошибке объясняет
+причину и откатывает изменения. Раздел «Видео» ставится, если свободно не меньше 8 ГБ (`--with-video`
+— в любом случае). Если портал уже установлен, `install.sh` выполняет обновление.
 
 Поддерживаются Debian 11/12/13, Ubuntu 22.04/24.04/26.04 (AlmaLinux/Rocky 9 — экспериментально).
 Переносите на сервер именно архив дистрибутива: в нём есть `vendor/` (зависимости), поэтому
@@ -79,7 +84,9 @@ Composer и доступ к packagist.org на сервере не нужны. �
 ```bash
 docportal status                      # диагностика
 docportal backup                      # резервная копия (БД + файлы + настройки)
-docportal update                      # обновление (запуск из каталога новой версии: sudo ./deploy/update.sh)
+docportal update                      # обновление: архив новее установленной версии ищется сам
+                                      # (/var/lib/docportal/updates, текущий каталог, /root, /tmp) или --archive ФАЙЛ
+docportal auto-update on --time 04:30 # ночное обновление из архива, положенного в /var/lib/docportal/updates
 docportal restore /var/backups/docportal/<архив>.tar.gz
 docportal maintenance on --message "Работы до 18:00"   # страница «Идёт обновление портала» (off — выключить)
 docportal remote-backup set yandex:backups/docportal   # копии во внешнее хранилище (rclone или /mnt/каталог)

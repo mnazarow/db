@@ -72,7 +72,7 @@ if [[ "${SSL_ENABLED:-0}" == "1" && -n "${DOMAIN:-}" ]]; then
     if curl -sSf -o /dev/null -m 10 --noproxy '*' --resolve "${DOMAIN}:443:127.0.0.1" "https://${DOMAIN}/health" 2>/dev/null; then
         exp=""
         if command -v openssl >/dev/null 2>&1; then
-            exp=$(echo | openssl s_client -servername "${DOMAIN}" -connect 127.0.0.1:443 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2-)
+            exp=$(echo | openssl s_client -servername "${DOMAIN}" -connect 127.0.0.1:443 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2- || true)
         fi
         if [[ -n "${exp}" ]] && exp_ts=$(date -d "${exp}" +%s 2>/dev/null); then
             days=$(( (exp_ts - $(date +%s)) / 86400 ))
@@ -145,8 +145,22 @@ JOBS
     fi
 fi
 if [[ -d "${BACKUP_DIR}" ]]; then
-    last=$(ls -1t "${BACKUP_DIR}"/${APP_ID}-backup-*.tar.gz 2>/dev/null | head -n1)
+    last=$(ls -1t "${BACKUP_DIR}"/${APP_ID}-backup-*.tar.gz 2>/dev/null | head -n1 || true)
     if [[ -n "${last}" ]]; then ok "Последняя резервная копия: $(basename "${last}") ($(date -r "${last}" '+%d.%m.%Y %H:%M'))"; else warn "Резервных копий пока нет (${BACKUP_DIR})"; fi
+fi
+# Автоматическое обновление: расписание и версии, обновление на которые не удалось (повторно не ставятся).
+auto_line=$(grep -E "/${APP_ID} update --auto( |$)" "/etc/cron.d/${APP_ID}" 2>/dev/null | grep -v '^[[:space:]]*#' | head -n1 || true)
+if [[ -n "${auto_line}" ]]; then
+    ok "Автообновление: ежедневно в $(awk '{printf "%02d:%02d", $2, $1}' <<<"${auto_line}") из /var/lib/${APP_ID}/updates (${APP_ID} auto-update status)"
+    for failed_marker in "/var/lib/${APP_ID}/updates"/.failed-*; do
+        [[ -e "${failed_marker}" ]] || continue
+        # Установлена эта версия или новее (обновились вручную) — отметка устарела.
+        version_ge "${APP_VERSION:-0}" "${failed_marker##*/.failed-}" && continue
+        warn "Автообновление до версии ${failed_marker##*/.failed-} не удалось и повторно не ставится: $(head -c 160 "${failed_marker}" 2>/dev/null || true). Разрешить повтор: rm ${failed_marker}"
+        PROBLEMS=$((PROBLEMS + 1))
+    done
+else
+    info "Автообновление выключено (включить: ${APP_ID} auto-update on)."
 fi
 if [[ -n "${BACKUP_REMOTE:-}" ]]; then
     ok "Копии во внешнем хранилище: ${BACKUP_REMOTE} (хранится ${BACKUP_REMOTE_KEEP:-14}; итог последней отправки — панель администратора → Мониторинг)"
@@ -155,7 +169,7 @@ else
 fi
 
 if [[ "${INSTALL_MODE}" == "native" ]]; then
-    logf=$(ls -t "${APP_DIR}"/shared/log/prod*.log 2>/dev/null | head -n1)
+    logf=$(ls -t "${APP_DIR}"/shared/log/prod*.log 2>/dev/null | head -n1 || true)
     if [[ -n "${logf}" && -f "${logf}" ]]; then
         errs=$(grep -c 'CRITICAL\|ERROR' "${logf}" 2>/dev/null) || true
         errs=${errs:-0}

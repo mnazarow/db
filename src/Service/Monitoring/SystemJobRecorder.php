@@ -28,6 +28,8 @@ final class SystemJobRecorder
         'backup' => ['label' => 'Резервная копия', 'max_age' => 26 * 3600],
         'backup-remote' => ['label' => 'Копия во внешнем хранилище', 'max_age' => 26 * 3600],
         'backup-verify' => ['label' => 'Проверка восстановления из копии', 'max_age' => 8 * 86400],
+        // docportal auto-update on: ночная проверка каталога обновлений (новой версии нет — тоже успешный запуск).
+        'auto-update' => ['label' => 'Автоматическое обновление', 'max_age' => 26 * 3600],
     ];
 
     public const STATUSES = [SystemJob::STATUS_RUNNING, SystemJob::STATUS_OK, SystemJob::STATUS_WARNING, SystemJob::STATUS_ERROR];

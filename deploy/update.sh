@@ -3,10 +3,15 @@
 #  Обновление портала документации до новой версии одной командой.
 #
 #  Запускается из каталога НОВОЙ версии:   sudo ./deploy/update.sh
-#  или с указанием источника:              sudo docportal update --archive docportal-1.6.0.tar.gz
+#  или с указанием источника:              sudo docportal update --archive docportal-1.8.0.tar.gz
+#  или без параметров:                     sudo docportal update
+#      — архив новой версии ищется сам: /var/lib/docportal/updates, текущий каталог, /root, /tmp, /home/*.
+#  По расписанию (ночью, если в /var/lib/docportal/updates появился архив новее): docportal auto-update on
 #
-#  Порядок: резервная копия → новый релиз рядом с текущим → миграции → переключение →
-#  проверка работоспособности; при ошибке — автоматический откат на предыдущий релиз.
+#  Полностью автоматически: без вопросов; проверки до каких-либо изменений (архив и его контрольная сумма,
+#  версия, место, база, nginx, Docker); режим обслуживания → резервная копия → новый релиз рядом с текущим →
+#  миграции → переключение → проверка работоспособности → раздел «Видео» (обновляется, а при переходе
+#  на 1.8.0 — ставится, если хватает ресурсов); при ошибке — автоматический откат на предыдущий релиз.
 # =============================================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=deploy/common.sh
@@ -17,10 +22,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_DIR=""
 ARCHIVE=""
 KEEP_RELEASES=3
-ASSUME_YES="0"
+# Обновление полностью автоматическое: подтверждение — только с --confirm.
+ASSUME_YES="1"
 NO_BACKUP="0"
 NO_DB_ROLLBACK="0"
 NO_MAINT="0"
+# auto — раздел «Видео» включается при обновлении, если ещё не был настроен и серверу хватает ресурсов.
+WITH_VIDEO="auto"
+# --auto: запуск по расписанию — новая версия только из каталога обновлений; нет новой — тихо выходим.
+AUTO_MODE="0"
+ALLOW_DOWNGRADE="0"
+NO_SWAP="0"
+UPDATES_DIR="/var/lib/${APP_ID}/updates"
+UPDATE_DONE="0"
 # Восстановлена ли база при откате (0 — миграции изменили базу, а восстановить её не удалось).
 DB_RESTORED="1"
 # Включил ли этот запуск режим обслуживания (выключается только такой — включённый администратором остаётся).
@@ -48,11 +62,20 @@ usage() {
 Использование: sudo $0 [параметры]
   --source DIR       Каталог с новой версией (по умолчанию — каталог, где лежит скрипт).
   --archive FILE     Архив новой версии (.tar.gz/.zip).
+                     Без --source и --archive при запуске установленной копии (docportal update) архив
+                     новее установленной версии ищется в ${UPDATES_DIR}, текущем каталоге, /root, /tmp, /home/*.
   --keep N           Сколько предыдущих релизов хранить (по умолчанию ${KEEP_RELEASES}).
   --no-backup        Не делать резервную копию перед обновлением (не рекомендуется).
   --no-db-rollback   При откате не восстанавливать базу данных из резервной копии.
   --no-maintenance   Не включать режим обслуживания (страницу «Идёт обновление портала») на время миграций.
-  --yes, -y          Не спрашивать подтверждения.
+  --no-video         Не включать раздел «Видео» (по умолчанию включается при переходе на 1.8.0, если хватает ресурсов).
+  --with-video       Включить раздел «Видео», даже если он был выключен или ресурсов мало.
+  --allow-downgrade  Разрешить установку версии старше установленной (по умолчанию — отказ).
+  --auto             Режим расписания: архив только из ${UPDATES_DIR}; нет новой версии — выход без ошибки;
+                     версия, обновление на которую не удалось, повторно автоматически не ставится.
+  --no-swap          Не создавать файл подкачки при малой памяти.
+  --confirm          Спросить подтверждение (по умолчанию обновление идёт без вопросов).
+  --yes, -y          Не спрашивать подтверждения (так и по умолчанию).
   --help             Справка.
 EOF
 }
@@ -66,6 +89,12 @@ while [[ $# -gt 0 ]]; do
         --no-db-rollback) NO_DB_ROLLBACK="1"; shift ;;
         --no-maintenance) NO_MAINT="1"; shift ;;
         --yes|-y) ASSUME_YES="1"; shift ;;
+        --confirm) ASSUME_YES="0"; shift ;;
+        --no-video) WITH_VIDEO="0"; shift ;;
+        --with-video) WITH_VIDEO="1"; shift ;;
+        --allow-downgrade) ALLOW_DOWNGRADE="1"; shift ;;
+        --auto) AUTO_MODE="1"; shift ;;
+        --no-swap) NO_SWAP="1"; shift ;;
         --help|-h) usage; exit 0 ;;
         *) usage; die "Неизвестный параметр: $1" ;;
     esac
@@ -78,20 +107,111 @@ load_conf || die "Портал не установлен: не найден ${CO
 acquire_lock 0
 banner "обновление"
 
+# При любом завершении: удалить распакованный архив; в режиме расписания — отметить неудачу в мониторинге
+# и запомнить версию, чтобы не повторять её каждую ночь. При перезапуске из новой версии (exec ниже)
+# ловушка не срабатывает — это сделает перезапущенный скрипт.
+update_exit() {
+    local rc=$?
+    [[ -n "${CREATED_TMP:-}" ]] && rm -rf "${CREATED_TMP}"
+    if [[ "${AUTO_MODE}" == "1" && "${UPDATE_DONE}" != "1" && ${rc} -ne 0 ]]; then
+        if [[ -n "${NEW_VERSION:-}" ]]; then
+            mkdir -p "${UPDATES_DIR}" 2>/dev/null && printf '%s\n' "$(date '+%Y-%m-%d %H:%M') ${LAST_ERROR:-ошибка}" > "${UPDATES_DIR}/.failed-${NEW_VERSION}" 2>/dev/null || true
+        fi
+        record_job auto-update error "Обновление до ${NEW_VERSION:-новой версии} не выполнено: ${LAST_ERROR:-см. журнал ${LOG_FILE}}" "${SECONDS}" || true
+    fi
+    return 0
+}
+trap update_exit EXIT
+
+# version_gt A B — версия A новее B.
+version_gt() { [[ "$1" != "$2" ]] && version_ge "$1" "$2"; }
+
+# Архив новее установленной версии: docportal-<версия>.tar.gz (при равных версиях полный архив важнее -src).
+find_update_archive() {
+    local dirs=("${UPDATES_DIR}") d f v best="" best_v="${APP_VERSION:-0}"
+    if [[ "${AUTO_MODE}" != "1" ]]; then
+        dirs+=("${PWD}" /root /tmp /var/tmp)
+        for d in /home/*; do [[ -d "${d}" ]] && dirs+=("${d}"); done
+    fi
+    for d in "${dirs[@]}"; do
+        for f in "${d}"/"${APP_ID}"-[0-9]*.tar.gz; do
+            [[ -f "${f}" ]] || continue
+            v=$(basename "${f}"); v=${v#"${APP_ID}"-}; v=${v%.tar.gz}; v=${v%-src}
+            [[ "${v}" =~ ^[0-9]+(\.[0-9]+)*$ ]] || continue
+            if [[ "${AUTO_MODE}" == "1" && -e "${UPDATES_DIR}/.failed-${v}" ]]; then
+                # Сообщение — в stderr: stdout функции — путь к найденному архиву.
+                info "Пропускается ${f}: обновление на ${v} уже не удалось ($(head -c 200 "${UPDATES_DIR}/.failed-${v}" | tr -d '\n')). Разрешить повтор: rm ${UPDATES_DIR}/.failed-${v}" >&2
+                continue
+            fi
+            if version_gt "${v}" "${best_v}" || { [[ "${v}" == "${best_v}" && -n "${best}" && "${best}" == *-src.tar.gz && "${f}" != *-src.tar.gz ]]; }; then
+                best="${f}"; best_v="${v}"
+            fi
+        done
+    done
+    [[ -n "${best}" ]] && printf '%s' "${best}"
+}
+
 # --- Источник новой версии --------------------------------------------------------
+if [[ -z "${ARCHIVE}" && -z "${SOURCE_DIR}" ]]; then
+    DEFAULT_SOURCE="$(cd "${SCRIPT_DIR}/.." && pwd)"
+    # Запущена установленная копия (docportal update) или режим расписания — ищем архив новой версии.
+    if [[ "${AUTO_MODE}" == "1" || "${DEFAULT_SOURCE}" == "${APP_DIR}" || "${DEFAULT_SOURCE}" == "${APP_DIR}"/* ]]; then
+        mkdir -p "${UPDATES_DIR}" && chmod 700 "${UPDATES_DIR}" 2>/dev/null || true
+        if ! ARCHIVE=$(find_update_archive) || [[ -z "${ARCHIVE}" ]]; then
+            ARCHIVE=""
+            if [[ "${AUTO_MODE}" == "1" ]]; then
+                UPDATE_DONE="1"
+                # Новая версия есть, но обновление на неё уже не удалось — в «Мониторинге» остаётся предупреждение,
+                # пока администратор не устранит причину (удалит отметку или обновится вручную).
+                skipped=""
+                for marker in "${UPDATES_DIR}"/.failed-*; do
+                    [[ -e "${marker}" ]] || continue
+                    if version_gt "${marker##*/.failed-}" "${APP_VERSION:-0}"; then skipped+="${skipped:+, }${marker##*/.failed-}"; fi
+                done
+                if [[ -n "${skipped}" ]]; then
+                    warn "Обновление на ${skipped} уже не удалось — повторно автоматически не выполняется. Исправьте причину и удалите отметку: rm ${UPDATES_DIR}/.failed-<версия> (или обновитесь вручную: ${APP_ID} update)."
+                    record_job auto-update warning "Обновление на ${skipped} не удалось ранее и повторно не выполняется — исправьте причину и удалите ${UPDATES_DIR}/.failed-<версия>" "${SECONDS}" || true
+                else
+                    info "Новой версии нет (установлена ${APP_VERSION}; каталог обновлений ${UPDATES_DIR})."
+                    record_job auto-update ok "Новой версии нет (установлена ${APP_VERSION})" "${SECONDS}" || true
+                fi
+                exit 0
+            fi
+            die "Архив новой версии не найден (нужен ${APP_ID}-<версия>.tar.gz новее ${APP_VERSION}). Положите его в ${UPDATES_DIR} (или в текущий каталог, /root, /tmp) и повторите, либо укажите явно: ${APP_ID} update --archive ФАЙЛ"
+        fi
+        info "Найден архив новой версии: ${ARCHIVE}"
+    fi
+fi
 if [[ -n "${ARCHIVE}" ]]; then
     [[ -f "${ARCHIVE}" ]] || die "Архив не найден: ${ARCHIVE}"
-    CREATED_TMP=$(mktemp -d "/tmp/${APP_ID}-upd.XXXXXX")
-    # Распакованный архив удаляем при любом завершении (в том числе при отмене); при перезапуске
-    # из новой версии (exec ниже) ловушка не срабатывает — каталог удалит перезапущенный скрипт.
-    trap '[[ -n "${CREATED_TMP:-}" ]] && rm -rf "${CREATED_TMP}"' EXIT
+    ARCHIVE="$(cd "$(dirname "${ARCHIVE}")" && pwd)/$(basename "${ARCHIVE}")"
+    # Контрольная сумма (файл .sha256 рядом с архивом): повреждённый при передаче архив не ставится.
+    if [[ -f "${ARCHIVE}.sha256" ]]; then
+        expected_sum=$(awk 'NR==1 {print $1}' "${ARCHIVE}.sha256")
+        actual_sum=$(sha256sum "${ARCHIVE}" | awk '{print $1}')
+        [[ -n "${expected_sum}" && "${expected_sum}" == "${actual_sum}" ]] || die "Контрольная сумма архива ${ARCHIVE} не совпадает с ${ARCHIVE}.sha256 — архив повреждён при передаче. Скопируйте его заново."
+        ok "Контрольная сумма архива проверена"
+    fi
     case "${ARCHIVE}" in
-        *.tar.gz|*.tgz) tar -xzf "${ARCHIVE}" -C "${CREATED_TMP}" || die "Не удалось распаковать архив." ;;
-        *.zip) require_cmd unzip; unzip -q "${ARCHIVE}" -d "${CREATED_TMP}" || die "Не удалось распаковать архив." ;;
-        *) die "Неизвестный формат архива." ;;
+        *.tar.gz|*.tgz) gzip -t "${ARCHIVE}" 2>>"${LOG_FILE}" || die "Архив ${ARCHIVE} повреждён (gzip -t) — скопируйте его заново." ;;
+    esac
+    # Распаковка — туда, где хватает места (архив с vendor/ и видеопорталом занимает в распакованном виде
+    # примерно втрое больше).
+    need_mb=$(( $(stat -c %s "${ARCHIVE}") / 1048576 * 4 + 300 ))
+    tmp_parent=""
+    for d in /tmp /var/tmp "$(dirname "${APP_DIR}")"; do
+        free_mb=$(free_space_mb "${d}" 2>/dev/null || echo 0)
+        if [[ -d "${d}" && ${free_mb:-0} -ge ${need_mb} ]]; then tmp_parent="${d}"; break; fi
+    done
+    [[ -n "${tmp_parent}" ]] || die "Недостаточно места для распаковки архива: нужно около ${need_mb} МБ в /tmp, /var/tmp или $(dirname "${APP_DIR}")."
+    CREATED_TMP=$(mktemp -d "${tmp_parent}/${APP_ID}-upd.XXXXXX")
+    case "${ARCHIVE}" in
+        *.tar.gz|*.tgz) tar -xzf "${ARCHIVE}" -C "${CREATED_TMP}" 2>>"${LOG_FILE}" || die "Не удалось распаковать архив (место: $(free_space_mb "${tmp_parent}") МБ в ${tmp_parent})." ;;
+        *.zip) require_cmd unzip; unzip -q "${ARCHIVE}" -d "${CREATED_TMP}" >>"${LOG_FILE}" 2>&1 || die "Не удалось распаковать архив." ;;
+        *) die "Неизвестный формат архива (ожидается .tar.gz или .zip)." ;;
     esac
     if is_project_dir "${CREATED_TMP}"; then SOURCE_DIR="${CREATED_TMP}"; else
-        sub=$(find "${CREATED_TMP}" -maxdepth 2 -name composer.json -printf '%h\n' | head -n1)
+        sub=$(find "${CREATED_TMP}" -maxdepth 2 -name composer.json -printf '%h\n' 2>/dev/null | head -n1 || true)
         [[ -n "${sub}" ]] && is_project_dir "${sub}" || die "В архиве не найден проект."
         SOURCE_DIR="${sub}"
     fi
@@ -112,6 +232,15 @@ if [[ -z "${DOCPORTAL_UPDATE_REEXEC:-}" && -f "${SOURCE_DIR}/deploy/update.sh" &
     [[ "${NO_DB_ROLLBACK}" == "1" ]] && REEXEC_ARGS+=(--no-db-rollback)
     # Параметр появился в 1.7.0: новой версии передаётся, только если она его знает.
     [[ "${NO_MAINT}" == "1" ]] && grep -q -- '--no-maintenance' "${SOURCE_DIR}/deploy/update.sh" && REEXEC_ARGS+=(--no-maintenance)
+    # Параметры 1.8.0 — тоже только той версии, что их знает.
+    if grep -q -- '--allow-downgrade' "${SOURCE_DIR}/deploy/update.sh"; then
+        [[ "${ASSUME_YES}" == "1" ]] || REEXEC_ARGS+=(--confirm)
+        [[ "${WITH_VIDEO}" == "0" ]] && REEXEC_ARGS+=(--no-video)
+        [[ "${WITH_VIDEO}" == "1" ]] && REEXEC_ARGS+=(--with-video)
+        [[ "${ALLOW_DOWNGRADE}" == "1" ]] && REEXEC_ARGS+=(--allow-downgrade)
+        [[ "${AUTO_MODE}" == "1" ]] && REEXEC_ARGS+=(--auto)
+        [[ "${NO_SWAP}" == "1" ]] && REEXEC_ARGS+=(--no-swap)
+    fi
     export DOCPORTAL_UPDATE_REEXEC=1 DOCPORTAL_UPDATE_TMP="${CREATED_TMP}"
     info "Обновление продолжится скриптами новой версии: ${SOURCE_DIR}/deploy/update.sh"
     exec bash "${SOURCE_DIR}/deploy/update.sh" "${REEXEC_ARGS[@]}"
@@ -119,16 +248,75 @@ fi
 # Временный каталог распакованного архива (из первого запуска) удаляем по завершении.
 if [[ -n "${DOCPORTAL_UPDATE_TMP:-}" && -z "${CREATED_TMP}" ]]; then
     CREATED_TMP="${DOCPORTAL_UPDATE_TMP}"
-    trap '[[ -n "${CREATED_TMP:-}" ]] && rm -rf "${CREATED_TMP}"' EXIT
 fi
 NEW_VERSION=$(project_version "${SOURCE_DIR}")
 info "Текущая версия: ${APP_VERSION}; новая версия: ${NEW_VERSION}; источник: ${SOURCE_DIR}"
 if [[ "${INSTALL_MODE}" == "native" && "${SOURCE_DIR}" == "${APP_DIR}"/* ]]; then
     die "Источник обновления находится внутри каталога установки. Распакуйте новую версию в другой каталог (например, /tmp) и запустите update.sh оттуда."
 fi
+# Версия: обновление на более старую — по ошибке выбранный архив (откат версии — восстановлением из копии).
+if [[ "${NEW_VERSION}" != "unknown" && "${APP_VERSION:-}" != "" ]] && version_gt "${APP_VERSION}" "${NEW_VERSION}"; then
+    [[ "${ALLOW_DOWNGRADE}" == "1" ]] || die "Версия ${NEW_VERSION} старше установленной ${APP_VERSION}. Вернуть прежнюю версию надёжнее восстановлением из резервной копии (${APP_ID} restore); если нужна именно установка старой версии — --allow-downgrade."
+    warn "Устанавливается более старая версия ${NEW_VERSION} (установлена ${APP_VERSION}) — по --allow-downgrade."
+fi
+if [[ "${AUTO_MODE}" == "1" && "${NEW_VERSION}" == "${APP_VERSION}" ]]; then
+    info "Версия ${NEW_VERSION} уже установлена — обновлять нечего."
+    UPDATE_DONE="1"
+    record_job auto-update ok "Новой версии нет (установлена ${APP_VERSION})" "${SECONDS}"
+    exit 0
+fi
+[[ "${NEW_VERSION}" == "${APP_VERSION}" ]] && info "Версия ${NEW_VERSION} уже установлена — выполняется повторная установка той же версии (исправление файлов, настроек, служб)."
 if [[ "${ASSUME_YES}" != "1" ]]; then
     confirm "Обновить портал ${APP_VERSION} → ${NEW_VERSION}?" || die "Обновление отменено."
 fi
+[[ "${AUTO_MODE}" == "1" ]] && record_job auto-update running
+
+# --- Проверки до каких-либо изменений -----------------------------------------------
+# Всё, что можно проверить заранее, проверяется до режима обслуживания и резервной копии: ошибка здесь
+# ничего не меняет на сервере.
+update_preflight() {
+    step "Проверки перед обновлением"
+    detect_pkg_quiet || true
+    pkg_preflight
+    check_clock || true
+    local free need
+    if [[ "${INSTALL_MODE}" == "native" ]]; then
+        need=$(( $(du -sm "${SOURCE_DIR}" 2>/dev/null | awk '{print $1}' || true) + 512 ))
+        free=$(free_space_mb "${APP_DIR}" 2>/dev/null || true)
+        if [[ ! "${free}" =~ ^[0-9]+$ ]]; then
+            warn "Не удалось определить свободное место в ${APP_DIR} (df) — проверка места пропущена."
+        elif [[ ${free} -lt ${need} ]]; then
+            die "Недостаточно места в ${APP_DIR}: свободно ${free} МБ, для нового релиза нужно около ${need} МБ. Удалите старые релизы (${APP_DIR}/releases) или резервные копии и повторите."
+        fi
+        if command -v nginx >/dev/null 2>&1 && ! nginx -t >>"${LOG_FILE}" 2>&1; then
+            die "Текущая конфигурация nginx содержит ошибку (nginx -t) — обновление не начато, чтобы не оставить сайт неработающим. Исправьте конфигурацию и повторите."
+        fi
+        mysql_cli >/dev/null || die "Не найден клиент mysql/mariadb (пакет mariadb-client) — обновление не начато."
+        mysql_exec "${DB_HOST}" "${DB_PORT}" "${DB_USER}" "${DB_PASSWORD}" "SELECT 1" >/dev/null 2>&1 \
+            || die "Нет подключения к базе данных ${DB_USER}@${DB_HOST}:${DB_PORT} (systemctl status ${DB_SERVICE:-mariadb}) — обновление не начато."
+    else
+        command -v docker >/dev/null 2>&1 || die "Docker не найден — обновление не начато."
+        if ! docker info >/dev/null 2>&1; then
+            warn_transient "Служба Docker не отвечает — запуск…"
+            svc enable docker || true
+            retry 15 2 docker info >/dev/null 2>&1 || die "Служба Docker не отвечает (systemctl status docker) — обновление не начато."
+        fi
+        free=$(free_space_mb /var/lib/docker 2>/dev/null || free_space_mb / 2>/dev/null || true)
+        if [[ ! "${free}" =~ ^[0-9]+$ ]]; then
+            warn "Не удалось определить свободное место для образов Docker (df) — проверка места пропущена."
+        elif [[ ${free} -lt 3072 ]]; then
+            die "Недостаточно места для образов Docker: свободно ${free} МБ, нужно не меньше 3 ГБ (docker system prune освободит место от старых образов)."
+        fi
+    fi
+    ensure_swap 2048 2048
+    if body=$(health_probe); then
+        ok "Портал работает: ${body}"
+    else
+        warn "Портал сейчас не отвечает (${body}) — обновление продолжается: возможно, оно и исправит проблему."
+    fi
+    ok "Проверки пройдены"
+}
+update_preflight
 
 # --- Откат ------------------------------------------------------------------------
 rollback() {
@@ -254,6 +442,7 @@ health() {
         ok "Портал отвечает: ${body}"
     else
         error "Портал не отвечает после обновления на $(health_url) (${body:-нет ответа})."
+        collect_diagnostics
         return 1
     fi
 }
@@ -274,7 +463,8 @@ if [[ "${INSTALL_MODE}" == "native" ]]; then
             rsync -a "${PREV_RELEASE}/vendor/" "${NEW_RELEASE}/vendor/" >>"${LOG_FILE}" 2>&1 || die "Не удалось скопировать vendor/."
         else
             command -v composer >/dev/null 2>&1 || die "Composer не найден, а в поставке нет vendor/. Установите composer или используйте архив с vendor/."
-            (cd "${NEW_RELEASE}" && COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader --no-interaction --no-progress >>"${LOG_FILE}" 2>&1) || die "composer install завершился с ошибкой."
+            retry 3 20 bash -c "cd '${NEW_RELEASE}' && COMPOSER_ALLOW_SUPERUSER=1 COMPOSER_PROCESS_TIMEOUT=900 timeout 3600 composer install --no-dev --optimize-autoloader --no-interaction --no-progress >>'${LOG_FILE}' 2>&1" \
+                || die "composer install завершился с ошибкой (нужен доступ к github.com/packagist.org; надёжнее обновляться архивом дистрибутива — в нём vendor/ уже есть)."
         fi
     fi
     mkdir -p "${NEW_RELEASE}/var/cache" "${APP_DIR}/shared/storage" "${APP_DIR}/shared/log" "${APP_DIR}/shared/import"
@@ -364,7 +554,8 @@ else
     rsync -a --delete --exclude '/var/' --exclude '/.env.local' --exclude '/.git/' --exclude '/docker/.env' --exclude '/docker/mysql-data/' --exclude '/backups/' --exclude '/import/' \
         --exclude '/maintenance/' --exclude '/docker/nginx/video/' --exclude '/docker/video/' "${SOURCE_DIR}/" "${APP_DIR}/" >>"${LOG_FILE}" 2>&1 || die "Не удалось скопировать файлы новой версии."
     chmod +x "${APP_DIR}"/deploy/*.sh "${APP_DIR}/docker/entrypoint.sh" "${APP_DIR}/bin/console" 2>/dev/null || true
-    docker compose build --pull app >>"${LOG_FILE}" 2>&1 || die "Сборка образа новой версии не удалась."
+    # Загрузка базовых образов прерывается при сбоях сети и ограничениях Docker Hub — до трёх попыток.
+    retry 3 30 bash -c "docker compose build --pull app >>'${LOG_FILE}' 2>&1" || die "Сборка образа новой версии не удалась (Docker Hub недоступен? зеркало — в /etc/docker/daemon.json, registry-mirrors)."
     # Раздел «Видео»: образ видеопортала собирается отдельно — его ошибка не мешает обновить портал
     # (контейнеры видеопортала продолжат работать на прежнем образе).
     video_update_prepare "${APP_DIR}"
@@ -383,7 +574,7 @@ else
     # ${APP_DIR}/maintenance подключён в контейнер web; при переходе с прежних версий web пересоздаётся
     # командой up -d ниже и сразу начинает показывать страницу; режим включён в начале обновления).
     MIGRATED="1"
-    docker compose up -d >>"${LOG_FILE}" 2>&1 || die "Не удалось запустить обновлённые контейнеры."
+    retry 3 15 bash -c "docker compose up -d >>'${LOG_FILE}' 2>&1" || die "Не удалось запустить обновлённые контейнеры."
     # Каталог docker/nginx подключён в web целиком: изменённая конфигурация применяется без пересоздания.
     docker compose exec -T web nginx -s reload >>"${LOG_FILE}" 2>&1 || true
     health || die "Новая версия не отвечает."
@@ -407,7 +598,53 @@ if [[ "${INSTALL_MODE}" == "docker" ]]; then
     docker image prune -f >>"${LOG_FILE}" 2>&1 || true
 fi
 [[ -n "${CREATED_TMP}" ]] && rm -rf "${CREATED_TMP}" || true
+CREATED_TMP=""
 trap - ERR
+set +e
+UPDATE_DONE="1"
+# Эта версия установлена — отметка о прошлой неудаче (если была) больше не нужна.
+rm -f "${UPDATES_DIR}/.failed-${NEW_VERSION}" 2>/dev/null
+
+# Раздел «Видео»: если он ещё не был настроен (переход с версии до 1.8.0 или установка без него), он
+# включается сам, когда серверу хватает ресурсов. Выключенный администратором (docportal video disable,
+# install.sh --no-video) не включается. Ошибка — предупреждение: портал уже обновлён.
+maybe_enable_video() {
+    local deploy_dir code
+    if [[ "${INSTALL_MODE}" == "docker" ]]; then deploy_dir="${APP_DIR}/deploy"; code="${APP_DIR}/video"; else deploy_dir="${APP_DIR}/current/deploy"; code="${APP_DIR}/current/video"; fi
+    [[ "${WITH_VIDEO}" == "0" || "${VIDEO_ENABLED:-}" == "1" ]] && return 0
+    [[ -f "${code}/server/package.json" && -f "${deploy_dir}/video.sh" ]] || return 0
+    if [[ "${VIDEO_ENABLED:-}" == "0" && "${WITH_VIDEO}" != "1" ]]; then
+        info "Раздел «Видео» выключен администратором — не включается (включить: ${APP_ID} video enable)."
+        return 0
+    fi
+    if [[ "${INSTALL_MODE}" == "native" ]]; then
+        detect_pkg_quiet || true
+        if [[ "${PKG:-}" != "apt" ]]; then
+            info "Раздел «Видео» на сервере ставится только на Debian и Ubuntu — пропускается."
+            return 0
+        fi
+    fi
+    if [[ "${WITH_VIDEO}" == "auto" ]] && ! video_resources_ok; then
+        warn "Раздел «Видео» не включён автоматически: ${VIDEO_REASON}. Включить вручную: ${APP_ID} video enable"
+        return 0
+    fi
+    step "Раздел «Видео»: установка"
+    local attempt
+    for attempt in 1 2; do
+        if NO_SWAP="${NO_SWAP}" bash "${deploy_dir}/video.sh" enable; then
+            VIDEO_ENABLED="1"
+            return 0
+        fi
+        [[ ${attempt} -lt 2 ]] && { warn_transient "Раздел «Видео» не включился — повтор через 60 с"; sleep 60; }
+    done
+    warn "Портал обновлён, но раздел «Видео» включить не удалось (журнал — ${LOG_DIR}/video-enable-*.log). Исправьте причину и выполните: ${APP_ID} video enable"
+    return 1
+}
+maybe_enable_video || true
+
+[[ "${AUTO_MODE}" == "1" ]] && record_job auto-update ok "Обновлено до ${NEW_VERSION}" "${SECONDS}"
 printf '\n%sОбновление завершено: версия %s.%s Журнал: %s\n' "${C_GREEN}${C_BOLD}" "${NEW_VERSION}" "${C_RESET}" "${LOG_FILE}"
 [[ -n "${BACKUP_FILE}" ]] && printf 'Резервная копия перед обновлением: %s\n' "${BACKUP_FILE}"
+[[ "${VIDEO_ENABLED:-}" == "1" ]] && printf 'Раздел «Видео»: включён (%s video status — проверка).\n' "${APP_ID}"
+print_warnings_summary
 exit 0

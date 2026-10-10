@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  Установка портала документации на чистый сервер Linux одной командой.
+#  Установка портала документации на чистый сервер Linux одной командой — полностью автоматически:
+#  без вопросов, вместе с разделом «Видео» (если серверу хватает ресурсов), с проверками до начала
+#  работы, повторами сетевых операций, восстановлением менеджера пакетов и откатом при ошибке.
+#  На сервере, где портал уже установлен, вместо установки выполняется обновление (update.sh).
 #
 #  Примеры:
 #    sudo ./deploy/install.sh                                # локальная установка (nginx + PHP-FPM + MariaDB)
@@ -73,8 +76,10 @@ Docker:
   --docker-mirror URL       Зеркало Docker Hub (например, https://mirror.gcr.io) — записывается в /etc/docker/daemon.json.
 
 Раздел «Видео» (видеопортал по адресу /video: вход и роли общие с порталом):
-  --with-video              Установить и включить раздел «Видео» (PostgreSQL, Node.js, ffmpeg, MediaMTX;
-                            в Docker — контейнеры профилей video и video-live). Позже: ${APP_ID} video enable.
+                            По умолчанию ставится автоматически, если хватает памяти и места на диске
+                            (PostgreSQL, Node.js, ffmpeg, MediaMTX; в Docker — профили video и video-live).
+  --with-video              Ставить раздел «Видео» в любом случае (даже при нехватке ресурсов).
+  --no-video                Не ставить раздел «Видео» (включить позже: ${APP_ID} video enable).
   --video-no-live           Без сервера прямых трансляций (MediaMTX, порты 1935, 8890/udp, 8189).
   --video-backup-media      Видеофайлы входят в ежедневные резервные копии (по умолчанию — только база видео).
 
@@ -84,9 +89,16 @@ Docker:
   --with-preview            Установить LibreOffice: просмотр docx/xlsx/pptx прямо в браузере (~500 МБ).
   --with-ocr                Установить tesseract: распознавание сканов для поиска.
   --with-extras             И то, и другое.
-  --yes, -y                 Не задавать вопросов (неинтерактивная установка).
+  --no-swap                 Не создавать файл подкачки на сервере с малой памятью (по умолчанию создаётся
+                            /${APP_ID}.swap, если памяти вместе с подкачкой меньше 2 ГБ).
+  --confirm                 Спросить подтверждение перед началом (по умолчанию установка идёт без вопросов).
+  --yes, -y                 Не задавать вопросов (так и по умолчанию; оставлено для совместимости).
   --verbose                 Подробный вывод.
   --help, -h                Эта справка.
+
+Если портал на сервере уже установлен, скрипт выполняет обновление до версии из этого каталога или архива
+(${APP_ID} update). Ошибка на любом шаге — откат сделанного (системные пакеты остаются); повторный запуск
+безопасен. Журнал — ${LOG_DIR}/install-<дата>.log.
 EOF
 }
 
@@ -130,10 +142,16 @@ BACKUP_DIR="${DEFAULT_BACKUP_DIR}"
 BACKUP_CRON="1"
 WITH_PREVIEW="0"
 WITH_OCR="0"
-WITH_VIDEO="0"
+# auto — раздел «Видео» ставится, если хватает ресурсов; 1 — всегда; 0 — нет.
+WITH_VIDEO="auto"
 VIDEO_LIVE="1"
 VIDEO_BACKUP_MEDIA="0"
-ASSUME_YES="0"
+VIDEO_REASON=""
+# --no-video — явный отказ: обновления не будут включать раздел «Видео» сами (VIDEO_ENABLED=0).
+VIDEO_OPT_OUT="0"
+NO_SWAP="0"
+# Установка полностью автоматическая: вопрос «Начать установку?» — только с --confirm.
+ASSUME_YES="1"
 VERBOSE="0"
 SERVICE_USER=""
 PHP_VERSION=""
@@ -186,6 +204,9 @@ parse_args() {
             --with-ocr) WITH_OCR="1"; shift ;;
             --with-extras) WITH_PREVIEW="1"; WITH_OCR="1"; shift ;;
             --with-video) WITH_VIDEO="1"; shift ;;
+            --no-video) WITH_VIDEO="0"; VIDEO_OPT_OUT="1"; shift ;;
+            --no-swap) NO_SWAP="1"; shift ;;
+            --confirm) ASSUME_YES="0"; shift ;;
             --video-no-live) VIDEO_LIVE="0"; shift ;;
             --video-backup-media) VIDEO_BACKUP_MEDIA="1"; shift ;;
             --yes|-y) ASSUME_YES="1"; shift ;;
@@ -212,7 +233,7 @@ validate_args() {
         [[ "${LDAP_PORT}" =~ ^[0-9]+$ ]] || die "--ldap-port: недопустимый номер порта."
         [[ "${LDAP_ENCRYPTION}" =~ ^(none|ssl|tls)$ ]] || die "--ldap-encryption: допустимы none, ssl или tls."
         if [[ -z "${LDAP_BIND_DN}" && -z "${LDAP_UPN_SUFFIX}" ]]; then
-            LDAP_UPN_SUFFIX=$(printf '%s' "${LDAP_BASE_DN}" | grep -oi 'DC=[^,]*' | sed 's/^DC=//I' | paste -sd . -)
+            LDAP_UPN_SUFFIX=$(printf '%s' "${LDAP_BASE_DN}" | grep -oi 'DC=[^,]*' | sed 's/^DC=//I' | paste -sd . - || true)
             warn "Не задан --ldap-upn-suffix — используется «${LDAP_UPN_SUFFIX}» (из base DN)."
         fi
     fi
@@ -255,7 +276,7 @@ prepare_source() {
             SOURCE_DIR="${CREATED_TMP}"
         else
             local sub
-            sub=$(find "${CREATED_TMP}" -maxdepth 2 -name composer.json -printf '%h\n' | head -n1)
+            sub=$(find "${CREATED_TMP}" -maxdepth 2 -name composer.json -printf '%h\n' 2>/dev/null | head -n1 || true)
             [[ -n "${sub}" ]] && is_project_dir "${sub}" || die "В архиве не найден проект (composer.json, bin/console, public/)."
             SOURCE_DIR="${sub}"
         fi
@@ -276,37 +297,187 @@ preflight() {
     step "Предварительные проверки"
     require_root "$@"
     detect_os
+    check_os_supported
     if [[ -f "${CONF_FILE}" ]]; then
-        die "Портал уже установлен (найден ${CONF_FILE}). Для обновления используйте: sudo ./deploy/update.sh, для переустановки — сначала sudo ./deploy/uninstall.sh"
+        redirect_to_update
     fi
-    local free
+    if [[ "${INSTALL_MODE}" == "native" ]] && ! has_systemd; then
+        warn "systemd не найден (контейнер или нестандартная система) — службы будут запускаться без него; для боевого сервера используйте систему с systemd."
+    fi
+    pkg_preflight
+    check_clock || true
+
+    # Место на диске: портал — 2 ГБ; раздел «Видео» — ещё около 6 ГБ (пакеты, образы, первые видео).
+    local free mem swap
     free=$(free_space_mb "$(dirname "${APP_DIR}")" 2>/dev/null || free_space_mb /)
     if [[ -n "${free}" && ${free} -lt 2048 ]]; then
         die "Недостаточно места на диске: свободно ${free} МБ, требуется не менее 2 ГБ."
     fi
-    local mem
-    mem=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 0)
-    if [[ ${mem} -gt 0 && ${mem} -lt 900 ]]; then
-        warn "Оперативной памяти ${mem} МБ — рекомендуется не менее 1 ГБ."
+    if [[ -n "${free}" && ${free} -lt 8192 && "${WITH_VIDEO}" == "auto" ]]; then
+        WITH_VIDEO="0"; VIDEO_REASON="свободно ${free} МБ, а для раздела «Видео» нужно не меньше 8 ГБ"
     fi
-    if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | awk '{print $4}' | grep_has -E "[:.]${HTTP_PORT}$"; then
+    mem=$(mem_total_mb); swap=$(swap_total_mb)
+    if [[ ${mem} -gt 0 && ${mem} -lt 900 ]]; then
+        warn "Оперативной памяти ${mem} МБ — рекомендуется не менее 1 ГБ (недостающее восполнит файл подкачки)."
+    fi
+    if [[ ${mem} -gt 0 && $((mem + swap)) -lt 1800 && "${WITH_VIDEO}" == "auto" && "${NO_SWAP}" == "1" ]]; then
+        WITH_VIDEO="0"; VIDEO_REASON="памяти ${mem} МБ (с подкачкой ${swap} МБ), а для обработки видео нужно не меньше 2 ГБ"
+    fi
+
+    # Порты.
+    if port_busy "${HTTP_PORT}"; then
         if [[ "${INSTALL_MODE}" == "docker" ]] || ! command -v nginx >/dev/null 2>&1; then
-            die "Порт ${HTTP_PORT} уже занят другой программой. Укажите другой порт: --port N"
+            local who
+            who=$(ss -ltnp "sport = :${HTTP_PORT}" 2>/dev/null | awk 'NR > 1 {print $NF; exit}' || true)
+            die "Порт ${HTTP_PORT} уже занят другой программой${who:+ (${who})}. Освободите его или укажите другой порт: --port N"
         else
             warn "Порт ${HTTP_PORT} уже прослушивается (вероятно, nginx). Сайт по умолчанию будет отключён."
         fi
     fi
-    if ! retry 2 3 bash -c 'timeout 8 bash -c "</dev/tcp/deb.debian.org/80" 2>/dev/null || timeout 8 bash -c "</dev/tcp/mirrors.rockylinux.org/80" 2>/dev/null || timeout 8 bash -c "</dev/tcp/archive.ubuntu.com/80" 2>/dev/null'; then
-        warn "Не удалось проверить доступ в интернет — установка пакетов может завершиться ошибкой."
+    if [[ -n "${SSL_EMAIL}" ]] && port_busy 443 && ! pgrep -x nginx >/dev/null 2>&1; then
+        warn "Порт 443 занят другой программой — HTTPS может не заработать."
+    fi
+
+    # Домен для Let's Encrypt должен указывать на этот сервер.
+    if [[ -n "${SSL_EMAIL}" && -n "${DOMAIN}" ]]; then
+        local resolved
+        resolved=$(getent ahostsv4 "${DOMAIN}" 2>/dev/null | awk '{print $1}' | sort -u | tr '\n' ' ' || true)
+        if [[ -z "${resolved// /}" ]]; then
+            warn "Домен ${DOMAIN} не разрешается в адрес — сертификат Let's Encrypt не будет получен (портал заработает по HTTP; сертификат можно получить позже: certbot --nginx -d ${DOMAIN})."
+        fi
+    fi
+
+    # Доступ к нужным узлам (недоступность — предупреждение: часть узлов бывает закрыта, а пакеты берутся с зеркал).
+    local hosts=() h
+    while read -r h; do [[ -n "${h}" ]] && hosts+=("репозиторий пакетов ОС|${h}|80"); done < <(os_repo_hosts | head -n 2)
+    [[ "${INSTALL_MODE}" == "docker" ]] && hosts+=("репозиторий Docker|download.docker.com|443" "Docker Hub|registry-1.docker.io|443")
+    [[ -n "${SSL_EMAIL}" ]] && hosts+=("Let's Encrypt|acme-v02.api.letsencrypt.org|443")
+    if [[ "${WITH_VIDEO}" != "0" ]]; then
+        if [[ "${INSTALL_MODE}" == "native" ]]; then
+            hosts+=("Node.js (NodeSource)|deb.nodesource.com|443" "MediaMTX (github.com)|github.com|443")
+        fi
+        local src_video="${SOURCE_DIR:-${SCRIPT_DIR}/..}/video"
+        [[ -d "${src_video}/server/node_modules/fastify" && -f "${src_video}/web/dist/index.html" ]] || hosts+=("npm|registry.npmjs.org|443")
+    fi
+    if ! check_hosts "${hosts[@]}"; then
+        for h in "${UNREACHABLE_HOSTS[@]}"; do warn "Нет доступа: ${h} — установка попробует продолжить (повторы, запасные источники)."; done
     fi
     ok "Проверки пройдены"
+}
+
+# Узлы репозиториев пакетов ОС (из /etc/apt/sources.list*, /etc/yum.repos.d) — для проверки доступа.
+os_repo_hosts() {
+    {
+        grep -rhoE '^[^#]*(deb|URIs:)[^#]*https?://[^/ ]+' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null
+        grep -rhoE '^(baseurl|mirrorlist|metalink)=https?://[^/ ]+' /etc/yum.repos.d/ 2>/dev/null
+    } | grep -oE 'https?://[^/ ]+' | sed -E 's#https?://##' | grep -v -E '^(localhost|127\.)' | awk '!seen[$0]++'
+}
+
+# Портал уже установлен: вместо установки — обновление до версии из этого каталога (архива). Параметры
+# установки (домен, порт, база) при этом не меняются — они берутся из ${CONF_FILE}.
+redirect_to_update() {
+    local installed_version installed_dir args=(--yes) src
+    # shellcheck disable=SC1090
+    installed_version=$(. "${CONF_FILE}" 2>/dev/null; printf '%s' "${APP_VERSION:-?}")
+    # shellcheck disable=SC1090
+    installed_dir=$(. "${CONF_FILE}" 2>/dev/null; printf '%s' "${APP_DIR:-${DEFAULT_APP_DIR}}")
+    if [[ -n "${ARCHIVE}" ]]; then
+        args+=(--archive "${ARCHIVE}")
+    else
+        src="${SOURCE_DIR:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
+        # Скрипт из установленного релиза: новую версию update.sh найдёт сам (архив рядом или в каталоге обновлений).
+        [[ "${src}" == "${installed_dir}"/* || "${src}" == "${installed_dir}" ]] || args+=(--source "${src}")
+    fi
+    [[ "${WITH_VIDEO}" == "0" ]] && args+=(--no-video)
+    [[ "${WITH_VIDEO}" == "1" ]] && args+=(--with-video)
+    [[ "${ASSUME_YES}" == "1" ]] || args=("${args[@]/--yes/--confirm}")
+    info "Портал уже установлен (версия ${installed_version}, ${installed_dir}) — вместо установки выполняется обновление."
+    info "Параметры установки (домен, порт, база данных) сохраняются; переустановка с нуля — после ${APP_ID} uninstall."
+    exec bash "${SCRIPT_DIR}/update.sh" "${args[@]}"
+}
+
+# Каталог установки уже есть и не пуст. Остатки прерванной установки портала (откат которой не
+# завершился) переносятся в сторону — ничего не удаляется; посторонние файлы не трогаются.
+prepare_app_dir() {
+    if [[ -e "${APP_DIR}" && -n "$(ls -A "${APP_DIR}" 2>/dev/null)" ]]; then
+        if [[ -d "${APP_DIR}/releases" || -f "${APP_DIR}/docker/docker-compose.yml" || -f "${APP_DIR}/composer.json" || -d "${APP_DIR}/shared" ]]; then
+            local aside
+            aside="${APP_DIR}.failed-$(date '+%Y%m%d-%H%M%S')"
+            mv "${APP_DIR}" "${aside}" || die "Не удалось перенести остатки прежней установки из ${APP_DIR}."
+            PREV_ATTEMPT_DIR="${aside}"
+            warn "В ${APP_DIR} остались файлы прерванной установки портала — перенесены в ${aside} (удалите каталог, когда убедитесь, что он не нужен)."
+        else
+            die "Каталог ${APP_DIR} уже существует, не пуст и не похож на установку портала. Укажите другой каталог (--dir) или освободите этот."
+        fi
+    fi
+    mkdir -p "${APP_DIR}"; CREATED_APP_DIR="1"
+}
+PREV_ATTEMPT_DIR=""
+
+# Решение о разделе «Видео»: --with-video — ставить всегда, --no-video — нет, по умолчанию — если серверу
+# хватает ресурсов (место и память проверены в preflight) и поставка содержит видеопортал.
+decide_video() {
+    [[ "${WITH_VIDEO}" == "0" ]] && return 0
+    if [[ ! -f "${SOURCE_DIR}/video/server/package.json" ]]; then
+        [[ "${WITH_VIDEO}" == "1" ]] && warn "В поставке нет видеопортала (${SOURCE_DIR}/video) — раздел «Видео» не устанавливается."
+        WITH_VIDEO="0"; VIDEO_REASON="в поставке нет каталога video/"
+        return 0
+    fi
+    if [[ "${INSTALL_MODE}" == "native" && "${OS_FAMILY}" != "debian" ]]; then
+        if [[ "${WITH_VIDEO}" == "1" ]]; then warn "Раздел «Видео» на сервере ставится только на Debian и Ubuntu — на ${OS_ID} используйте --mode docker."; fi
+        WITH_VIDEO="0"; VIDEO_REASON="на ${OS_ID} раздел «Видео» ставится только в режиме Docker"
+        return 0
+    fi
+    WITH_VIDEO="1"
+}
+
+# Пароли прежней установки в Docker — из docker/.env остатков прерванной установки (${APP_DIR}.failed-*)
+# или из последней резервной копии (docker.env в архиве; удаление портала без --purge делает её само).
+REUSED_DATA="0"; REUSED_ROOT_PW=""; REUSED_APP_SECRET=""
+reuse_docker_credentials() {
+    local candidates=() f env_file="" tmp
+    [[ -n "${PREV_ATTEMPT_DIR}" ]] && candidates+=("${PREV_ATTEMPT_DIR}/docker/.env")
+    while IFS= read -r f; do candidates+=("${f}"); done < <(ls -1dt "${APP_DIR}".failed-*/docker/.env 2>/dev/null || true)
+    for f in "${candidates[@]}"; do
+        [[ -s "${f}" ]] && grep_has '^MYSQL_PASSWORD=' "${f}" && { env_file="${f}"; break; }
+    done
+    if [[ -z "${env_file}" ]]; then
+        local archive
+        for archive in $(ls -1t "${BACKUP_DIR}"/"${APP_ID}"-backup-*.tar.gz 2>/dev/null | head -n 5 || true); do
+            tmp=$(mktemp)
+            if tar -xzf "${archive}" -O --wildcards '*/docker.env' > "${tmp}" 2>/dev/null && grep_has '^MYSQL_PASSWORD=' "${tmp}"; then
+                env_file="${tmp}"; info "Пароли прежней установки — из резервной копии $(basename "${archive}")"
+                break
+            fi
+            rm -f "${tmp}"
+        done
+    fi
+    [[ -n "${env_file}" ]] || return 1
+    local v
+    _env_val() { sed -n "s/^$1=//p" "${env_file}" | tail -n1 | sed -e 's/^"//' -e 's/"$//'; }
+    v=$(_env_val MYSQL_PASSWORD); [[ -n "${v}" ]] && DB_PASSWORD="${v}"
+    v=$(_env_val MYSQL_USER); [[ -n "${v}" ]] && DB_USER="${v}"
+    v=$(_env_val MYSQL_DATABASE); [[ -n "${v}" ]] && DB_NAME="${v}"
+    REUSED_ROOT_PW=$(_env_val MYSQL_ROOT_PASSWORD)
+    REUSED_APP_SECRET=$(_env_val APP_SECRET)
+    unset -f _env_val
+    [[ "${env_file}" == /tmp/* ]] && rm -f "${env_file}"
+    [[ -n "${REUSED_ROOT_PW}" ]] || return 1
+    REUSED_DATA="1"
+    warn "Найдены данные прежней установки в томах Docker — они сохранены и используются (база, документы). Пароль администратора — прежний."
+    return 0
 }
 
 # --- Откат при ошибке -----------------------------------------------------------------
 rollback() {
     warn "Откат незавершённой установки…"
     if [[ "${INSTALL_MODE}" == "docker" && "${DOCKER_STARTED}" == "1" && -f "${APP_DIR}/docker/docker-compose.yml" ]]; then
-        (cd "${APP_DIR}/docker" && ${COMPOSE_CMD:-docker compose} down -v >>"${LOG_FILE}" 2>&1) || true
+        # Тома с данными прежней установки (REUSED_DATA) не удаляются — только созданные этой установкой.
+        if [[ "${REUSED_DATA}" == "1" ]]; then
+            (cd "${APP_DIR}/docker" && ${COMPOSE_CMD:-docker compose} down >>"${LOG_FILE}" 2>&1) || true
+        else
+            (cd "${APP_DIR}/docker" && ${COMPOSE_CMD:-docker compose} down -v >>"${LOG_FILE}" 2>&1) || true
+        fi
     fi
     if [[ "${CREATED_NGINX_SITE}" == "1" ]]; then
         rm -f "/etc/nginx/sites-enabled/${APP_ID}.conf" "/etc/nginx/sites-available/${APP_ID}.conf" "/etc/nginx/conf.d/${APP_ID}.conf"
@@ -375,7 +546,7 @@ install_php_debian() {
             pkg_install software-properties-common
             add-apt-repository -y ppa:ondrej/php >>"${LOG_FILE}" 2>&1 || die "Не удалось подключить ppa:ondrej/php (см. журнал). Установите PHP ${PHP_MIN_VERSION}+ вручную и повторите установку."
         else
-            curl -fsSL https://packages.sury.org/php/apt.gpg -o /usr/share/keyrings/deb.sury.org-php.gpg || die "Не удалось скачать ключ репозитория sury.org."
+            download https://packages.sury.org/php/apt.gpg /usr/share/keyrings/deb.sury.org-php.gpg || die "Не удалось скачать ключ репозитория sury.org (нет доступа к packages.sury.org)."
             echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main" > /etc/apt/sources.list.d/php-sury.list
         fi
         ADDED_PHP_REPO="1"
@@ -535,9 +706,10 @@ setup_database_native() {
     wait_for_mysql "${DB_HOST}" "${DB_PORT}" "${DB_USER}" "${DB_PASSWORD}" 15 \
         || die "Не удаётся подключиться к базе данных ${DB_USER}@${DB_HOST}:${DB_PORT}/${DB_NAME}. Проверьте параметры --db-*."
     local raw
-    raw=$(mysql_exec "${DB_HOST}" "${DB_PORT}" "${DB_USER}" "${DB_PASSWORD}" "SELECT VERSION()" | head -n1)
+    raw=$(mysql_exec "${DB_HOST}" "${DB_PORT}" "${DB_USER}" "${DB_PASSWORD}" "SELECT VERSION()" | head -n1 || true)
+    [[ -n "${raw}" ]] || die "Сервер базы данных ${DB_HOST}:${DB_PORT} не сообщил версию (SELECT VERSION()). Проверьте права пользователя ${DB_USER} на базу ${DB_NAME}."
     if [[ "${raw}" == *MariaDB* ]]; then
-        DB_SERVER_VERSION="$(echo "${raw}" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')-MariaDB"
+        DB_SERVER_VERSION="$(echo "${raw}" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' || echo '10.6.0')-MariaDB"
     else
         DB_SERVER_VERSION="$(echo "${raw}" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' || echo '8.0')"
     fi
@@ -569,10 +741,16 @@ composer_install() {
     fi
     command -v composer >/dev/null 2>&1 || die "Composer не найден. Установите его: https://getcomposer.org/download/"
     info "Загрузка зависимостей (около 90 пакетов с github.com; может занять несколько минут)…"
-    local composer_log
+    local composer_log attempt ok_install="0"
     composer_log=$(mktemp)
-    if ! (cd "${dir}" && COMPOSER_ALLOW_SUPERUSER=1 COMPOSER_NO_INTERACTION=1 composer install --no-dev --optimize-autoloader --no-progress --prefer-dist --no-audit >"${composer_log}" 2>&1); then
+    for attempt in 1 2 3; do
+        if (cd "${dir}" && COMPOSER_ALLOW_SUPERUSER=1 COMPOSER_NO_INTERACTION=1 COMPOSER_PROCESS_TIMEOUT=900 timeout 3600 composer install --no-dev --optimize-autoloader --no-progress --prefer-dist --no-audit >"${composer_log}" 2>&1); then
+            ok_install="1"; break
+        fi
         cat "${composer_log}" >>"${LOG_FILE}"
+        [[ ${attempt} -lt 3 ]] && { warn_transient "composer install не удался (попытка ${attempt}/3) — повтор через $((attempt * 20)) с"; sleep $((attempt * 20)); }
+    done
+    if [[ "${ok_install}" != "1" ]]; then
         error "Вывод Composer (последние строки):"
         tail -n 15 "${composer_log}" | sed 's/^/   | /' >&2
         rm -f "${composer_log}"
@@ -849,9 +1027,11 @@ health_check() {
         ok "Портал отвечает: ${body}"
     else
         error "Портал не отвечает на ${url} (ответ: ${body:-нет})."
+        collect_diagnostics
         return 1
     fi
 }
+
 
 install_native() {
     install_packages_native
@@ -859,14 +1039,7 @@ install_native() {
     setup_database_native
 
     step "Копирование файлов проекта в ${APP_DIR}"
-    if [[ -e "${APP_DIR}" ]]; then
-        if [[ -n "$(ls -A "${APP_DIR}" 2>/dev/null)" ]]; then
-            die "Каталог ${APP_DIR} уже существует и не пуст. Удалите его или укажите другой каталог: --dir"
-        fi
-    else
-        mkdir -p "${APP_DIR}"; CREATED_APP_DIR="1"
-    fi
-    [[ "${CREATED_APP_DIR}" == "1" ]] || CREATED_APP_DIR="1"
+    prepare_app_dir
     mkdir -p "${APP_DIR}/releases" "${APP_DIR}/shared"
     local release
     release="${APP_DIR}/releases/${APP_VERSION}-$(date '+%Y%m%d%H%M%S')"
@@ -907,13 +1080,14 @@ install_docker_engine() {
             debian)
                 pkg_install ca-certificates curl gnupg
                 local installed="0"
-                if install -m 0755 -d /etc/apt/keyrings && curl -fsSL "https://download.docker.com/linux/${OS_ID}/gpg" -o /etc/apt/keyrings/docker.asc 2>>"${LOG_FILE}"; then
+                if install -m 0755 -d /etc/apt/keyrings && download "https://download.docker.com/linux/${OS_ID}/gpg" /etc/apt/keyrings/docker.asc; then
                     chmod a+r /etc/apt/keyrings/docker.asc
                     # shellcheck disable=SC1091
                     local codename; codename=$(. /etc/os-release && echo "${VERSION_CODENAME:-}")
                     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/${OS_ID} ${codename} stable" > /etc/apt/sources.list.d/docker.list
                     _APT_UPDATED=0
-                    if env DEBIAN_FRONTEND=noninteractive apt-get update -q >>"${LOG_FILE}" 2>&1 && env DEBIAN_FRONTEND=noninteractive apt-get install -y -q docker-ce docker-ce-cli containerd.io docker-compose-plugin >>"${LOG_FILE}" 2>&1 9>&-; then
+                    apt_wait_lock
+                    if apt_get update -q >>"${LOG_FILE}" 2>&1 9>&- && apt_get install -y -q docker-ce docker-ce-cli containerd.io docker-compose-plugin >>"${LOG_FILE}" 2>&1 9>&-; then
                         installed="1"
                     else
                         rm -f /etc/apt/sources.list.d/docker.list; _APT_UPDATED=0
@@ -922,7 +1096,7 @@ install_docker_engine() {
                 if [[ "${installed}" != "1" ]]; then
                     warn "Официальный репозиторий Docker недоступен, устанавливается docker.io из репозитория ОС."
                     pkg_install docker.io
-                    apt-get install -y -q docker-compose-v2 >>"${LOG_FILE}" 2>&1 9>&- || apt-get install -y -q docker-compose-plugin >>"${LOG_FILE}" 2>&1 9>&- || warn "Плагин docker compose не установлен из репозитория ОС."
+                    apt_get install -y -q docker-compose-v2 >>"${LOG_FILE}" 2>&1 9>&- || apt_get install -y -q docker-compose-plugin >>"${LOG_FILE}" 2>&1 9>&- || warn "Плагин docker compose не установлен из репозитория ОС."
                 fi
                 ;;
             rhel)
@@ -932,6 +1106,15 @@ install_docker_engine() {
                 ;;
         esac
         svc enable docker || die "Не удалось запустить службу docker."
+    fi
+    # Демон Docker после запуска отвечает не сразу; остановленный — запускается.
+    if ! docker info >/dev/null 2>&1; then
+        svc enable docker || true
+        local n=0
+        until docker info >/dev/null 2>&1; do
+            n=$((n + 1)); [[ ${n} -gt 30 ]] && die "Служба Docker не отвечает (docker info). Проверьте: systemctl status docker; journalctl -u docker."
+            sleep 2
+        done
     fi
     if docker compose version >/dev/null 2>&1; then
         COMPOSE_CMD="docker compose"
@@ -966,10 +1149,7 @@ PY
 install_docker() {
     install_docker_engine
     step "Копирование файлов проекта в ${APP_DIR}"
-    if [[ -e "${APP_DIR}" && -n "$(ls -A "${APP_DIR}" 2>/dev/null)" ]]; then
-        die "Каталог ${APP_DIR} уже существует и не пуст. Удалите его или укажите другой каталог: --dir"
-    fi
-    mkdir -p "${APP_DIR}"; CREATED_APP_DIR="1"
+    prepare_app_dir
     rsync -a --exclude '/var/' --exclude '/.env.local' --exclude '/.git/' --exclude '/docker/.env' --exclude '/docker/mysql-data/' --exclude '/maintenance/' "${SOURCE_DIR}/" "${APP_DIR}/" >>"${LOG_FILE}" 2>&1 || die "Не удалось скопировать файлы проекта."
     chmod +x "${APP_DIR}"/deploy/*.sh "${APP_DIR}/docker/entrypoint.sh" "${APP_DIR}/bin/console" 2>/dev/null || true
     # Каталог режима обслуживания подключается в контейнер web: страница «Идёт обновление портала».
@@ -983,6 +1163,12 @@ install_docker() {
     local root_pw secret url
     root_pw=$(gen_password 24); secret=$(gen_secret_hex)
     url="http://$(portal_host)"; [[ "${HTTP_PORT}" != "80" ]] && url="${url}:${HTTP_PORT}"
+    # Том базы остался от прежней установки (удаление без --purge или прерванная установка): MySQL
+    # не примет новые пароли — используются прежние (из остатков установки или резервной копии).
+    if docker volume inspect "${APP_ID}_db-data" >/dev/null 2>&1; then
+        reuse_docker_credentials || die "Остался том базы данных прежней установки (${APP_ID}_db-data), а её пароли не найдены (нет прежнего docker/.env и резервной копии с docker.env в ${BACKUP_DIR}). Чтобы начать с чистой базы, удалите тома: docker volume rm ${APP_ID}_db-data ${APP_ID}_storage — или восстановите прежнюю установку из резервной копии."
+        root_pw="${REUSED_ROOT_PW}"; secret="${REUSED_APP_SECRET:-${secret}}"
+    fi
     umask 077
     cat > "${APP_DIR}/docker/.env" <<EOF
 # Настройки Docker-развёртывания портала «${APP_TITLE}» (создано install.sh $(date '+%Y-%m-%d %H:%M')).
@@ -1038,10 +1224,11 @@ EOF
     DB_HOST="db"; DB_LOCAL="0"; DB_SERVICE="docker"; SERVICE_USER="www-data"; PHP_VERSION="8.4"; PHP_FPM_SERVICE="docker"; PHP_FPM_SOCK=""; DB_SERVER_VERSION="8.0"
 
     step "Сборка образа и запуск контейнеров (может занять несколько минут)"
-    (cd "${APP_DIR}/docker" && ${COMPOSE_CMD} build --pull >>"${LOG_FILE}" 2>&1) \
+    # Загрузка образов прерывается при сбоях сети и ограничениях Docker Hub — до трёх попыток.
+    retry 3 30 bash -c "cd '${APP_DIR}/docker' && ${COMPOSE_CMD} build --pull >>'${LOG_FILE}' 2>&1" \
         || die "Сборка образа не удалась. Если Docker Hub недоступен, укажите зеркало: --docker-mirror https://mirror.gcr.io (см. журнал ${LOG_FILE})."
     DOCKER_STARTED="1"
-    (cd "${APP_DIR}/docker" && ${COMPOSE_CMD} up -d >>"${LOG_FILE}" 2>&1) || die "Не удалось запустить контейнеры. См. журнал ${LOG_FILE}"
+    retry 3 15 bash -c "cd '${APP_DIR}/docker' && ${COMPOSE_CMD} up -d >>'${LOG_FILE}' 2>&1" || die "Не удалось запустить контейнеры. См. журнал ${LOG_FILE}"
     ok "Контейнеры запущены"
 
     install_cli_wrapper
@@ -1076,7 +1263,11 @@ EOF
     printf '%s%s\n' "==============================================================" "${C_RESET}"
     printf ' Адрес портала:      %s%s%s\n' "${C_BOLD}" "${url}" "${C_RESET}"
     printf ' Администратор:      %s\n' "${ADMIN_USER}"
-    printf ' Пароль:             %s%s%s  %s\n' "${C_BOLD}" "${ADMIN_PASSWORD}" "${C_RESET}" "$([[ "${ADMIN_GENERATED:-0}" == "1" ]] && echo '(сгенерирован)')"
+    if [[ "${REUSED_DATA}" == "1" ]]; then
+        printf ' Пароль:             прежний (данные прежней установки сохранены)\n'
+    else
+        printf ' Пароль:             %s%s%s  %s\n' "${C_BOLD}" "${ADMIN_PASSWORD}" "${C_RESET}" "$([[ "${ADMIN_GENERATED:-0}" == "1" ]] && echo '(сгенерирован)')"
+    fi
     printf ' Режим:              %s\n' "${INSTALL_MODE}"
     printf ' Каталог:            %s\n' "${APP_DIR}"
     printf ' Параметры:          %s\n' "${CONF_FILE}"
@@ -1086,6 +1277,7 @@ EOF
     case "${VIDEO_RESULT:-}" in
         ok) printf ' Раздел «Видео»:     %s/video/ (вход — через портал)\n' "${url}" ;;
         error) printf ' Раздел «Видео»:     %sне включён%s — см. предупреждение выше; повторить: %s video enable\n' "${C_YELLOW}" "${C_RESET}" "${APP_ID}" ;;
+        *) [[ -n "${VIDEO_REASON}" ]] && printf ' Раздел «Видео»:     не установлен — %s; включить: %s video enable\n' "${VIDEO_REASON}" "${APP_ID}" ;;
     esac
     printf '%s\n' "=============================================================="
     printf ' Дальше: войдите под администратором, смените пароль (шапка → имя пользователя),\n'
@@ -1093,6 +1285,7 @@ EOF
     printf ' Роли (Панель администратора → Пользователи): маркетолог — модератор всех разделов и видео;\n'
     printf ' помощник маркетолога — добавляет материалы, они публикуются после модерации; пользователь — просмотр.\n'
     [[ -n "${LDAP_HOST}" ]] && printf ' Проверьте вход через домен: %s console app:ldap:test ЛОГИН\n' "${APP_ID}"
+    print_warnings_summary
     printf '\n'
 }
 
@@ -1103,13 +1296,16 @@ main() {
     validate_args
     preflight "$@"
     prepare_source
+    decide_video
     setup_traps
 
     acquire_lock 0
-    info "Режим: ${INSTALL_MODE}; каталог: ${APP_DIR}; порт: ${HTTP_PORT}; домен: ${DOMAIN:-не задан}"
+    info "Режим: ${INSTALL_MODE}; каталог: ${APP_DIR}; порт: ${HTTP_PORT}; домен: ${DOMAIN:-не задан}; раздел «Видео»: $([[ "${WITH_VIDEO}" == "1" ]] && echo 'да' || echo "нет${VIDEO_REASON:+ (${VIDEO_REASON})}")"
     if [[ "${ASSUME_YES}" != "1" ]]; then
         confirm "Начать установку?" || die "Установка отменена."
     fi
+    # Малая память: файл подкачки до установки пакетов (MariaDB, Composer, сборка и обработка видео).
+    ensure_swap 2048 2048
 
     ROLLBACK_ENABLED="1"
     if [[ "${INSTALL_MODE}" == "native" ]]; then
@@ -1122,6 +1318,7 @@ main() {
     # uninstall.sh --purge удаляет базу и пользователя БД, только если их создала установка.
     DB_CREATED_BY_INSTALL="${CREATED_DB}"; DB_USER_CREATED_BY_INSTALL="${CREATED_DB_USER}"
     [[ "${INSTALL_MODE}" == "docker" ]] && { DB_CREATED_BY_INSTALL="1"; DB_USER_CREATED_BY_INSTALL="1"; }
+    [[ "${VIDEO_OPT_OUT}" == "1" ]] && VIDEO_ENABLED="0"
     save_conf; CREATED_CONF="1"
     ROLLBACK_ENABLED="0"
     trap - ERR
@@ -1130,13 +1327,20 @@ main() {
     # github.com) не отменяет установку портала — раздел можно включить позже командой «${APP_ID} video enable».
     VIDEO_RESULT=""
     if [[ "${WITH_VIDEO}" == "1" ]]; then
+        step "Раздел «Видео»"
         local video_args=(enable)
         [[ "${VIDEO_LIVE}" == "1" ]] || video_args+=(--no-live)
         [[ "${VIDEO_BACKUP_MEDIA}" == "1" ]] && video_args+=(--backup-media)
-        if bash "${SCRIPT_DIR}/video.sh" "${video_args[@]}"; then
-            VIDEO_RESULT="ok"
-        else
+        # Сетевые сбои (npm, Docker Hub, github.com) часто временные — вторая попытка через минуту.
+        local attempt
+        for attempt in 1 2; do
+            if NO_SWAP="${NO_SWAP}" bash "${SCRIPT_DIR}/video.sh" "${video_args[@]}"; then
+                VIDEO_RESULT="ok"; break
+            fi
             VIDEO_RESULT="error"
+            [[ ${attempt} -lt 2 ]] && { warn_transient "Раздел «Видео» не включился — повтор через 60 с"; sleep 60; }
+        done
+        if [[ "${VIDEO_RESULT}" == "error" ]]; then
             warn "Портал установлен, но раздел «Видео» включить не удалось (журнал — ${LOG_DIR}/video-enable-*.log). Исправьте причину и выполните: ${APP_ID} video enable"
         fi
     fi

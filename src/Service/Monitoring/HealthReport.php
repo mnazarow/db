@@ -218,6 +218,10 @@ final class HealthReport
             // Внешнее хранилище и проверку восстановления настраивают отдельно: следим, если они уже запускались.
             'backup-remote' => isset($records['backup-remote']),
             'backup-verify' => isset($records['backup-verify']),
+            // Автообновление включают командой docportal auto-update on; выключенное (запусков больше трёх
+            // суток нет) не считается неисправностью.
+            'auto-update' => isset($records['auto-update']) && null !== $records['auto-update']->getLastStartedAt()
+                && $records['auto-update']->getLastStartedAt()->getTimestamp() > time() - 3 * 86400,
         ];
         $now = time();
         $since = $this->monitoringSince();

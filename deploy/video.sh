@@ -31,7 +31,7 @@ VIDEO_UNIT_API="${APP_ID}-video-api"
 VIDEO_UNIT_WORKER="${APP_ID}-video-worker"
 VIDEO_UNIT_MEDIAMTX="${APP_ID}-video-mediamtx"
 VIDEO_DEFAULT_PORT="3100"
-VIDEO_INTERNAL_PORT="8079"
+VIDEO_DEFAULT_INTERNAL_PORT="8079"
 VIDEO_DEFAULT_DATA_DIR="/var/lib/${APP_ID}-video"
 VIDEO_MEDIAMTX_VERSION="1.9.3"
 VIDEO_NODE_MAJOR="22"
@@ -45,6 +45,8 @@ VIDEO_MEDIAMTX_CONF="${CONF_DIR}/video-mediamtx.yml"
 video_enabled() { [[ "${VIDEO_ENABLED:-0}" == "1" ]]; }
 video_path() { printf '%s' "${VIDEO_PATH:-/video}"; }
 video_port() { printf '%s' "${VIDEO_PORT:-${VIDEO_DEFAULT_PORT}}"; }
+# Порт внутреннего сервера nginx для проверки сессии портала (на сервере; в Docker — всегда web:8079).
+video_internal_port() { printf '%s' "${VIDEO_INTERNAL_PORT:-${VIDEO_DEFAULT_INTERNAL_PORT}}"; }
 video_data_dir() { printf '%s' "${VIDEO_DATA_DIR:-${VIDEO_DEFAULT_DATA_DIR}}"; }
 
 # Каталог кода видеопортала: в релизе (на сервере) или в каталоге установки (Docker).
@@ -99,11 +101,80 @@ video_public_host() {
 
 video_secret() { LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c "${1:-48}" || true; }
 
+# --- Ресурсы и порты -------------------------------------------------------------------
+# Хватает ли серверу ресурсов для раздела «Видео» (автоматическая установка при установке и обновлении
+# портала). Причина отказа — в VIDEO_REASON.
+VIDEO_REASON=""
+video_resources_ok() {
+    local mem swap free
+    mem=$(mem_total_mb); swap=$(swap_total_mb)
+    free=$(free_space_mb /var/lib 2>/dev/null || free_space_mb /)
+    if [[ -n "${free}" && ${free} -lt 8192 ]]; then
+        VIDEO_REASON="свободно ${free} МБ, а для раздела «Видео» нужно не меньше 8 ГБ"; return 1
+    fi
+    if [[ ${mem} -gt 0 && $((mem + swap)) -lt 1800 && "${NO_SWAP:-0}" == "1" ]]; then
+        VIDEO_REASON="памяти ${mem} МБ (с подкачкой ${swap} МБ), а для обработки видео нужно не меньше 2 ГБ"; return 1
+    fi
+    return 0
+}
+
+# Порты видеопортала на сервере: API (3100) и внутренняя проверка сессии (8079). Занятые другой программой
+# заменяются ближайшими свободными (запоминаются в ${CONF_FILE}); порты уже работающего видеопортала остаются.
+video_choose_ports() {
+    local p
+    if [[ -z "${VIDEO_PORT:-}" ]]; then
+        p=${VIDEO_DEFAULT_PORT}
+        if port_busy "${p}" && ! systemctl is-active --quiet "${VIDEO_UNIT_API}" 2>/dev/null; then
+            p=$(free_port $((p + 1))) || die "Нет свободного порта для API видеопортала (${VIDEO_DEFAULT_PORT}–$((VIDEO_DEFAULT_PORT + 100)))."
+            warn "Порт ${VIDEO_DEFAULT_PORT} занят другой программой — API видеопортала будет слушать 127.0.0.1:${p}."
+        fi
+        VIDEO_PORT=${p}
+    fi
+    if [[ -z "${VIDEO_INTERNAL_PORT:-}" ]]; then
+        p=${VIDEO_DEFAULT_INTERNAL_PORT}
+        if port_busy "${p}" && ! grep_has "listen 127.0.0.1:${p};" "${VIDEO_NGINX_INTERNAL}"; then
+            p=$(free_port $((p + 1))) || die "Нет свободного порта для проверки сессии портала (${VIDEO_DEFAULT_INTERNAL_PORT}–$((VIDEO_DEFAULT_INTERNAL_PORT + 100)))."
+            warn "Порт ${VIDEO_DEFAULT_INTERNAL_PORT} занят другой программой — проверка сессии портала будет на 127.0.0.1:${p}."
+        fi
+        VIDEO_INTERNAL_PORT=${p}
+    fi
+}
+
+# Порты сервера трансляций заняты другой программой — раздел включается без прямых трансляций
+# (видео, загрузка и просмотр работают), а не завершается ошибкой.
+video_check_live_ports() {
+    [[ "${VIDEO_LIVE:-1}" == "1" ]] || return 0
+    local busy=() p
+    if [[ "${INSTALL_MODE}" == "docker" ]]; then
+        video_compose ps --status running mediamtx 2>/dev/null | grep_has mediamtx && return 0
+        for p in 1935 8189; do port_busy "${p}" tcp && busy+=("${p}/tcp"); done
+    else
+        systemctl is-active --quiet "${VIDEO_UNIT_MEDIAMTX}" 2>/dev/null && return 0
+        for p in 1935 8189 8888 8889 9996 9997; do port_busy "${p}" tcp && busy+=("${p}/tcp"); done
+    fi
+    for p in 8890 8189; do port_busy "${p}" udp && busy+=("${p}/udp"); done
+    if [[ ${#busy[@]} -gt 0 ]]; then
+        VIDEO_LIVE="0"
+        warn "Порты сервера трансляций заняты другой программой (${busy[*]}) — раздел «Видео» включается без прямых трансляций. Освободите порты и выполните: ${APP_ID} video enable --live"
+    fi
+}
+
+# После включения: портал принимает проверку сессии видеопортала (несколько попыток — службы запускаются).
+video_verify_session() {
+    local n
+    for n in 1 2 3 4 5; do
+        video_session_ok && { ok "Общий вход: портал принимает проверку сессии видеопортала"; return 0; }
+        sleep 3
+    done
+    warn "Портал пока не отвечает на проверку сессии видеопортала — вход в разделе «Видео» может не работать. Проверьте: ${APP_ID} video status (секреты VIDEO_SHARED_SECRET и PORTAL_SHARED_SECRET должны совпадать)."
+    return 1
+}
+
 # --- Node.js и зависимости ---------------------------------------------------------
 video_node_ok() {
     command -v node >/dev/null 2>&1 || return 1
     local v
-    v=$(node -v 2>/dev/null | tr -d v)
+    v=$(node -v 2>/dev/null | tr -d v || true)
     version_ge "${v:-0}" "20.12.0"
 }
 
@@ -113,7 +184,7 @@ video_ensure_node() {
     pkg_install curl ca-certificates gnupg
     local ns
     ns=$(mktemp)
-    if curl -fsSL "https://deb.nodesource.com/setup_${VIDEO_NODE_MAJOR}.x" -o "${ns}" 2>>"${LOG_FILE}"; then
+    if download "https://deb.nodesource.com/setup_${VIDEO_NODE_MAJOR}.x" "${ns}"; then
         bash "${ns}" >>"${LOG_FILE}" 2>&1 9>&- || warn "Скрипт NodeSource завершился с ошибкой (см. журнал)."
         _APT_UPDATED=0
         pkg_install_optional nodejs || true
@@ -172,6 +243,7 @@ video_prepare_code() {
         ok "Веб-интерфейс видеопортала — из прежнего релиза (исходники не изменились)"
     else
         info "Сборка веб-интерфейса видеопортала (npm ci && vite build, несколько минут)…"
+        ensure_swap 2048 2048
         video_npm "${code}/web" ci || die "Не удалось загрузить зависимости веб-интерфейса видеопортала (нужен доступ к registry.npmjs.org)."
         local mem
         mem=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 0)
@@ -194,12 +266,32 @@ video_pg_ready() { runuser -u postgres -- psql -tAc 'SELECT 1' >/dev/null 2>&1 9
 
 video_setup_postgres() {
     local password=$1
+    # Debian не создаёт кластер, если при установке пакета не было подходящей локали, — создаём сами.
+    if command -v pg_lsclusters >/dev/null 2>&1 && [[ -z "$(pg_lsclusters -h 2>/dev/null)" ]]; then
+        local pgver
+        pgver=$(ls /usr/lib/postgresql 2>/dev/null | sort -V | tail -n1 || true)
+        if [[ -n "${pgver}" ]]; then
+            info "Кластер PostgreSQL не найден — создаётся ${pgver}/main…"
+            LANG=C.UTF-8 pg_createcluster --locale C.UTF-8 --start "${pgver}" main >>"${LOG_FILE}" 2>&1 9>&- \
+                || LANG=C.UTF-8 pg_createcluster --start "${pgver}" main >>"${LOG_FILE}" 2>&1 9>&- || warn "Не удалось создать кластер PostgreSQL (pg_createcluster)."
+        fi
+    fi
     svc enable postgresql || true
     local n=0
     until video_pg_ready; do
-        n=$((n + 1)); [[ ${n} -gt 30 ]] && die "PostgreSQL не запустился (systemctl status postgresql)."
+        n=$((n + 1))
+        # Служба postgresql в Debian — обёртка: запускаем остановленные кластеры напрямую.
+        if [[ ${n} -eq 10 ]] && command -v pg_lsclusters >/dev/null 2>&1; then
+            { pg_lsclusters -h 2>/dev/null | awk '$4 != "online" {print $1, $2}' | while read -r v c; do
+                pg_ctlcluster "${v}" "${c}" start >>"${LOG_FILE}" 2>&1 9>&- || true
+            done; } || true
+        fi
+        [[ ${n} -gt 30 ]] && die "PostgreSQL не запустился (systemctl status postgresql; pg_lsclusters; журнал /var/log/postgresql/)."
         sleep 2
     done
+    # Порт кластера по умолчанию — 5432, но при нескольких версиях PostgreSQL бывает и 5433.
+    VIDEO_DB_PORT=$(runuser -u postgres -- psql -tAc 'SHOW port' 2>/dev/null 9>&- | tr -d '[:space:]' || true)
+    [[ "${VIDEO_DB_PORT}" =~ ^[0-9]+$ ]] || VIDEO_DB_PORT=5432
     if runuser -u postgres -- psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${VIDEO_DB_USER}'" 2>/dev/null | grep_has 1; then
         runuser -u postgres -- psql -q -c "ALTER ROLE ${VIDEO_DB_USER} LOGIN PASSWORD '${password}'" >>"${LOG_FILE}" 2>&1 9>&- || die "Не удалось задать пароль роли ${VIDEO_DB_USER}."
     else
@@ -241,7 +333,7 @@ PORT=${port}
 BASE_PATH=$(video_path)
 BASE_URL=${url}
 SECRET_KEY=${secret}
-DATABASE_URL=postgres://${VIDEO_DB_USER}:${db_password}@127.0.0.1:5432/${VIDEO_DB_NAME}
+DATABASE_URL=postgres://${VIDEO_DB_USER}:${db_password}@127.0.0.1:${VIDEO_DB_PORT:-5432}/${VIDEO_DB_NAME}
 DB_PASSWORD=${db_password}
 DATA_DIR=${data}
 WEB_DIST=${code}/web/dist
@@ -250,7 +342,7 @@ TRUST_PROXY=1
 NGINX_ACCEL=1
 WORKER_CONCURRENCY=${workers}
 # Общий вход с порталом документации
-PORTAL_INTERNAL_URL=http://127.0.0.1:${VIDEO_INTERNAL_PORT}
+PORTAL_INTERNAL_URL=http://127.0.0.1:$(video_internal_port)
 PORTAL_SHARED_SECRET=${shared_secret}
 PORTAL_NAME=${APP_TITLE}
 # Трансляции (MediaMTX)
@@ -392,7 +484,7 @@ video_mediamtx_native() {
         url="https://github.com/bluenviron/mediamtx/releases/download/v${VIDEO_MEDIAMTX_VERSION}/mediamtx_v${VIDEO_MEDIAMTX_VERSION}_linux_${arch}.tar.gz"
         tgz=$(mktemp --suffix=.tar.gz)
         info "Загрузка сервера трансляций MediaMTX ${VIDEO_MEDIAMTX_VERSION}…"
-        if curl -fsSL --max-time 180 "${url}" -o "${tgz}" 2>>"${LOG_FILE}" && tar -xzf "${tgz}" -C "${dir}" mediamtx 2>>"${LOG_FILE}"; then
+        if download "${url}" "${tgz}" && tar -xzf "${tgz}" -C "${dir}" mediamtx 2>>"${LOG_FILE}" && "${dir}/mediamtx" --version >/dev/null 2>&1; then
             chmod 755 "${dir}/mediamtx"; chown root:root "${dir}/mediamtx"
             ok "MediaMTX ${VIDEO_MEDIAMTX_VERSION} установлен"
         else
@@ -433,7 +525,7 @@ video_nginx_native() {
     VIDEO_PATH=$(video_path); VIDEO_API="127.0.0.1:$(video_port)"; MEDIAMTX="127.0.0.1:8889"; MEDIA_ROOT="$(video_data_dir)/media"; RESOLVER=""
     video_render "${tpl}/locations.conf.template" "${VIDEO_NGINX_DIR}/locations.conf" VIDEO_PATH VIDEO_API MEDIAMTX MEDIA_ROOT RESOLVER
     cp -f "${tpl}/maps.conf" "${VIDEO_NGINX_MAPS}"
-    INTERNAL_LISTEN="127.0.0.1:${VIDEO_INTERNAL_PORT}"; PUBLIC_ROOT="${APP_DIR}/current/public"; FASTCGI_PASS="unix:${PHP_FPM_SOCK}"; SCRIPT_ROOT='$realpath_root'
+    INTERNAL_LISTEN="127.0.0.1:$(video_internal_port)"; PUBLIC_ROOT="${APP_DIR}/current/public"; FASTCGI_PASS="unix:${PHP_FPM_SOCK}"; SCRIPT_ROOT='$realpath_root'
     video_render "${tpl}/internal-server.conf.template" "${VIDEO_NGINX_INTERNAL}" INTERNAL_LISTEN PUBLIC_ROOT FASTCGI_PASS SCRIPT_ROOT
     # Подключение правил в server{} портала — после правила режима обслуживания (во время обновления
     # раздел «Видео» тоже показывает страницу «Идёт обновление портала»).
@@ -520,6 +612,11 @@ video_enable_native() {
     local code data db_password shared_secret
     code=$(video_code_dir); data=$(video_data_dir)
     [[ -f "${code}/server/package.json" ]] || die "В установленном релизе нет видеопортала (${code}). Обновите портал до версии 1.8.0 или новее."
+    video_resources_ok || warn "Ресурсов для раздела «Видео» мало: ${VIDEO_REASON} — продолжаем, но обработка видео может прерываться."
+    pkg_preflight
+    ensure_swap 2048 2048
+    video_choose_ports
+    video_check_live_ports
 
     step "Системные пакеты видеопортала"
     pkg_install postgresql postgresql-contrib ffmpeg curl ca-certificates fonts-dejavu-core
@@ -568,10 +665,12 @@ video_enable_native() {
     [[ "${VIDEO_LIVE:-1}" == "1" ]] && video_firewall
     video_portal_env_native "" 1
     ok "Портал: VIDEO_ENABLED=1 — ссылка «Видео» в шапке"
+    video_verify_session || true
 }
 
 # --- Docker ------------------------------------------------------------------------------------
 video_compose() { (cd "${APP_DIR}/docker" && docker compose "$@"); }
+video_compose_logged() { video_compose "$@" >>"${LOG_FILE}" 2>&1 9>&-; }
 
 # Файлы раздела для контейнеров: правила nginx (подключаются в docker/nginx/default.conf) и настройки MediaMTX.
 video_render_docker() {
@@ -626,10 +725,11 @@ video_enable_docker() {
     ok "docker/.env: параметры раздела «Видео» записаны"
 
     step "Сборка образа видеопортала (несколько минут)"
-    video_compose build --pull video-api >>"${LOG_FILE}" 2>&1 || die "Сборка образа видеопортала не удалась (см. ${LOG_FILE}). Если Docker Hub, репозитории Debian или registry.npmjs.org недоступны, укажите зеркала (VIDEO_NODE_IMAGE в docker/.env) или ставьте из архива дистрибутива — в нём зависимости и интерфейс уже собраны."
+    retry 3 30 video_compose_logged build --pull video-api || die "Сборка образа видеопортала не удалась (см. ${LOG_FILE}). Если Docker Hub, репозитории Debian или registry.npmjs.org недоступны, укажите зеркала (VIDEO_NODE_IMAGE в docker/.env) или ставьте из архива дистрибутива — в нём зависимости и интерфейс уже собраны."
     ok "Образ видеопортала собран"
 
     step "Запуск контейнеров раздела «Видео»"
+    video_check_live_ports
     video_render_docker
     # Раздел включается только теперь, когда образ готов: ссылка «Видео» в портале не появится раньше времени.
     # Профили compose: «video» — video-db, video-api, video-worker; «video-live» — сервер трансляций mediamtx.
@@ -652,6 +752,7 @@ video_enable_docker() {
         sleep 3
     done
     ok "Видеопортал отвечает"
+    video_verify_session || true
 }
 
 # --- Проверка через портал -------------------------------------------------------------------------
@@ -756,7 +857,7 @@ video_update_prepare() {
     step "Раздел «Видео»: подготовка новой версии"
     if [[ "${INSTALL_MODE}" == "docker" ]]; then
         video_render_docker || warn "Не удалось обновить файлы раздела «Видео» в ${APP_DIR}/docker."
-        if video_compose build --pull video-api >>"${LOG_FILE}" 2>&1; then
+        if retry 2 30 video_compose_logged build --pull video-api; then
             ok "Образ видеопортала новой версии собран"
         else
             warn "Образ видеопортала новой версии не собран (см. ${LOG_FILE}) — раздел «Видео» работает на прежнем образе. Повторить: cd ${APP_DIR}/docker && docker compose build video-api && docker compose up -d"
@@ -828,7 +929,7 @@ video_session_ok() {
     [[ -n "${secret}" ]] || return 1
     hdr=$(umask 077; mktemp)
     printf 'X-Video-Secret: %s\n' "${secret}" > "${hdr}"
-    curl -fsS -m 5 --noproxy '*' -H "@${hdr}" "http://127.0.0.1:${VIDEO_INTERNAL_PORT}/internal/video/session" 2>/dev/null | grep_has '"state"' || rc=1
+    curl -fsS -m 5 --noproxy '*' -H "@${hdr}" "http://127.0.0.1:$(video_internal_port)/internal/video/session" 2>/dev/null | grep_has '"state"' || rc=1
     rm -f "${hdr}"
     return ${rc}
 }
@@ -843,7 +944,7 @@ video_doctor() {
             "${check_fn}" "Видео: контейнер ${s} работает" bash -c "cd '${APP_DIR}/docker' && docker compose ps --status running ${s} | grep ${s} >/dev/null"
         done
         "${check_fn}" "Видео: API отвечает" bash -c "cd '${APP_DIR}/docker' && docker compose exec -T video-api curl -fsS -m 5 http://127.0.0.1:3000/api/health"
-        "${check_fn}" "Видео: общий вход — портал принимает секрет видеопортала (web:${VIDEO_INTERNAL_PORT})" video_session_ok
+        "${check_fn}" "Видео: общий вход — портал принимает секрет видеопортала (web:${VIDEO_DEFAULT_INTERNAL_PORT})" video_session_ok
     else
         "${check_fn}" "Видео: служба ${VIDEO_UNIT_API} работает" systemctl is-active --quiet "${VIDEO_UNIT_API}"
         "${check_fn}" "Видео: служба ${VIDEO_UNIT_WORKER} работает" systemctl is-active --quiet "${VIDEO_UNIT_WORKER}"
@@ -851,7 +952,7 @@ video_doctor() {
             "${check_fn}" "Видео: сервер трансляций ${VIDEO_UNIT_MEDIAMTX} работает" systemctl is-active --quiet "${VIDEO_UNIT_MEDIAMTX}"
         fi
         "${check_fn}" "Видео: API отвечает (127.0.0.1:$(video_port))" curl -fsS -m 5 --noproxy '*' "http://127.0.0.1:$(video_port)/api/health"
-        "${check_fn}" "Видео: общий вход — портал принимает секрет видеопортала (127.0.0.1:${VIDEO_INTERNAL_PORT})" video_session_ok
+        "${check_fn}" "Видео: общий вход — портал принимает секрет видеопортала (127.0.0.1:$(video_internal_port))" video_session_ok
         "${check_fn}" "Видео: правила nginx подключены" test -f "${VIDEO_NGINX_DIR}/locations.conf"
     fi
     "${check_fn}" "Видео: раздел открывается через портал ($(video_public_url))" video_public_probe
@@ -894,7 +995,8 @@ video_main() {
             acquire_lock 0
             banner "раздел «Видео»"
             VIDEO_LIVE="${live}"; VIDEO_BACKUP_MEDIA="${media}"
-            VIDEO_PATH=$(video_path); VIDEO_PORT=$(video_port); VIDEO_DATA_DIR=$(video_data_dir)
+            # Порты API и проверки сессии выбирает video_choose_ports (занятые другой программой — заменяются).
+            VIDEO_PATH=$(video_path); VIDEO_DATA_DIR=$(video_data_dir)
             if [[ "${INSTALL_MODE}" == "docker" ]]; then video_enable_docker; else video_enable_native; fi
             VIDEO_ENABLED="1"
             save_conf
