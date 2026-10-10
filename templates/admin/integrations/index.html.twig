@@ -5,7 +5,8 @@
 {% block admin_actions %}
     <a class="btn btn--ghost" href="#api-keys">Ключи API</a>
     <a class="btn btn--ghost" href="#webhook">Webhook</a>
-    <a class="btn btn--ghost" href="#llm">Описания через LLM</a>
+    <a class="btn btn--ghost" href="#llm">Языковая модель</a>
+    <a class="btn btn--ghost" href="#semantic">Поиск по смыслу</a>
     <a class="btn btn--ghost" href="#discussion">Обсуждение</a>
     <a class="btn btn--ghost" href="#telegram">Telegram</a>
     <a class="btn btn--ghost" href="#onlyoffice">Редактор документов</a>
@@ -279,6 +280,88 @@
         <h3 class="h-sub">Массовая обработка</h3>
         <p>Для всех документов без описания: <code>docportal console app:documents:describe --missing</code> (порциями по <code>--limit=50</code>; в cron добавлен ежечасный запуск). Переформировать сгенерированные ранее: <code>--regenerate</code>; переписать и ручные: <code>--force</code>. Предпросмотр без записи: <code>--dry-run</code>.</p>
         <p>При импорте из каталога есть флажок «Сформировать описания через LLM» (в консоли — <code>--describe</code>). В карточке документа модераторам доступна кнопка «Описать через ИИ».</p>
+    </div>
+</div>
+
+{% set st = semantic_status %}
+<div class="grid grid--two" id="semantic">
+    <div class="card card--form">
+        <div class="card__head"><h2 class="h-section">Поиск по смыслу (эмбеддинги)</h2>
+            {% if embeddings.enabled %}<span class="badge badge--done"><span class="badge__dot"></span>Включён</span>{% else %}<span class="badge badge--none"><span class="badge__dot"></span>Выключен</span>{% endif %}</div>
+        <p>Ответы ИИ находят документы не только по словам вопроса, но и по смыслу: на «что делать при возгорании?» найдётся «Инструкция по пожарной безопасности».
+            Модель эмбеддингов превращает фрагменты документов и вопрос в векторы; векторы хранятся в базе портала — отдельная векторная база не нужна.
+            На странице поиска появляется и блок «Похоже по смыслу».</p>
+        <form method="post" action="{{ path('admin_integrations_semantic') }}" class="form">
+            <input type="hidden" name="_token" value="{{ csrf_token('integrations') }}">
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="enabled" value="1" {{ embeddings.enabled ? 'checked' }}><span>Включить поиск по смыслу</span></label>
+            </div>
+            <div class="form-grid">
+                <div class="form-row">
+                    <label class="form-label" for="emb-model">Модель эмбеддингов</label>
+                    <input class="form-control" id="emb-model" name="model" value="{{ embeddings.model }}" placeholder="text-embedding-3-small" required>
+                    <div class="form-help">OpenAI: <code>text-embedding-3-small</code>; Ollama: <code>bge-m3</code> или <code>nomic-embed-text</code> (сначала <code>ollama pull</code>).</div>
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="emb-dims">Длина вектора</label>
+                    <input class="form-control" id="emb-dims" name="dimensions" type="number" min="0" max="4096" value="{{ embeddings.dimensions }}">
+                    <div class="form-help">0 — как у модели. Для text-embedding-3 можно 512: индекс втрое меньше, качество почти то же.</div>
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="emb-url">Адрес API</label>
+                    <input class="form-control" id="emb-url" name="base_url" type="url" value="{{ embeddings.own_base_url }}" placeholder="тот же, что у языковой модели: {{ llm.base_url }}">
+                    <div class="form-help">Запрос идёт на <code>&lt;адрес&gt;/embeddings</code>.</div>
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="emb-key">Ключ API</label>
+                    <input class="form-control" id="emb-key" name="api_key" type="password" autocomplete="new-password" placeholder="{{ embeddings.own_api_key ? 'сохранён (' ~ embeddings.api_key_masked ~ ') — введите новый, чтобы заменить' : (embeddings.own_base_url ? 'не задан' : 'тот же, что у языковой модели') }}">
+                    {% if embeddings.own_api_key %}<div class="form-help"><label class="form-check form-check--inline"><input type="checkbox" name="clear_api_key" value="1"><span>удалить сохранённый ключ</span></label></div>{% endif %}
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="emb-min">Минимальное сходство</label>
+                    <input class="form-control" id="emb-min" name="min_score" type="number" min="0" max="0.99" step="0.01" value="{{ embeddings.min_score }}">
+                    <div class="form-help">0–1: ниже — документ не считается найденным по смыслу. Для OpenAI обычно 0,25–0,3, для bge-m3 и nomic-embed-text — 0,45–0,5. Подбирайте по «Вопросам к ИИ».</div>
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="emb-log">Хранить вопросы к ИИ, дней</label>
+                    <input class="form-control" id="emb-log" name="log_days" type="number" min="0" max="3650" value="{{ embeddings.log_days }}">
+                    <div class="form-help">Вопросы, итог и оценки ответов — для страницы «Вопросы к ИИ». 0 — не сохранять.</div>
+                </div>
+            </div>
+            <div class="form-actions"><button type="submit" class="btn btn--pill btn--small">Сохранить</button></div>
+        </form>
+        <div class="form-actions">
+            <form method="post" action="{{ path('admin_integrations_semantic_test') }}" class="inline-form">
+                <input type="hidden" name="_token" value="{{ csrf_token('integrations') }}">
+                <button type="submit" class="btn btn--ghost btn--small">Проверить модель</button>
+            </form>
+            <form method="post" action="{{ path('admin_integrations_semantic_build') }}" class="inline-form">
+                <input type="hidden" name="_token" value="{{ csrf_token('integrations') }}">
+                <button type="submit" class="btn btn--ghost btn--small" {{ not embeddings.enabled or (st and st.outdated == 0) ? 'disabled' }}>Построить индекс сейчас</button>
+            </form>
+        </div>
+    </div>
+    <div class="card">
+        <h2 class="h-section">Смысловой индекс</h2>
+        {% if st %}
+        <div class="grid grid--stats grid--stats-compact">
+            <div class="stat"><div class="stat__label">В индексе</div><div class="stat__value">{{ st.indexed }}</div><div class="stat__hint">из {{ st.published }} опубликованных</div></div>
+            <div class="stat"><div class="stat__label">Ждут</div><div class="stat__value {{ st.outdated > 0 ? 'text-warning' }}">{{ st.outdated }}</div></div>
+            <div class="stat"><div class="stat__label">Ошибки</div><div class="stat__value {{ st.errors > 0 ? 'text-danger' }}">{{ st.errors }}</div></div>
+        </div>
+        <dl class="meta meta--stack">
+            {% set model_parts = st.model|split('|') %}
+            <div><dt>Модель</dt><dd><code>{{ model_parts[0] }}</code>{% if (model_parts[1] ?? '0') != '0' %}, длина вектора {{ model_parts[1] }}{% endif %}{% if st.empty > 0 %}; без текста — {{ st.empty }} док.{% endif %}</dd></div>
+            <div><dt>Фрагментов</dt><dd>{{ st.chunks }} ({{ (st.bytes / 1048576)|number_format(1, ',') }} МБ векторов)</dd></div>
+            {% if st.last_error %}<div><dt>Последняя ошибка</dt><dd class="text-danger">{{ st.last_error }}</dd></div>{% endif %}
+        </dl>
+        {% else %}
+        <p class="text-muted">Состояние индекса недоступно.</p>
+        {% endif %}
+        <p class="form-help">Индекс обновляет задание cron раз в час (<code>docportal ai-index</code>, «Мониторинг» — «Смысловой индекс для ИИ»): новые и изменившиеся опубликованные документы, после распознавания текста и при смене модели. Документ — до 60 фрагментов по тысяче символов.</p>
+        <h3 class="h-sub">Вопросы к ИИ за 30 дней</h3>
+        <p>Вопросов: {{ ai_stats.total }}, без ответа: {{ ai_stats.not_found + ai_stats.no_sources }}, оценки «помог / не помог»: {{ ai_stats.helpful }} / {{ ai_stats.unhelpful }}.
+            <a href="{{ path('admin_ai_questions') }}">Вопросы к ИИ →</a> — на что в документах нет ответа и какие ответы не помогли.</p>
     </div>
 </div>
 

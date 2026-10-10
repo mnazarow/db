@@ -54,6 +54,8 @@ if [[ "${1:-php-fpm}" == "cron" ]]; then
     printf '%s cd /var/www/html && su-exec www-data php bin/console app:documents:describe --missing --limit=50 --quiet-if-disabled --no-interaction >> /var/www/html/var/log/describe-cron.log 2>&1\n' "${DESCRIBE_CRON:-20 * * * *}" >> /etc/crontabs/root
     # Индексация содержимого документов для полнотекстового поиска.
     printf '%s cd /var/www/html && su-exec www-data php bin/console app:search:reindex --limit=500 --no-interaction >> /var/www/html/var/log/reindex-cron.log 2>&1\n' "${REINDEX_CRON:-40 * * * *}" >> /etc/crontabs/root
+    # Смысловой индекс для ответов ИИ и очистка журнала вопросов к ИИ (индекс — только если поиск по смыслу включён).
+    printf '%s cd /var/www/html && su-exec www-data php bin/console app:ai:index --limit=200 --quiet-if-disabled --no-interaction >> /var/www/html/var/log/ai-index-cron.log 2>&1\n' "${AI_INDEX_CRON:-50 * * * *}" >> /etc/crontabs/root
     # Напоминания сотрудникам о документах, с которыми они не ознакомились.
     printf '%s cd /var/www/html && su-exec www-data php bin/console app:documents:acknowledge-remind --no-interaction >> /var/www/html/var/log/acknowledge-cron.log 2>&1\n' "${ACKNOWLEDGE_CRON:-30 8 * * *}" >> /etc/crontabs/root
     # Разбор сообщений бота Telegram (привязка чатов; без включённых уведомлений ничего не делает).

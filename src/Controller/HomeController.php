@@ -118,6 +118,8 @@ final class HomeController extends AbstractController
             // Ответ ИИ — только вошедшим сотрудникам и только если ответы включены в «Интеграциях».
             'ai_answers' => null !== $user && null !== $this->answers && $this->answers->isEnabled(),
             'ai_auto' => (bool) preg_match('/\?\s*$|^(как|что|где|когда|кто|почему|зачем|сколько|можно ли|нужно ли|какой|какая|какие)\b/iu', $q),
+            // «Похоже по смыслу» — документы, близкие к запросу по смыслу (если включён смысловой индекс).
+            'semantic_search' => null !== $user && mb_strlen($q) >= 3 && null !== $this->answers && $this->answers->isSemanticReady(),
         ]);
     }
 

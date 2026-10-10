@@ -7,7 +7,7 @@
  */
 'use strict';
 
-var CACHE = 'docportal-shell-v1';
+var CACHE = 'docportal-shell-v2';
 var OFFLINE = '/offline.html';
 var PRECACHE = [OFFLINE, '/css/app.css', '/js/app.js', '/img/logo.svg', '/img/logo-mark.svg', '/img/favicon.svg', '/img/app/icon-192.png'];
 

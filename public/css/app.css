@@ -1310,3 +1310,18 @@ fieldset.form-row > legend { padding: 0; margin-bottom: 6px; }
     .team-table td[data-label] .team-table__details { display: inline; }
 }
 .people-report .people-report__dept th { border-bottom: 1px solid var(--border-light); }
+/* Ответ ИИ: оценка */
+.ai-answer__rate { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border-light); }
+.ai-answer__rate-label { font-size: 14px; color: var(--muted); margin-right: 4px; }
+.ai-answer__thanks { font-size: 14px; color: var(--green, #1b7a43); }
+.ai-answer__feedback { width: 100%; display: grid; gap: 8px; }
+.ai-answer__feedback .form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 0; }
+.ai-answer__feedback .form-actions .text-muted { font-size: 13px; }
+/* Вопросы к ИИ */
+.grid--ai-stats { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom: 20px; }
+.ai-topics tr.is-muted td { color: var(--muted); }
+.ai-questions__comment { margin-top: 4px; font-style: italic; color: var(--text); }
+.ai-questions__answer { margin-top: 6px; font-size: 14px; }
+.ai-questions__answer summary { cursor: pointer; color: var(--blue); }
+.ai-questions__text { margin: 8px 0; padding: 10px 12px; background: var(--gray-bg, #f4f6f8); border-radius: 8px; line-height: 1.5; }
+.form-label--inline { margin: 0; }

@@ -99,6 +99,11 @@ final class DocumentController extends AbstractController
         }
         $type = (string) $request->query->get('type', Document::TYPE_FILE);
         $document->setType(\in_array($type, Document::TYPES, true) ? $type : Document::TYPE_FILE);
+        // ?title= — заготовка названия (например, со страницы «Вопросы к ИИ»: документ по вопросу без ответа).
+        $title = trim((string) preg_replace('/\s+/u', ' ', (string) $request->query->get('title', '')));
+        if ('' !== $title && $request->isMethod('GET')) {
+            $document->setTitle(mb_substr($title, 0, 255));
+        }
 
         // Шаблон заполняет карточку заготовкой: раздел, вид, название, обозначение с автонумерацией,
         // теги, срок и текст страницы. Номер выдаётся сразу, поэтому шаблон применяется только на GET.

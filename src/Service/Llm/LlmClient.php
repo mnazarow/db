@@ -7,6 +7,7 @@ namespace App\Service\Llm;
 use App\Service\Http\HttpResponse;
 use App\Service\Http\HttpTransportInterface;
 use App\Service\PortalSettings;
+use Psr\Cache\CacheItemPoolInterface;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -20,6 +21,7 @@ final class LlmClient
         private readonly HttpTransportInterface $http,
         private readonly PortalSettings $settings,
         private readonly LoggerInterface $logger,
+        private readonly ?CacheItemPoolInterface $cache = null,
     ) {
     }
 
@@ -118,6 +120,143 @@ final class LlmClient
         }
 
         return $changed ? $payload : null;
+    }
+
+    /** Поиск по смыслу включён (своя настройка, от описаний и ответов не зависит). */
+    public function embeddingsEnabled(): bool
+    {
+        return $this->settings->embeddings()['enabled'];
+    }
+
+    /**
+     * Векторы текстов (POST {адрес}/embeddings — OpenAI, Ollama, LM Studio, vLLM, LocalAI…), нормированные к
+     * длине 1: косинусное сходство — скалярное произведение. Порядок векторов — как у текстов.
+     *
+     * $timeout — секунд на ответ (для вопроса сотрудника — коротко, для индексации — тайм-аут из настроек).
+     *
+     * @param list<string> $texts
+     *
+     * @return list<list<float>>
+     *
+     * @throws LlmException
+     */
+    public function embed(array $texts, ?int $timeout = null): array
+    {
+        if ([] === $texts) {
+            return [];
+        }
+        $cfg = $this->settings->embeddings();
+        $payload = ['model' => $cfg['model'], 'input' => array_values(array_map(static fn (string $t): string => '' !== trim($t) ? $t : '-', $texts))];
+        // Модель не умеет сокращать вектор — это запоминается на сутки, чтобы не тратить на отказ лишний запрос.
+        $noDimensionsKey = 'llm_embed_no_dims_'.md5($cfg['base_url'].'|'.$cfg['model']);
+        if ($cfg['dimensions'] > 0 && !$this->cacheHas($noDimensionsKey)) {
+            $payload['dimensions'] = $cfg['dimensions'];
+        }
+        $timeout = max(2, $timeout ?? max(10, $cfg['timeout']));
+        $response = $this->sendEmbeddings($payload, $cfg, $timeout);
+        if (!$response->ok() && 400 === $response->status && isset($payload['dimensions']) && str_contains(mb_strtolower($response->body), 'dimension')) {
+            unset($payload['dimensions']);
+            $this->cacheSet($noDimensionsKey, 86400);
+            $response = $this->sendEmbeddings($payload, $cfg, $timeout);
+        }
+        if (!$response->ok()) {
+            $this->logger->warning('Ошибка обращения к модели эмбеддингов', ['model' => $cfg['model'], 'base_url' => $cfg['base_url'], 'error' => $response->describeError()]);
+            throw new LlmException('Ошибка модели эмбеддингов: '.$response->describeError());
+        }
+        $data = $response->json();
+        $rows = \is_array($data['data'] ?? null) ? $data['data'] : (\is_array($data['embeddings'] ?? null) ? array_map(static fn ($e): array => ['embedding' => $e], $data['embeddings']) : null);
+        if (null === $rows || \count($rows) !== \count($texts)) {
+            throw new LlmException('Ошибка модели эмбеддингов: в ответе нет векторов для всех текстов.');
+        }
+        usort($rows, static fn ($a, $b): int => ((int) ($a['index'] ?? 0)) <=> ((int) ($b['index'] ?? 0)));
+        $out = [];
+        $dims = null;
+        foreach ($rows as $row) {
+            $vector = $row['embedding'] ?? null;
+            if (!\is_array($vector) || [] === $vector) {
+                throw new LlmException('Ошибка модели эмбеддингов: пустой вектор.');
+            }
+            $dims ??= \count($vector);
+            if (\count($vector) !== $dims) {
+                throw new LlmException('Ошибка модели эмбеддингов: векторы разной длины.');
+            }
+            $out[] = self::normalize(array_map('floatval', array_values($vector)));
+        }
+
+        return $out;
+    }
+
+    /**
+     * Вектор длины 1 (нулевой остаётся нулевым).
+     *
+     * @param list<float> $vector
+     *
+     * @return list<float>
+     */
+    public static function normalize(array $vector): array
+    {
+        $norm = 0.0;
+        foreach ($vector as $v) {
+            $norm += $v * $v;
+        }
+        if ($norm <= 0.0) {
+            return $vector;
+        }
+        $norm = sqrt($norm);
+
+        return array_map(static fn (float $v): float => $v / $norm, $vector);
+    }
+
+    /**
+     * Пробный запрос к модели эмбеддингов.
+     *
+     * @return array{ok: bool, message: string}
+     */
+    public function testEmbeddings(): array
+    {
+        $started = microtime(true);
+        try {
+            $vectors = $this->embed(['Проверка связи с моделью эмбеддингов']);
+
+            return ['ok' => true, 'message' => \sprintf('Модель %s ответила за %.1f с, длина вектора — %d.', $this->settings->embeddings()['model'], microtime(true) - $started, \count($vectors[0]))];
+        } catch (LlmException $e) {
+            return ['ok' => false, 'message' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     * @param array<string, mixed> $cfg
+     */
+    private function sendEmbeddings(array $payload, array $cfg, int $timeout): HttpResponse
+    {
+        $headers = ['Content-Type' => 'application/json', 'Accept' => 'application/json'];
+        if ('' !== $cfg['api_key']) {
+            $headers['Authorization'] = 'Bearer '.$cfg['api_key'];
+        }
+
+        return $this->http->request('POST', $cfg['base_url'].'/embeddings', json_encode($payload, \JSON_UNESCAPED_UNICODE | \JSON_INVALID_UTF8_SUBSTITUTE | \JSON_THROW_ON_ERROR), $headers, $timeout);
+    }
+
+    /** Отметка в кэше (на время): есть ли она. */
+    public function cacheHas(string $key): bool
+    {
+        try {
+            return null !== $this->cache && $this->cache->getItem($key)->isHit();
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    /** Поставить отметку в кэше на $seconds секунд. */
+    public function cacheSet(string $key, int $seconds): void
+    {
+        try {
+            if (null !== $this->cache) {
+                $this->cache->save($this->cache->getItem($key)->set(true)->expiresAfter($seconds));
+            }
+        } catch (\Throwable) {
+        }
     }
 
     /**

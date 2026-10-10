@@ -630,6 +630,7 @@ cron_app_jobs() {
 0 8 * * * root /usr/local/bin/${APP_ID} console app:documents:expiry --no-interaction >> ${LOG_DIR}/expiry-cron.log 2>&1
 20 * * * * root /usr/local/bin/${APP_ID} console app:documents:describe --missing --limit=50 --quiet-if-disabled --no-interaction >> ${LOG_DIR}/describe-cron.log 2>&1
 40 * * * * root /usr/local/bin/${APP_ID} console app:search:reindex --limit=500 --no-interaction >> ${LOG_DIR}/reindex-cron.log 2>&1
+50 * * * * root /usr/local/bin/${APP_ID} console app:ai:index --limit=200 --quiet-if-disabled --no-interaction >> ${LOG_DIR}/ai-index-cron.log 2>&1
 30 8 * * * root /usr/local/bin/${APP_ID} console app:documents:acknowledge-remind --no-interaction >> ${LOG_DIR}/acknowledge-cron.log 2>&1
 * * * * * root /usr/local/bin/${APP_ID} console app:telegram:poll --no-interaction >> ${LOG_DIR}/telegram-cron.log 2>&1
 10 9 * * 1 root /usr/local/bin/${APP_ID} console app:materials:remind --no-interaction >> ${LOG_DIR}/materials-remind-cron.log 2>&1
@@ -823,8 +824,9 @@ case "\${cmd}" in
         runuser -u "\${SERVICE_USER}" -- php "\${APP_DIR}/current/bin/console" app:org:import "\${TMPDIR_ORG}/\${TMPNAME}" "\$@" || rc=\$?
         rm -rf "\${TMPDIR_ORG}"
         exit "\${rc}" ;;
-    api-key|describe|reindex|acknowledge-remind|telegram)
+    api-key|describe|reindex|acknowledge-remind|telegram|ai-index)
         # api-key — ключи REST API; describe — описания через LLM; reindex — индекс поиска по содержимому;
+        # ai-index — смысловой индекс для ответов ИИ (поиск по смыслу) и очистка журнала вопросов к ИИ;
         # acknowledge-remind — напоминания сотрудникам о неподтверждённом ознакомлении;
         # telegram — разбор сообщений бота и проверка связи.
         SUB="app:api-key"
@@ -832,6 +834,7 @@ case "\${cmd}" in
         [[ "\${cmd}" == "reindex" ]] && SUB="app:search:reindex"
         [[ "\${cmd}" == "acknowledge-remind" ]] && SUB="app:documents:acknowledge-remind"
         [[ "\${cmd}" == "telegram" ]] && SUB="app:telegram:poll"
+        [[ "\${cmd}" == "ai-index" ]] && SUB="app:ai:index"
         if [[ "\${INSTALL_MODE}" == "docker" ]]; then
             cd "\${APP_DIR}/docker" && exec "\${DEXEC[@]}" app php bin/console "\${SUB}" "\$@"
         else
@@ -864,6 +867,7 @@ case "\${cmd}" in
   api-key <действие>  Ключи REST API для внешних систем (RAG): list | create "Название" [--internal] | disable ID | enable ID | delete ID
   describe            Сформировать описания документов через LLM (параметры: --missing --regenerate --force --limit=N --dry-run)
   reindex             Индекс полнотекстового поиска по содержимому файлов (--all — всё заново, --status — состояние)
+  ai-index            Смысловой индекс для ответов ИИ (поиск по смыслу; --all — заново, --status — состояние)
   acknowledge-remind  Напоминания о неподтверждённом ознакомлении (--days=N, --dry-run)
   telegram            Уведомления в Telegram: разбор сообщений бота (--status, --check, --send "текст" --user ЛОГИН)
   kerberos on|off|status   Вход через Windows без пароля (Kerberos/SPNEGO в nginx):

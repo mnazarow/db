@@ -42,18 +42,86 @@
                             return '<li value="' + s.n + '"><span class="tag">' + (s.type === 'video' ? 'видео' : 'документ') + '</span> <a href="' + esc(s.url) + '">' + esc(s.title) + '</a>' + (s.meta ? ' <span class="text-muted">' + esc(s.meta) + '</span>' : '') + '</li>';
                         }).join('') + '</ol>';
                     }
+                    if (res.rate_url) {
+                        html += '<div class="ai-answer__rate" data-ai-rate><span class="ai-answer__rate-label">Ответ помог?</span>'
+                            + '<button class="btn btn--ghost btn--small" type="button" data-rate="1">Да</button>'
+                            + '<button class="btn btn--ghost btn--small" type="button" data-rate="-1">Нет</button></div>';
+                    }
                     body.innerHTML = html || '<p class="text-muted">Ответа нет.</p>';
+                    if (res.rate_url) { setupRating(body.querySelector('[data-ai-rate]'), res.rate_url); }
                 })
                 .catch(function () { body.innerHTML = '<p class="alert alert--info">Нет связи с сервером — повторите позже.</p>'; })
                 .then(function () { if (button) { button.disabled = false; button.textContent = 'Ответить ещё раз'; } });
+        }
+        function send(url, rating, comment) {
+            var data = new FormData();
+            data.append('rating', String(rating));
+            data.append('comment', comment || '');
+            data.append('_token', box.getAttribute('data-token') || '');
+            return fetch(url, { method: 'POST', body: data, credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+                .then(function (r) { return r.json().catch(function () { return { error: 'Сервер ответил ошибкой (' + r.status + ').' }; }); });
+        }
+        /* «Ответ помог?»: «Да» — спасибо; «Нет» — оценка сразу и необязательное поле «чего не хватило». */
+        function setupRating(rate, url) {
+            if (!rate) { return; }
+            rate.addEventListener('click', function (e) {
+                var b = e.target.closest ? e.target.closest('[data-rate]') : null;
+                if (!b) { return; }
+                var rating = parseInt(b.getAttribute('data-rate'), 10);
+                Array.prototype.forEach.call(rate.querySelectorAll('[data-rate]'), function (x) { x.disabled = true; });
+                send(url, rating, '').then(function (res) {
+                    if (res.error) { rate.innerHTML = '<span class="text-muted">' + esc(res.error) + '</span>'; return; }
+                    if (rating > 0) { rate.innerHTML = '<span class="ai-answer__thanks">Спасибо за оценку!</span>'; return; }
+                    rate.innerHTML = '<form class="ai-answer__feedback" data-ai-feedback><label class="form-label" for="ai-feedback-text">Чего не хватило в ответе? (необязательно)</label>'
+                        + '<textarea class="form-control" id="ai-feedback-text" rows="2" maxlength="500" placeholder="Например: нужен порядок для филиалов"></textarea>'
+                        + '<div class="form-actions"><button class="btn btn--pill btn--small" type="submit">Отправить</button><span class="text-muted">Оценка учтена — администратор увидит, каких документов не хватает.</span></div></form>';
+                    var form = rate.querySelector('[data-ai-feedback]');
+                    form.addEventListener('submit', function (ev) {
+                        ev.preventDefault();
+                        var text = form.querySelector('textarea').value;
+                        form.querySelector('button').disabled = true;
+                        send(url, -1, text).then(function (r2) {
+                            rate.innerHTML = '<span class="ai-answer__thanks">' + (r2.error ? esc(r2.error) : 'Спасибо, комментарий передан.') + '</span>';
+                        });
+                    });
+                }).catch(function () { rate.innerHTML = '<span class="text-muted">Нет связи с сервером — оценка не сохранена.</span>'; });
+            });
         }
         if (button) { button.addEventListener('click', ask); }
         if (box.hasAttribute('data-auto')) { ask(); }
     }
 
+    /* «Похоже по смыслу»: документы, близкие к запросу по смыслу, которых нет среди найденных по словам. */
+    function setupSemantic(box) {
+        var list = box.querySelector('[data-semantic-list]');
+        function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+        var shown = {};
+        Array.prototype.forEach.call(document.querySelectorAll('.table-card a[href^="/documents/"]'), function (a) {
+            if (!box.contains(a)) { shown[a.getAttribute('href')] = true; }
+        });
+        var data = new FormData();
+        data.append('q', box.getAttribute('data-q') || '');
+        data.append('_token', box.getAttribute('data-token') || '');
+        fetch(box.getAttribute('data-url'), { method: 'POST', body: data, credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+            .then(function (r) { return r.json(); })
+            .then(function (res) {
+                var items = (res.items || []).filter(function (it) { return !shown[it.url]; });
+                if (!items.length) { return; }
+                list.innerHTML = items.map(function (it) {
+                    return '<li class="snippet"><div class="snippet__head"><a class="snippet__title" href="' + esc(it.url) + '">' + esc(it.title) + '</a></div>'
+                        + (it.meta ? '<div class="snippet__section">' + esc(it.meta) + '</div>' : '')
+                        + (it.snippet ? '<p class="snippet__text">' + esc(it.snippet) + '</p>' : '') + '</li>';
+                }).join('');
+                box.hidden = false;
+            })
+            .catch(function () { /* блок необязательный — без него страница работает */ });
+    }
+
     ready(function () {
         var aiBox = document.querySelector('[data-ai-answer]');
         if (aiBox && window.fetch && window.FormData) { setupAiAnswer(aiBox); }
+        var semanticBox = document.querySelector('[data-semantic]');
+        if (semanticBox && window.fetch && window.FormData) { setupSemantic(semanticBox); }
 
         /* Подтверждения: data-confirm у формы или у нажатой кнопки (например, «Удалить» рядом с «Сохранить») */
         document.addEventListener('submit', function (e) {

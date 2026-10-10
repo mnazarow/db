@@ -69,6 +69,16 @@
         </div>
         {% endif %}
 
+        {% if semantic_search|default(false) %}
+        <div class="card table-card semantic-results" data-semantic data-url="{{ path('app_search_semantic') }}" data-token="{{ csrf_token('search_answer') }}" data-q="{{ q }}" hidden>
+            <div class="card__head card__head--padded">
+                <h2 class="h-section">Похоже по смыслу</h2>
+                <span class="text-muted">документы о том же, даже если в них нет этих слов</span>
+            </div>
+            <ul class="snippet-list" data-semantic-list></ul>
+        </div>
+        {% endif %}
+
         {% if video_results and video_results.items|length > 0 %}
         <div class="card table-card">
             <div class="card__head card__head--padded">

@@ -50,6 +50,11 @@ framework:
             policy: sliding_window
             limit: 30
             interval: '1 hour'
+        # Блок «Похоже по смыслу» на странице поиска (запрос к модели эмбеддингов — дешёвый, но не бесплатный).
+        semantic_search:
+            policy: sliding_window
+            limit: 120
+            interval: '1 hour'
 
     cache:
         app: cache.adapter.filesystem

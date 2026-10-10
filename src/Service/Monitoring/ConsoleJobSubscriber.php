@@ -26,6 +26,7 @@ final class ConsoleJobSubscriber implements EventSubscriberInterface
         'app:documents:acknowledge-remind' => 'acknowledge-remind',
         'app:telegram:poll' => 'telegram',
         'app:materials:remind' => 'materials-remind',
+        'app:ai:index' => 'ai-index',
     ];
 
     /** @var array<string, float> имя задания → время старта */

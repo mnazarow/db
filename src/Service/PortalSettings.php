@@ -54,6 +54,20 @@ final class PortalSettings
     /** Ответы на вопросы сотрудников на странице поиска (по документам и видео, со ссылками на источники). */
     public const LLM_ANSWERS = 'llm.answers';
 
+    // Поиск по смыслу (эмбеддинги, OpenAI-совместимый POST {адрес}/embeddings): ответы ИИ и блок «Похоже по смыслу».
+    public const EMBED_ENABLED = 'llm.embed.enabled';
+    public const EMBED_MODEL = 'llm.embed.model';
+    public const EMBED_BASE_URL = 'llm.embed.base_url';
+    public const EMBED_API_KEY = 'llm.embed.api_key';
+    public const EMBED_DIMENSIONS = 'llm.embed.dimensions';
+    /** Минимальное сходство (косинус) документа с вопросом: ниже — документ не считается найденным по смыслу. */
+    public const EMBED_MIN_SCORE = 'llm.embed.min_score';
+    public const EMBED_DEFAULT_MIN_SCORE = 0.3;
+    public const EMBED_DEFAULT_MODEL = 'text-embedding-3-small';
+    /** Сколько дней хранить вопросы к ИИ и оценки ответов (0 — не сохранять). */
+    public const AI_LOG_DAYS = 'ai.log_days';
+    public const AI_LOG_DEFAULT_DAYS = 180;
+
     public const LLM_DEFAULT_BASE_URL = 'https://api.openai.com/v1';
     public const LLM_DEFAULT_MODEL = 'gpt-4o-mini';
     public const LLM_DEFAULT_MAX_INPUT_CHARS = 12000;
@@ -152,7 +166,7 @@ final class PortalSettings
     public const OCR_DEFAULT_DPI = 200;
 
     /** Настройки, значения которых не должны попадать в журнал. */
-    private const SECRET_NAMES = [self::WEBHOOK_SECRET, self::LLM_API_KEY, self::SSO_CLIENT_SECRET, self::TELEGRAM_TOKEN, self::MONITORING_TOKEN, self::ONLYOFFICE_SECRET];
+    private const SECRET_NAMES = [self::WEBHOOK_SECRET, self::LLM_API_KEY, self::EMBED_API_KEY, self::SSO_CLIENT_SECRET, self::TELEGRAM_TOKEN, self::MONITORING_TOKEN, self::ONLYOFFICE_SECRET];
 
     /** Служебные значения, которые портал меняет сам (в журнал аудита не пишутся). */
     private const INTERNAL_NAMES = [self::TELEGRAM_OFFSET, self::MATERIALS_REMIND_LAST_RUN, self::ONLYOFFICE_LINK_KEY];
@@ -298,6 +312,69 @@ final class PortalSettings
             'temperature' => (float) $this->get(self::LLM_TEMPERATURE, self::LLM_DEFAULT_TEMPERATURE),
             'answers' => (bool) $this->get(self::LLM_ANSWERS, true),
         ];
+    }
+
+    /**
+     * Поиск по смыслу: адрес и ключ — свои или (пусто) те же, что у языковой модели; dimensions — длина вектора,
+     * если модель умеет её сокращать (0 — как у модели). own_base_url и own_api_key — что задано именно здесь.
+     *
+     * @return array{enabled: bool, model: string, base_url: string, api_key: string, own_base_url: string, own_api_key: string, dimensions: int, min_score: float, timeout: int, log_days: int}
+     */
+    public function embeddings(): array
+    {
+        $llm = $this->llm();
+        $ownUrl = rtrim(trim((string) $this->get(self::EMBED_BASE_URL, '')), '/');
+        $ownKey = (string) $this->get(self::EMBED_API_KEY, '');
+
+        return [
+            'enabled' => (bool) $this->get(self::EMBED_ENABLED, false),
+            'model' => trim((string) $this->get(self::EMBED_MODEL, self::EMBED_DEFAULT_MODEL)) ?: self::EMBED_DEFAULT_MODEL,
+            'base_url' => '' !== $ownUrl ? $ownUrl : $llm['base_url'],
+            'api_key' => '' !== $ownKey ? $ownKey : ('' !== $ownUrl ? '' : $llm['api_key']),
+            'own_base_url' => $ownUrl,
+            'own_api_key' => $ownKey,
+            'dimensions' => max(0, min(4096, (int) $this->get(self::EMBED_DIMENSIONS, 0))),
+            'min_score' => max(0.0, min(1.0, (float) $this->get(self::EMBED_MIN_SCORE, self::EMBED_DEFAULT_MIN_SCORE))),
+            'timeout' => $llm['timeout'],
+            'log_days' => max(0, min(3650, (int) $this->get(self::AI_LOG_DAYS, self::AI_LOG_DEFAULT_DAYS))),
+        ];
+    }
+
+    /** @param array<string, mixed> $values ключи: enabled, model, base_url, api_key (null — не менять), dimensions, min_score, log_days */
+    public function setEmbeddings(array $values, ?User $by = null): void
+    {
+        $baseUrl = rtrim(trim((string) ($values['base_url'] ?? '')), '/');
+        if ('' !== $baseUrl && (false === filter_var($baseUrl, \FILTER_VALIDATE_URL) || !preg_match('#^https?://#i', $baseUrl))) {
+            throw new \InvalidArgumentException('Адрес API эмбеддингов должен начинаться с http:// или https:// (или оставьте поле пустым — тогда тот же, что у модели).');
+        }
+        $model = trim((string) ($values['model'] ?? ''));
+        if ('' === $model) {
+            throw new \InvalidArgumentException('Укажите модель эмбеддингов (например, text-embedding-3-small, nomic-embed-text, bge-m3).');
+        }
+        $dimensions = (int) ($values['dimensions'] ?? 0);
+        if ($dimensions < 0 || ($dimensions > 0 && $dimensions < 32) || $dimensions > 4096) {
+            throw new \InvalidArgumentException('Длина вектора — от 32 до 4096 или 0 (как у модели).');
+        }
+        $set = [
+            self::EMBED_ENABLED => (bool) ($values['enabled'] ?? false),
+            self::EMBED_MODEL => mb_substr($model, 0, 128),
+            self::EMBED_BASE_URL => $baseUrl,
+            self::EMBED_DIMENSIONS => $dimensions,
+        ];
+        if (\array_key_exists('min_score', $values)) {
+            $minScore = (float) str_replace(',', '.', (string) $values['min_score']);
+            if ($minScore < 0 || $minScore >= 1) {
+                throw new \InvalidArgumentException('Минимальное сходство — число от 0 до 1 (например, 0,3).');
+            }
+            $set[self::EMBED_MIN_SCORE] = $minScore;
+        }
+        if (\array_key_exists('log_days', $values)) {
+            $set[self::AI_LOG_DAYS] = max(0, min(3650, (int) $values['log_days']));
+        }
+        if (\array_key_exists('api_key', $values) && null !== $values['api_key']) {
+            $set[self::EMBED_API_KEY] = trim((string) $values['api_key']);
+        }
+        $this->setMany($set, $by);
     }
 
     public function isLlmEnabled(): bool

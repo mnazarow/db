@@ -17,6 +17,15 @@ final class RecordingTransport implements HttpTransportInterface
 
     private ?HttpResponse $default = null;
 
+    /** @var (callable(string, string, ?string): ?HttpResponse)|null ответ по содержимому запроса (когда очередь пуста) */
+    private $handler = null;
+
+    /** Обработчик запросов: возвращает ответ или null — тогда ответ по умолчанию. */
+    public function setHandler(?callable $handler): void
+    {
+        $this->handler = $handler;
+    }
+
     public function enqueue(HttpResponse ...$responses): void
     {
         foreach ($responses as $response) {
@@ -34,6 +43,7 @@ final class RecordingTransport implements HttpTransportInterface
         $this->requests = [];
         $this->queue = [];
         $this->default = null;
+        $this->handler = null;
     }
 
     public function request(string $method, string $url, ?string $body, array $headers, int $timeoutSeconds): HttpResponse
@@ -41,6 +51,9 @@ final class RecordingTransport implements HttpTransportInterface
         $this->requests[] = ['method' => $method, 'url' => $url, 'body' => $body, 'headers' => $headers, 'timeout' => $timeoutSeconds];
         if ([] !== $this->queue) {
             return array_shift($this->queue);
+        }
+        if (null !== $this->handler && null !== ($response = ($this->handler)($method, $url, $body))) {
+            return $response;
         }
 
         return $this->default ?? new HttpResponse(200, '{}');
