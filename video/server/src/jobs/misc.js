@@ -18,6 +18,7 @@ import { scanWatchFolder, sendDigests } from './platform.js';
 import { runRetention } from './retention.js';
 import { runWebinarMaintenance } from './webinar.js';
 import { applyFreshDefault } from '../lib/lifecycle.js';
+import { syncPortalDirectory, portalSyncDue } from '../lib/portal-sync.js';
 
 export async function runEmail(job) {
   const { to, subject, html, text } = job.payload;
@@ -223,6 +224,12 @@ async function maintenanceBody(job, ctx) {
   // 1d. Папка автоимпорта и еженедельный дайджест (1.3)
   try { const w = await scanWatchFolder(s, ctx?.log); if (w.imported) out.watchImported = w.imported; } catch (e) { ctx?.log?.warn({ err: e.message }, 'watch folder'); }
   try { const d = await sendDigests(s); if (d) out.digests = d; } catch (e) { ctx?.log?.warn({ err: e.message }, 'digest'); }
+
+  // 1e. Справочник сотрудников из портала документации (1.13): сразу после включения раздела и дальше
+  // раз в PORTAL_SYNC_MINUTES минут. Портал недоступен — повтор в следующий раз, видео работает дальше.
+  try {
+    if (job.payload.portalSync || await portalSyncDue()) out.portalSync = await syncPortalDirectory();
+  } catch (e) { out.portalSyncError = e.message; ctx?.log?.warn({ err: e.message }, 'portal sync'); }
 
   const minute = new Date().getMinutes();
   if (job.payload.hourly || minute === 7) {

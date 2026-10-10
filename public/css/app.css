@@ -1248,3 +1248,13 @@ fieldset.form-row > legend { padding: 0; margin-bottom: 6px; }
 .office-frame #onlyoffice-editor, .office-frame iframe { width: 100%; height: 100%; border: 0; display: block; }
 .office-frame__error { margin: 16px; }
 .page-office .site-footer { display: none; }
+
+/* Поиск: блок «Видео» (результаты раздела «Видео» на странице поиска портала) */
+.video-hit { display: flex; gap: 16px; align-items: flex-start; }
+.video-hit__thumb { position: relative; flex: 0 0 160px; aspect-ratio: 16 / 9; border-radius: 8px; overflow: hidden; background: var(--border-light); }
+.video-hit__thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.video-hit__duration { position: absolute; right: 6px; bottom: 6px; padding: 1px 6px; border-radius: 4px; font-size: 12px; background: rgba(0, 0, 0, .75); color: #fff; }
+.video-hit__body { min-width: 0; flex: 1; }
+@media (max-width: 560px) {
+    .video-hit__thumb { flex-basis: 112px; }
+}

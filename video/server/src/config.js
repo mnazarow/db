@@ -107,6 +107,11 @@ export const config = {
     name: env('PORTAL_NAME', 'Портал документации'),
     cacheMs: int('PORTAL_SESSION_CACHE_MS', 10000),
     timeoutMs: int('PORTAL_TIMEOUT_MS', 5000),
+    // Справочник сотрудников из портала: раз в столько минут (0 — не синхронизировать; учётная запись
+    // появится при первом входе в раздел).
+    syncMinutes: int('PORTAL_SYNC_MINUTES', 15),
+    // Уведомления о задачах (модерация, обязательные просмотры…) — письмом и в Telegram через портал.
+    relayNotifications: env('PORTAL_NOTIFY', '1') !== '0',
     get enabled() { return !!(this.url && this.secret); },
   },
   version: readVersion(),

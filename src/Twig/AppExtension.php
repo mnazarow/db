@@ -13,6 +13,7 @@ use App\Repository\DocumentApprovalRepository;
 use App\Security\Access;
 use App\Service\FileStorage;
 use App\Service\Validity;
+use App\Service\Video\VideoApi;
 use App\Service\Video\VideoIntegration;
 use Symfony\Bundle\SecurityBundle\Security;
 use Twig\Extension\AbstractExtension;
@@ -43,7 +44,22 @@ final class AppExtension extends AbstractExtension
         private readonly DocumentAcknowledgementRepository $acknowledgements,
         private readonly DocumentApprovalRepository $approvals,
         private readonly VideoIntegration $video,
+        private readonly ?VideoApi $videoApi = null,
     ) {
+    }
+
+    /**
+     * Сколько видео ждут модерации в разделе «Видео» (для маркетологов, модераторов разделов и
+     * администраторов — они модераторы видео). Число общее для всех и кэшируется на минуту.
+     */
+    public function pendingVideoModeration(): int
+    {
+        $user = $this->security->getUser();
+        if (null === $this->videoApi || !$user instanceof User || !$this->video->isEnabled() || !$this->access->isModerator($user)) {
+            return 0;
+        }
+
+        return $this->videoApi->pendingModeration();
     }
 
     /** Сколько материалов ждут модерации в разделах, которыми управляет текущий пользователь (значок в шапке). */
@@ -112,6 +128,7 @@ final class AppExtension extends AbstractExtension
             new TwigFunction('acknowledgements_pending', [$this, 'pendingAcknowledgements']),
             new TwigFunction('approvals_pending', [$this, 'pendingApprovals']),
             new TwigFunction('moderation_pending', [$this, 'pendingModeration']),
+            new TwigFunction('video_moderation_pending', [$this, 'pendingVideoModeration']),
             new TwigFunction('is_contributor', [$this, 'isContributor']),
             new TwigFunction('role_label', [$this, 'roleLabel']),
             new TwigFunction('video_enabled', fn (): bool => $this->video->isEnabled()),

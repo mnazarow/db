@@ -5,6 +5,20 @@ import { templates } from './mailer.js';
 import { config } from '../config.js';
 import { enqueue } from './jobs.js';
 import { getSettingSync } from './settings.js';
+import { shouldRelay, RELAY_CHUNK } from './portal-notify.js';
+
+/**
+ * В составе портала документации уведомления о задачах уходят письмом и в Telegram через портал
+ * (lib/portal-notify.js): задание воркера на каждые RELAY_CHUNK адресатов. Своё письмо и свой бот
+ * видеопортала для них тогда не используются — иначе сотрудник получил бы два письма.
+ */
+async function enqueueRelay(userIds, { type, title, body, link }) {
+  for (let i = 0; i < userIds.length; i += RELAY_CHUNK) {
+    try {
+      await enqueue('portal_notify', { userIds: userIds.slice(i, i + RELAY_CHUNK), type, title, body, link }, { dedupe: false, maxAttempts: 3 });
+    } catch (e) { console.error('portal notify enqueue failed', e.message); }
+  }
+}
 
 /**
  * Настройки уведомлений пользователя (prefs.notifications):
@@ -31,6 +45,10 @@ export async function notify(userId, { type, title, body = '', link = null, imag
   );
   const unread = await one('SELECT count(*)::int AS n FROM notifications WHERE user_id=$1 AND read_at IS NULL', [userId]);
   await toUser(userId, { type: 'notification', notification: row, unread: unread?.n || 0 });
+  if (shouldRelay(type)) {
+    await enqueueRelay([userId], { type, title, body, link });
+    return row;
+  }
   if (email) {
     try { await email(); } catch (e) { console.error('email notify failed', e.message); }
   }
@@ -59,6 +77,10 @@ export async function notifyMany(userIds, { type, title, body = '', link = null,
   const counts = await many(`SELECT user_id, count(*)::int AS n FROM notifications WHERE user_id = ANY($1::uuid[]) AND read_at IS NULL GROUP BY user_id`, [ids]);
   const unread = new Map(counts.map((c) => [c.user_id, c.n]));
   for (const row of rows) await toUser(row.user_id, { type: 'notification', notification: row, unread: unread.get(row.user_id) || 0 });
+  if (shouldRelay(type)) {
+    await enqueueRelay(ids, { type, title, body, link });
+    return rows.length;
+  }
   if (getSettingSync('telegram.enabled')) {
     try {
       const tg = await many('SELECT id FROM users WHERE id = ANY($1::uuid[]) AND telegram_chat_id IS NOT NULL', [ids]);

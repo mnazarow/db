@@ -14,7 +14,8 @@
     "migrate": "node src/cli.js migrate",
     "cli": "node src/cli.js",
     "test": "node --test test/*.test.js",
-    "test:unit": "node --test test/portal.test.js"
+    "test:unit": "node --test test/portal.test.js",
+    "test:portal": "node --test test/portal.test.js test/portal-sync.test.js"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",

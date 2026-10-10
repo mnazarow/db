@@ -57,6 +57,30 @@
             </ul>
         </div>
         {% endif %}
+
+        {% if video_results and video_results.items|length > 0 %}
+        <div class="card table-card">
+            <div class="card__head card__head--padded">
+                <h2 class="h-section">Видео: {{ video_results.total }}</h2>
+                <a class="text-muted" href="{{ video_url('/search?q=' ~ q|url_encode) }}">Все результаты в разделе «Видео» →</a>
+            </div>
+            <ul class="snippet-list video-hits">
+                {% for v in video_results.items %}
+                    <li class="snippet video-hit">
+                        <a class="video-hit__thumb" href="{{ v.url }}" tabindex="-1" aria-hidden="true">
+                            {% if v.thumbnail %}<img src="{{ v.thumbnail }}" alt="" loading="lazy">{% endif %}
+                            {% if v.duration %}<span class="video-hit__duration">{{ v.duration >= 3600 ? '%d:%02d:%02d'|format(v.duration // 3600, v.duration // 60 % 60, v.duration % 60) : '%d:%02d'|format(v.duration // 60, v.duration % 60) }}</span>{% endif %}
+                        </a>
+                        <div class="video-hit__body">
+                            <a class="snippet__title" href="{{ v.url }}">{{ v.title }}</a>
+                            <div class="snippet__section">{{ v.channel }}{% if v.published_at %} · {{ v.published_at|date('d.m.Y') }}{% endif %}</div>
+                            {% if v.snippet %}<p class="snippet__text">{{ v.snippet }}</p>{% endif %}
+                        </div>
+                    </li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
     {% elseif q %}
         <div class="alert alert--info">Введите не менее двух символов.</div>
     {% endif %}

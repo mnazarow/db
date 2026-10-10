@@ -43,6 +43,14 @@ async function uniqueHandle(base) {
 }
 
 const commands = {
+  // Справочник сотрудников из портала документации (раздел «Видео»): учётные записи, блокировки, группы-подразделения.
+  async 'portal-sync'() {
+    const { syncPortalDirectory } = await import('./lib/portal-sync.js');
+    const { portalEnabled } = await import('./lib/portal.js');
+    if (!portalEnabled()) throw new Error('Видеопортал работает без портала документации (не заданы PORTAL_INTERNAL_URL и PORTAL_SHARED_SECRET)');
+    const s = await syncPortalDirectory();
+    console.log(`Сотрудники портала: ${s.active} активных из ${s.users}; заведено ${s.created}, обновлено ${s.updated}, заблокировано ${s.blocked}, разблокировано ${s.unblocked}; групп-подразделений создано ${s.groups}, изменений состава ${s.memberships} (${s.ms} мс)`);
+  },
   async migrate() {
     const n = await runMigrations();
     console.log(n ? `Применено миграций: ${n}` : 'База данных актуальна');
@@ -165,7 +173,8 @@ const commands = {
   add-domain <домен> [--auto-approve]       разрешить домен для регистрации
   list-domains | list-users [--limit N]     списки
   settings get [ключ] | settings set <ключ> <значение>
-  status | reindex | recompute-storage | retry-failed | maintenance`);
+  status | reindex | recompute-storage | retry-failed | maintenance
+  portal-sync                               сотрудники из портала документации (раздел «Видео»)`);
   },
 };
 

@@ -92,24 +92,31 @@
 
 ## Установка и управление
 
-Видеопортал входит в дистрибутив портала документации (каталог `video/`) и включается одной командой на сервере, где установлен портал:
+Видеопортал входит в дистрибутив портала документации (каталог `video/`). Установка портала (`install.sh`) и обновление до 1.8.0 ставят его сами, если серверу хватает ресурсов (не меньше 8 ГБ свободного места); иначе — одной командой на сервере, где установлен портал:
 
 ```bash
 sudo docportal video enable              # PostgreSQL, Node.js, ffmpeg, MediaMTX, службы, правила nginx
 sudo docportal video enable --no-live    # без сервера прямых трансляций
-sudo ./deploy/install.sh --with-video    # сразу при установке портала
+sudo ./deploy/install.sh --no-video      # установка портала без раздела «Видео»
 ```
 
 ```bash
 docportal video status                   # проверки: службы/контейнеры, API, общий вход, ответ через портал
 docportal video logs [api|worker|mediamtx]
 docportal video restart
+docportal video sync-users               # перенести сотрудников портала сейчас (сам видеопортал — раз в 15 минут)
 docportal video disable                  # выключить раздел (видео и база сохраняются)
 ```
 
 Обновление (`docportal update`), резервная копия (`docportal backup`, видеофайлы — с `--with-video-media` или `VIDEO_BACKUP_MEDIA=1`), восстановление и удаление портала обслуживают и раздел «Видео».
 
-Консольные команды видеопортала (`node src/cli.js …` в каталоге `video/server` от имени службы видеопортала): `settings get|set`, `status`, `reindex`, `recompute-storage`, `retry-failed`, `maintenance`. Учётные записи и роли ведутся в портале документации.
+Консольные команды видеопортала (`node src/cli.js …` в каталоге `video/server` от имени службы видеопортала): `settings get|set`, `status`, `reindex`, `recompute-storage`, `retry-failed`, `maintenance`, `portal-sync`. Учётные записи и роли ведутся в портале документации.
+
+### Связь с порталом
+
+- **Сотрудники.** Раз в `PORTAL_SYNC_MINUTES` минут (15; `0` — выключить) видеопортал забирает у портала список сотрудников (`/internal/video/users`): заводит учётные записи всем активным (не только заходившим в раздел — им можно назначить обязательный просмотр), блокирует заблокированных и удалённых в портале (вернувшихся — разблокирует; блокировку модератором видео не трогает) и ведёт группы по подразделениям портала (состав обновляется сам, добавленные вручную участники остаются).
+- **Уведомления о задачах** — видео ждёт модерации, решение модератора, назначен обязательный просмотр и напоминание о сроке, жалоба, просьба о рецензии, сертификат — уходят письмом и в Telegram через портал (`/internal/video/notify`): почта и бот настраиваются один раз, в портале. Колокольчик внутри видеопортала остаётся. `PORTAL_NOTIFY=0` — не пересылать.
+- **Сведения для портала** (`/api/internal/status`, `/moderation`, `/search` — только с общим секретом, снаружи nginx их не пропускает): состояние видеопортала в «Мониторинге» портала, число видео на модерации в шапке портала, видео в поиске портала. Адрес API для портала — `VIDEO_API_URL` в настройках портала (его записывает `docportal video enable`).
 
 ---
 
@@ -146,7 +153,7 @@ docportal video disable                  # выключить раздел (ви
 
 ### Переменные окружения
 
-Основные (см. `deploy/env.example`): `BASE_PATH` (`/video`), `PORTAL_INTERNAL_URL`, `PORTAL_SHARED_SECRET` (общий вход), `BASE_URL`, `SECRET_KEY`, `DATABASE_URL` / `DB_PASSWORD`, `DATA_DIR`, `HOST`, `PORT`, `TRUST_PROXY`, `WORKER_CONCURRENCY`, `FFMPEG_PATH`, `FFMPEG_THREADS`, `MEDIAMTX_API_URL`, `MEDIAMTX_HLS_URL`, `MEDIAMTX_HOOK_SECRET`, `LIVE_RTMP_URL`, `LIVE_SRT_URL`, `LIVE_WHIP_URL`, `LOG_LEVEL`, `NGINX_ACCEL`; с 1.12 — `WORKER_LONG_CONCURRENCY` (параллельные ретрансляции и живые субтитры, 8), `PREVIEW_CONCURRENCY` (кадры предпросмотра в редакторах, 3), `OUTBOUND_ALLOW_LOCAL=1` (разрешить вебхуки на сам сервер). Всё остальное настраивается в панели администратора и хранится в базе.
+Основные (см. `deploy/env.example`): `BASE_PATH` (`/video`), `PORTAL_INTERNAL_URL`, `PORTAL_SHARED_SECRET` (общий вход), `PORTAL_SYNC_MINUTES` (15), `PORTAL_NOTIFY` (1), `BASE_URL`, `SECRET_KEY`, `DATABASE_URL` / `DB_PASSWORD`, `DATA_DIR`, `HOST`, `PORT`, `TRUST_PROXY`, `WORKER_CONCURRENCY`, `FFMPEG_PATH`, `FFMPEG_THREADS`, `MEDIAMTX_API_URL`, `MEDIAMTX_HLS_URL`, `MEDIAMTX_HOOK_SECRET`, `LIVE_RTMP_URL`, `LIVE_SRT_URL`, `LIVE_WHIP_URL`, `LOG_LEVEL`, `NGINX_ACCEL`; с 1.12 — `WORKER_LONG_CONCURRENCY` (параллельные ретрансляции и живые субтитры, 8), `PREVIEW_CONCURRENCY` (кадры предпросмотра в редакторах, 3), `OUTBOUND_ALLOW_LOCAL=1` (разрешить вебхуки на сам сервер). Всё остальное настраивается в панели администратора и хранится в базе.
 
 ---
 

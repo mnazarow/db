@@ -567,8 +567,56 @@ video_portal_env_native() {
     local secret=$1 enabled=${2:-1} env_file="${APP_DIR}/shared/.env.local"
     set_env_var "${env_file}" VIDEO_ENABLED "${enabled}"
     set_env_var "${env_file}" VIDEO_BASE_PATH "$(video_path)"
+    # Внутренний адрес API видеопортала: «Мониторинг», число видео на модерации, поиск видео в портале.
+    set_env_var "${env_file}" VIDEO_API_URL "http://127.0.0.1:$(video_port)"
     [[ -n "${secret}" ]] && set_env_var "${env_file}" VIDEO_SHARED_SECRET "${secret}"
     chown "root:${SERVICE_USER}" "${env_file}" && chmod 640 "${env_file}"
+}
+
+# Консольная команда видеопортала (node src/cli.js …) от имени его службы и с его настройками.
+video_cli() {
+    if [[ "${INSTALL_MODE}" == "docker" ]]; then
+        video_compose exec -T video-api node src/cli.js "$@"
+        return
+    fi
+    local code
+    code=$(video_code_dir)
+    # shellcheck disable=SC2016
+    runuser -u "${VIDEO_USER}" -- env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$(video_data_dir)" \
+        bash -c 'set -a; . "$1"; set +a; cd "$2/server" || exit 1; shift 2; exec node src/cli.js "$@"' _ "${VIDEO_ENV}" "${code}" "$@"
+}
+
+# Сотрудники портала → учётные записи и группы-подразделения видеопортала (иначе тому, кто ещё не
+# заходил в раздел, нельзя назначить обязательный просмотр). Дальше это делает сам видеопортал по расписанию.
+video_portal_sync() {
+    local out rc=0
+    out=$(video_cli portal-sync 2>&1 9>&-) || rc=$?
+    _log_raw "${out}"
+    if [[ ${rc} -eq 0 ]]; then
+        ok "$(printf '%s\n' "${out}" | grep -E '^Сотрудники портала' | tail -n1)"
+        return 0
+    fi
+    warn "Сотрудники портала пока не перенесены в раздел «Видео»: $(printf '%s\n' "${out}" | tail -n1 | cut -c1-300). Видеопортал повторит сам в течение 15 минут; вручную: ${APP_ID} video sync-users"
+    return 1
+}
+
+# Итог синхронизации сотрудников по сведениям API видеопортала (для docportal status).
+video_sync_ok() {
+    local out
+    if [[ "${INSTALL_MODE}" == "docker" ]]; then
+        # shellcheck disable=SC2016
+        out=$(video_compose exec -T video-api sh -c 'curl -fsS -m 10 -H "X-Video-Secret: ${PORTAL_SHARED_SECRET}" http://127.0.0.1:3000/api/internal/status' 2>/dev/null) || return 1
+    else
+        local secret hdr rc=0
+        secret=$(video_env_get "${VIDEO_ENV}" PORTAL_SHARED_SECRET)
+        [[ -n "${secret}" ]] || return 1
+        hdr=$(umask 077; mktemp)
+        printf 'X-Video-Secret: %s\n' "${secret}" > "${hdr}"
+        out=$(curl -fsS -m 10 --noproxy '*' -H "@${hdr}" "http://127.0.0.1:$(video_port)/api/internal/status" 2>/dev/null) || rc=1
+        rm -f "${hdr}"
+        [[ ${rc} -eq 0 ]] || return 1
+    fi
+    grep_has '"lastOkAt":"' <<<"${out}" && grep_has '"lastError":null' <<<"${out}"
 }
 
 video_firewall() {
@@ -666,6 +714,7 @@ video_enable_native() {
     video_portal_env_native "" 1
     ok "Портал: VIDEO_ENABLED=1 — ссылка «Видео» в шапке"
     video_verify_session || true
+    video_portal_sync || true
 }
 
 # --- Docker ------------------------------------------------------------------------------------
@@ -712,6 +761,7 @@ video_enable_docker() {
     host=$(video_public_host); url="$(video_portal_url)$(video_path)"
     grep_has '^# --- Раздел «Видео»' "${file}" || printf '\n# --- Раздел «Видео» (видеопортал по адресу %s/, общий вход с порталом; создано deploy/video.sh) ---\n' "$(video_path)" >> "${file}"
     video_docker_env_set VIDEO_BASE_PATH "$(video_path)"
+    video_docker_env_set VIDEO_API_URL "http://video-api:3000"
     local s
     s=$(video_env_get "${file}" VIDEO_SHARED_SECRET); [[ ${#s} -ge 24 ]] || video_docker_env_set VIDEO_SHARED_SECRET "$(video_secret 48)"
     s=$(video_env_get "${file}" VIDEO_DB_PASSWORD); [[ -n "${s}" ]] || video_docker_env_set VIDEO_DB_PASSWORD "$(video_secret 32)"
@@ -753,6 +803,7 @@ video_enable_docker() {
     done
     ok "Видеопортал отвечает"
     video_verify_session || true
+    video_portal_sync || true
 }
 
 # --- Проверка через портал -------------------------------------------------------------------------
@@ -857,6 +908,8 @@ video_update_prepare() {
     step "Раздел «Видео»: подготовка новой версии"
     if [[ "${INSTALL_MODE}" == "docker" ]]; then
         video_render_docker || warn "Не удалось обновить файлы раздела «Видео» в ${APP_DIR}/docker."
+        # Портал обращается к API видеопортала (мониторинг, модерация, поиск) — адрес в docker/.env.
+        grep_has '^VIDEO_API_URL=' "${APP_DIR}/docker/.env" || video_docker_env_set VIDEO_API_URL "http://video-api:3000"
         if retry 2 30 video_compose_logged build --pull video-api; then
             ok "Образ видеопортала новой версии собран"
         else
@@ -882,6 +935,7 @@ video_update_finish() {
     db=$(video_env_get "${VIDEO_ENV}" DB_PASSWORD)
     if [[ -n "${shared}" && -n "${db}" ]]; then
         video_write_env_native "${code}" "${db}" "${shared}"
+        set_env_var "${APP_DIR}/shared/.env.local" VIDEO_API_URL "http://127.0.0.1:$(video_port)"
     else
         warn "Нет секрета или пароля базы видеопортала — настройки не обновлены (${APP_ID} video enable)."
     fi
@@ -945,6 +999,7 @@ video_doctor() {
         done
         "${check_fn}" "Видео: API отвечает" bash -c "cd '${APP_DIR}/docker' && docker compose exec -T video-api curl -fsS -m 5 http://127.0.0.1:3000/api/health"
         "${check_fn}" "Видео: общий вход — портал принимает секрет видеопортала (web:${VIDEO_DEFAULT_INTERNAL_PORT})" video_session_ok
+        "${check_fn}" "Видео: сотрудники портала синхронизированы (${APP_ID} video sync-users)" video_sync_ok
     else
         "${check_fn}" "Видео: служба ${VIDEO_UNIT_API} работает" systemctl is-active --quiet "${VIDEO_UNIT_API}"
         "${check_fn}" "Видео: служба ${VIDEO_UNIT_WORKER} работает" systemctl is-active --quiet "${VIDEO_UNIT_WORKER}"
@@ -953,6 +1008,7 @@ video_doctor() {
         fi
         "${check_fn}" "Видео: API отвечает (127.0.0.1:$(video_port))" curl -fsS -m 5 --noproxy '*' "http://127.0.0.1:$(video_port)/api/health"
         "${check_fn}" "Видео: общий вход — портал принимает секрет видеопортала (127.0.0.1:$(video_internal_port))" video_session_ok
+        "${check_fn}" "Видео: сотрудники портала синхронизированы (${APP_ID} video sync-users)" video_sync_ok
         "${check_fn}" "Видео: правила nginx подключены" test -f "${VIDEO_NGINX_DIR}/locations.conf"
     fi
     "${check_fn}" "Видео: раздел открывается через портал ($(video_public_url))" video_public_probe
@@ -967,6 +1023,8 @@ video_usage() {
                                         --backup-media — видеофайлы входят в ночные резервные копии.
   status                                Состояние раздела «Видео»
   restart                               Перезапустить видеопортал
+  sync-users                            Перенести сотрудников портала в раздел «Видео» сейчас (учётные записи,
+                                        блокировки, группы-подразделения; сам видеопортал делает это раз в 15 минут)
   logs [api|worker|mediamtx]            Журнал видеопортала
   disable                               Выключить раздел (видео и база сохраняются; включить снова — enable)
 EOF
@@ -1036,6 +1094,13 @@ video_main() {
             _video_check() { local t=$1; shift; if "$@" >/dev/null 2>&1; then ok "${t}"; else error "${t}"; problems=$((problems + 1)); fi; }
             video_doctor _video_check
             [[ ${problems} -eq 0 ]]
+            ;;
+        sync-users)
+            require_root "$@"
+            log_init video-sync "$@"
+            load_conf || die "Портал не установлен: не найден ${CONF_FILE}."
+            video_enabled || die "Раздел «Видео» не включён (${APP_ID} video enable)."
+            video_portal_sync
             ;;
         restart)
             require_root "$@"

@@ -13,6 +13,7 @@ use App\Repository\SectionRepository;
 use App\Security\Access;
 use App\Service\StatsService;
 use App\Service\Text\SearchQuery;
+use App\Service\Video\VideoApi;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -27,6 +28,7 @@ final class HomeController extends AbstractController
         private readonly DocumentAcknowledgementRepository $acknowledgements,
         private readonly Access $access,
         private readonly StatsService $stats,
+        private readonly ?VideoApi $videoApi = null,
     ) {
     }
 
@@ -80,6 +82,7 @@ final class HomeController extends AbstractController
         $section = $sectionId > 0 ? $this->sections->find($sectionId) : null;
         $results = [];
         $content = [];
+        $videos = null;
         $query = SearchQuery::parse($q);
         if (mb_strlen($q) >= 2) {
             $statuses = null !== $user && $this->access->isContributor($user) ? Document::STATUSES : [Document::STATUS_PUBLISHED];
@@ -96,6 +99,11 @@ final class HomeController extends AbstractController
                 }
                 $content[] = ['document' => $hit['document'], 'snippet' => $query->snippet($hit['text'])];
             }
+            // Раздел «Видео»: видео с этими словами в названии, описании, тегах или расшифровке речи (у видео
+            // нет разделов портала — при фильтре по разделу не ищем). Видеопортал не ответил — блока нет.
+            if (null === $section && null !== $this->videoApi) {
+                $videos = $this->videoApi->search($q, null !== $user && $user->isActive(), 6);
+            }
         }
 
         return $this->render('home/search.html.twig', [
@@ -104,6 +112,7 @@ final class HomeController extends AbstractController
             'tree' => $this->sections->findAllTree(),
             'results' => $results,
             'content_results' => $content,
+            'video_results' => $videos,
         ]);
     }
 

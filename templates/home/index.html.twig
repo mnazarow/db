@@ -49,8 +49,9 @@
         </div>
     {% endif %}
 
-    {% if is_moderator and moderation_pending() > 0 %}
-        <div class="alert alert--warning">Материалы на модерации ждут решения: {{ moderation_pending() }}. <a href="{{ path('app_moderation') }}">Открыть «Модерацию» →</a></div>
+    {% set video_pending = is_moderator ? video_moderation_pending() : 0 %}
+    {% if is_moderator and (moderation_pending() > 0 or video_pending > 0) %}
+        <div class="alert alert--warning">{% if moderation_pending() > 0 %}Материалы на модерации ждут решения: {{ moderation_pending() }}.{% endif %}{% if video_pending > 0 %} Видео на модерации: {{ video_pending }}.{% endif %} <a href="{{ path('app_moderation') }}">Открыть «Модерацию» →</a></div>
     {% endif %}
 
     {% if is_assistant|default(false) and drafts|length > 0 %}

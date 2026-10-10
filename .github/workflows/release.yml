@@ -1,0 +1,67 @@
+# Выпуск версии: тег vX.Y.Z (совпадает с файлом VERSION) → архив дистрибутива с готовыми зависимостями
+# портала и раздела «Видео», контрольная сумма и latest.txt — в релиз GitHub. Оттуда новые версии
+# забирает автоматическое обновление серверов: docportal auto-update on --github ВЛАДЕЛЕЦ/РЕПОЗИТОРИЙ.
+# Вручную (Actions → «Выпуск версии» → Run) — архив собирается и сохраняется как артефакт, без релиза.
+name: Выпуск версии
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Архив дистрибутива и релиз
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Тег совпадает с VERSION
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version=$(tr -d ' \n\r' < VERSION)
+          [ "${GITHUB_REF_NAME#v}" = "${version}" ] || { echo "::error::Тег ${GITHUB_REF_NAME} не совпадает с версией в файле VERSION (${version})"; exit 1; }
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: intl, pdo_mysql, zip, gd, ldap, mbstring, xml, curl, fileinfo
+          tools: composer:v2
+          coverage: none
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Зависимости
+        run: composer install --no-interaction --no-progress --prefer-dist
+      - name: Сборка (scripts/build-release.sh)
+        run: ./scripts/build-release.sh
+      - name: Проверка архива
+        run: |
+          cd dist
+          sha256sum -c docportal-*.tar.gz.sha256
+          tar -tzf docportal-*.tar.gz | grep -q '^docportal/vendor/autoload.php$'
+          tar -tzf docportal-*.tar.gz | grep -q '^docportal/video/web/dist/index.html$'
+          tar -tzf docportal-*.tar.gz | grep -q '^docportal/video/server/node_modules/fastify/'
+          cat latest.txt
+      - name: Описание выпуска из CHANGELOG.md
+        run: |
+          version=$(tr -d ' \n\r' < VERSION)
+          awk -v v="## ${version} " 'index($0, v) == 1 {on = 1; next} on && /^## / {exit} on {print}' CHANGELOG.md > dist/notes.md
+          [ -s dist/notes.md ] || echo "Версия ${version}." > dist/notes.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docportal-release
+          path: |
+            dist/docportal-*.tar.gz
+            dist/docportal-*.tar.gz.sha256
+            dist/latest.txt
+          retention-days: 30
+      - name: Релиз GitHub
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(tr -d ' \n\r' < VERSION)
+          gh release create "${GITHUB_REF_NAME}" dist/docportal-*.tar.gz dist/docportal-*.tar.gz.sha256 dist/latest.txt \
+            --title "Портал документации ${version}" --notes-file dist/notes.md --latest

@@ -15,7 +15,8 @@
             </div>
             <div class="hero__actions">
                 {% if video_enabled() %}
-                    <a class="btn btn--ghost" href="{{ video_url(is_moderator ? '/admin/moderation' : '/studio/videos') }}">{{ is_moderator ? 'Видео на модерации' : 'Мои видео' }}</a>
+                    {% set video_pending = is_moderator ? video_moderation_pending() : 0 %}
+                    <a class="btn btn--ghost" href="{{ video_url(is_moderator ? '/admin/moderation' : '/studio/videos') }}">{{ is_moderator ? 'Видео на модерации' : 'Мои видео' }}{% if video_pending > 0 %} <span class="tag">{{ video_pending }}</span>{% endif %}</a>
                 {% endif %}
             </div>
         </div>

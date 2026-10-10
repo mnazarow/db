@@ -1,7 +1,10 @@
 # Проверки портала в GitLab CI: синтаксис конфигурации и шаблонов, соответствие миграций схеме,
-# автотесты PHPUnit на MariaDB, раздел «Видео» (Node.js) и проверка скриптов развёртывания shellcheck.
+# автотесты PHPUnit на MariaDB, раздел «Видео» (Node.js, тесты связки с порталом на PostgreSQL) и проверка
+# скриптов развёртывания shellcheck. По тегу vX.Y.Z — архив дистрибутива (с .sha256 и latest.txt для
+# автоматического обновления серверов: docportal auto-update on --url <адрес, где лежат эти файлы>).
 stages:
   - test
+  - release
 
 phpunit:
   stage: test
@@ -35,10 +38,18 @@ phpunit:
 video:
   stage: test
   image: node:22-bookworm-slim
+  services:
+    - name: postgres:16
+      alias: postgres
+  variables:
+    POSTGRES_USER: corpvideo
+    POSTGRES_PASSWORD: corpvideo
+    POSTGRES_DB: corpvideo_test
+    TEST_DATABASE_URL: postgres://corpvideo:corpvideo@postgres:5432/corpvideo_test
   script:
     - cd video/server && npm ci --no-audit --no-fund
     - for f in $(find src -name '*.js'); do node --check "$f"; done
-    - npm run test:unit
+    - npm run test:portal
     - cd ../web && npm ci --no-audit --no-fund
     - VITE_BASE=/video/ npm run build
 
@@ -48,3 +59,26 @@ shellcheck:
   script:
     - shellcheck -x -S warning -e SC2034 deploy/*.sh docker/entrypoint.sh scripts/*.sh
     - shellcheck -S warning video/deploy/docker/entrypoint.sh
+
+release:
+  stage: release
+  image: php:8.4-cli
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v[0-9]/
+  before_script:
+    - apt-get update -q && apt-get install -y -q --no-install-recommends git unzip rsync curl ca-certificates
+    - curl -sSLf -o /usr/local/bin/install-php-extensions https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions
+    - chmod +x /usr/local/bin/install-php-extensions && install-php-extensions intl pdo_mysql zip gd ldap @composer
+    - curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y -q nodejs
+  script:
+    - '[ "${CI_COMMIT_TAG#v}" = "$(tr -d " \n\r" < VERSION)" ] || { echo "Тег ${CI_COMMIT_TAG} не совпадает с VERSION"; exit 1; }'
+    - composer install --no-interaction --no-progress --prefer-dist
+    - ./scripts/build-release.sh
+    - cd dist && sha256sum -c docportal-*.tar.gz.sha256
+  artifacts:
+    name: "docportal-$CI_COMMIT_TAG"
+    paths:
+      - dist/docportal-*.tar.gz
+      - dist/docportal-*.tar.gz.sha256
+      - dist/latest.txt
+    expire_in: 1 year

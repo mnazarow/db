@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  Сборка дистрибутива портала документации: dist/docportal-<версия>.tar.gz (+ .sha256).
+#  Сборка дистрибутива портала документации: dist/docportal-<версия>.tar.gz (+ .sha256 и latest.txt — номер
+#  версии для автоматического обновления: docportal auto-update on --url | --github).
+#  Работает на Linux и macOS (tar GNU или BSD, sha256sum или shasum, rsync).
 #  В архив входит каталог vendor/, поэтому на сервере Composer и доступ к packagist.org не нужны.
 #  Раздел «Видео» (video/): в архив входят готовые зависимости сервера видеопортала (video/server/node_modules)
 #  и веб-интерфейс, собранный для адреса /video/ (video/web/dist), — на сервере npm не нужен. Для этого на
@@ -27,6 +29,12 @@ if [[ "${WITH_VENDOR}" == "1" && ! -d vendor ]]; then
     exit 1
 fi
 
+command -v rsync >/dev/null 2>&1 || { echo "Нужен rsync (Debian/Ubuntu: apt install rsync; macOS: есть в системе или brew install rsync)." >&2; exit 1; }
+# macOS: tar не должен класть в архив служебные файлы ._* (расширенные атрибуты файлов).
+export COPYFILE_DISABLE=1
+SHA256=(sha256sum)
+command -v sha256sum >/dev/null 2>&1 || SHA256=(shasum -a 256)
+
 mkdir -p "${OUT}"
 STAGE=$(mktemp -d)
 trap 'rm -rf "${STAGE}"' EXIT
@@ -47,7 +55,10 @@ EXCLUDES=(
 [[ "${WITH_VENDOR}" == "0" ]] && EXCLUDES+=(--exclude '/vendor')
 
 # Права в архиве не зависят от umask машины сборки: каталоги 755, файлы 644 (исполняемые — ниже).
-rsync -a --chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r "${EXCLUDES[@]}" ./ "${STAGE}/${NAME}/"
+# (chmod после копирования, а не rsync --chmod: rsync в macOS этот параметр может не поддерживать.)
+rsync -a "${EXCLUDES[@]}" ./ "${STAGE}/${NAME}/"
+find "${STAGE}/${NAME}" -type d -exec chmod 755 {} +
+find "${STAGE}/${NAME}" -type f -exec chmod 644 {} +
 if [[ "${WITH_VENDOR}" == "1" ]]; then
     # В поставку — только зависимости для работы (без PHPUnit и других пакетов разработки).
     if command -v composer >/dev/null 2>&1; then
@@ -60,8 +71,6 @@ fi
 # Раздел «Видео»: зависимости сервера (чистый JavaScript — подходят для любой платформы) и веб-интерфейс,
 # собранный для /video/. Отпечаток исходников (.source) — как в deploy/video.sh (video_web_fingerprint):
 # обновление без готового интерфейса возьмёт его из прежнего релиза, если исходники не менялись.
-SHA256=(sha256sum)
-command -v sha256sum >/dev/null 2>&1 || SHA256=(shasum -a 256)
 if [[ "${VIDEO_BUILD}" == "1" && -f "${STAGE}/${NAME}/video/server/package.json" ]]; then
     command -v npm >/dev/null 2>&1 || { echo "Для сборки раздела «Видео» нужен npm (Node.js 20.12+). Без готового видеопортала: --no-video-build" >&2; exit 1; }
     export NPM_CONFIG_FETCH_RETRIES=5 NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000 NPM_CONFIG_FETCH_TIMEOUT=600000
@@ -89,6 +98,16 @@ chmod +x "${STAGE}/${NAME}/bin/console" "${STAGE}/${NAME}"/deploy/*.sh "${STAGE}
 SUFFIX=""
 [[ "${WITH_VENDOR}" == "0" ]] && SUFFIX="-src"
 ARCHIVE="${OUT}/${NAME}-${VERSION}${SUFFIX}.tar.gz"
-tar -C "${STAGE}" --owner=0 --group=0 --numeric-owner -czf "${ARCHIVE}" "${NAME}"
-(cd "${OUT}" && sha256sum "$(basename "${ARCHIVE}")" > "$(basename "${ARCHIVE}").sha256")
-echo "Готово: ${ARCHIVE} ($(du -h "${ARCHIVE}" | cut -f1))"
+# Владелец файлов в архиве — root (0:0), а не пользователь машины сборки. GNU tar (Linux, gtar из Homebrew)
+# и BSD tar (macOS) задают его разными параметрами.
+if tar --version 2>/dev/null | grep -q 'GNU tar'; then
+    tar -C "${STAGE}" --owner=0 --group=0 --numeric-owner -czf "${ARCHIVE}" "${NAME}"
+elif command -v gtar >/dev/null 2>&1; then
+    gtar -C "${STAGE}" --owner=0 --group=0 --numeric-owner -czf "${ARCHIVE}" "${NAME}"
+else
+    tar -C "${STAGE}" --uid 0 --gid 0 --numeric-owner -czf "${ARCHIVE}" "${NAME}"
+fi
+(cd "${OUT}" && "${SHA256[@]}" "$(basename "${ARCHIVE}")" > "$(basename "${ARCHIVE}").sha256")
+# Номер версии для автоматического обновления (выкладывается рядом с архивом или прикладывается к релизу GitHub).
+[[ "${WITH_VENDOR}" == "1" ]] && printf '%s\n' "${VERSION}" > "${OUT}/latest.txt"
+echo "Готово: ${ARCHIVE} ($(du -h "${ARCHIVE}" | cut -f1)); контрольная сумма — ${ARCHIVE}.sha256$([[ "${WITH_VENDOR}" == "1" ]] && echo "; ${OUT}/latest.txt")"

@@ -9,6 +9,7 @@ use App\Repository\SystemJobRepository;
 use App\Service\FileStorage;
 use App\Service\PortalSettings;
 use App\Service\Preview\DocumentPreviewer;
+use App\Service\Video\VideoApi;
 use Doctrine\DBAL\Connection;
 use Doctrine\Migrations\DependencyFactory;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
@@ -29,6 +30,18 @@ final class HealthReport
     /** Меньше этого свободного места в хранилище — предупреждение. */
     public const LOW_DISK_BYTES = 1024 * 1024 * 1024;
 
+    /** Меньше этого свободного места под видеофайлы — предупреждение. */
+    public const VIDEO_LOW_DISK_BYTES = 5 * 1024 * 1024 * 1024;
+
+    /** Обработчик видео (worker) не брал заданий дольше — предупреждение (обслуживание он запускает раз в минуту). */
+    public const VIDEO_WORKER_STALE_SECONDS = 10 * 60;
+
+    /** Задание ждёт обработки дольше — предупреждение. */
+    public const VIDEO_QUEUE_STALE_SECONDS = 60 * 60;
+
+    /** Последняя успешная синхронизация сотрудников с видеопорталом старше — предупреждение. */
+    public const VIDEO_SYNC_STALE_SECONDS = 2 * 3600;
+
     /** Больше стольких документов ждут индексации — предупреждение. */
     public const INDEX_BACKLOG_WARNING = 200;
 
@@ -48,6 +61,7 @@ final class HealthReport
         private readonly ?string $mailerDsn = null,
         #[Autowire(param: 'kernel.secret')]
         private readonly string $appSecret = '',
+        private readonly ?VideoApi $videoApi = null,
     ) {
     }
 
@@ -69,6 +83,7 @@ final class HealthReport
         }
         $this->checkMail($checks);
         $this->checkSecret($checks);
+        $this->checkVideo($checks, $metrics);
         $checks[] = $this->previewer->isAvailable()
             ? self::check('preview', 'Предпросмотр офисных файлов (LibreOffice)', self::INFO, 'установлен')
             : self::check('preview', 'Предпросмотр офисных файлов (LibreOffice)', self::INFO, 'не установлен — docx/xlsx открываются только скачиванием');
@@ -131,6 +146,11 @@ final class HealthReport
             'approvals_pending' => 'Запросов согласования без решения.',
             'search_index_outdated' => 'Документов, ожидающих индексации содержимого.',
             'ocr_pending' => 'Сканов, ожидающих распознавания.',
+            'video_up' => 'Раздел «Видео»: видеопортал отвечает и его база доступна (1/0).',
+            'video_queue_queued' => 'Раздел «Видео»: заданий обработки в очереди.',
+            'video_queue_failed_24h' => 'Раздел «Видео»: заданий обработки с ошибкой за сутки.',
+            'video_storage_free_bytes' => 'Раздел «Видео»: свободное место под видеофайлы, байт.',
+            'video_moderation_pending' => 'Раздел «Видео»: видео на модерации.',
         ];
         foreach ($report['metrics'] as $name => $value) {
             $metric('docportal_'.$name, $help[$name] ?? $name, 'gauge', [[[], $value]]);
@@ -349,6 +369,78 @@ final class HealthReport
     }
 
     /** @return array{key: string, label: string, status: string, message: string, value: int|float|string|null} */
+    /**
+     * Раздел «Видео»: видеопортал отвечает, обработчик видео работает, есть место под видео, сотрудники
+     * синхронизируются. Неисправность видео — предупреждение, а не критическая ошибка: документы работают.
+     *
+     * @param list<array<string, mixed>> $checks
+     * @param array<string, int|float>   $metrics
+     */
+    private function checkVideo(array &$checks, array &$metrics): void
+    {
+        if (null === $this->videoApi || !$this->videoApi->isAvailable()) {
+            return;
+        }
+        $label = 'Раздел «Видео»';
+        $status = $this->videoApi->status();
+        if (null === $status) {
+            return;
+        }
+        if (isset($status['error']) || 'ok' !== ($status['db'] ?? null)) {
+            $metrics['video_up'] = 0;
+            $checks[] = self::check('video', $label, self::WARNING, isset($status['error'])
+                ? 'видеопортал не отвечает: '.mb_substr((string) $status['error'], 0, 200).' (docportal video status)'
+                : 'база видеопортала недоступна: '.mb_substr((string) ($status['db'] ?? '?'), 0, 200));
+
+            return;
+        }
+        $metrics['video_up'] = 1;
+        $checks[] = self::check('video', $label, self::OK, \sprintf('работает, версия %s', (string) ($status['version'] ?? '?')));
+
+        $worker = \is_array($status['worker'] ?? null) ? $status['worker'] : [];
+        $queue = \is_array($status['queue'] ?? null) ? $status['queue'] : [];
+        $queued = (int) ($queue['queued'] ?? 0);
+        $failed = (int) ($queue['failed24h'] ?? 0);
+        $oldest = isset($queue['oldestQueuedSeconds']) ? (int) $queue['oldestQueuedSeconds'] : null;
+        $metrics['video_queue_queued'] = $queued;
+        $metrics['video_queue_failed_24h'] = $failed;
+        $age = isset($worker['ageSeconds']) ? (int) $worker['ageSeconds'] : null;
+        $queueText = \sprintf('в очереди %d, с ошибкой за сутки %d', $queued, $failed);
+        if (null === $age || $age > self::VIDEO_WORKER_STALE_SECONDS) {
+            $checks[] = self::check('video_worker', 'Обработка видео', self::WARNING,
+                (null === $age ? 'обработчик видео ещё не запускался' : \sprintf('обработчик видео не работает: последнее задание %d мин назад', intdiv($age, 60))).' — '.$queueText.' (docportal video status; docportal video restart)', $age);
+        } elseif (null !== $oldest && $oldest > self::VIDEO_QUEUE_STALE_SECONDS) {
+            $checks[] = self::check('video_worker', 'Обработка видео', self::WARNING, \sprintf('задания ждут обработки дольше %d мин — %s', intdiv($oldest, 60), $queueText), $queued);
+        } else {
+            $checks[] = self::check('video_worker', 'Обработка видео', $failed > 0 ? self::INFO : self::OK, $queueText, $queued);
+        }
+
+        $storage = \is_array($status['storage'] ?? null) ? $status['storage'] : [];
+        if (isset($storage['freeBytes'])) {
+            $free = (int) $storage['freeBytes'];
+            $metrics['video_storage_free_bytes'] = $free;
+            $checks[] = $free < self::VIDEO_LOW_DISK_BYTES
+                ? self::check('video_storage', 'Место под видео', self::WARNING, \sprintf('мало места: свободно %s', FileStorage::humanSize($free)), $free)
+                : self::check('video_storage', 'Место под видео', self::OK, \sprintf('свободно %s', FileStorage::humanSize($free)), $free);
+        }
+        if (isset($status['moderation']['pending'])) {
+            $metrics['video_moderation_pending'] = (int) $status['moderation']['pending'];
+        }
+
+        $sync = \is_array($status['portalSync'] ?? null) ? $status['portalSync'] : [];
+        if (($sync['enabled'] ?? false) === true) {
+            $syncAge = isset($sync['ageSeconds']) ? (int) $sync['ageSeconds'] : null;
+            $error = trim((string) ($sync['lastError'] ?? ''));
+            if (null === $syncAge) {
+                $checks[] = self::check('video_sync', 'Сотрудники в разделе «Видео»', '' !== $error ? self::WARNING : self::INFO, '' !== $error ? 'синхронизация не удалась: '.mb_substr($error, 0, 200) : 'синхронизация ещё не выполнялась');
+            } elseif ('' !== $error || $syncAge > self::VIDEO_SYNC_STALE_SECONDS) {
+                $checks[] = self::check('video_sync', 'Сотрудники в разделе «Видео»', self::WARNING, \sprintf('последняя успешная синхронизация %d мин назад%s', intdiv($syncAge, 60), '' !== $error ? ': '.mb_substr($error, 0, 200) : ''), $syncAge);
+            } else {
+                $checks[] = self::check('video_sync', 'Сотрудники в разделе «Видео»', self::OK, \sprintf('синхронизировано %d мин назад, сотрудников %d', intdiv($syncAge, 60), (int) ($sync['users'] ?? 0)), $syncAge);
+            }
+        }
+    }
+
     private static function check(string $key, string $label, string $status, string $message, int|float|string|null $value = null): array
     {
         return ['key' => $key, 'label' => $label, 'status' => $status, 'message' => $message, 'value' => $value];

@@ -63,9 +63,10 @@
                         <span class="ack-chip__text">на ознакомление</span>
                     </a>
                 {% endif %}
-                {% if moderation_pending() > 0 %}
-                    <a class="ack-chip ack-chip--approval" href="{{ path('app_moderation') }}" title="Материалы помощников маркетолога, которые ждут решения">
-                        <span class="ack-chip__count">{{ moderation_pending() }}</span>
+                {% set moderation_total = moderation_pending() + video_moderation_pending() %}
+                {% if moderation_total > 0 %}
+                    <a class="ack-chip ack-chip--approval" href="{{ path('app_moderation') }}" title="Материалы и видео помощников маркетолога, которые ждут решения">
+                        <span class="ack-chip__count">{{ moderation_total }}</span>
                         <span class="ack-chip__text">на модерации</span>
                     </a>
                 {% endif %}

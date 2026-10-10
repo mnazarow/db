@@ -445,7 +445,7 @@ save_conf() {
                    PHP_FPM_SOCK DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD DB_SERVER_VERSION DB_LOCAL DB_SERVICE \
                    DB_CREATED_BY_INSTALL DB_USER_CREATED_BY_INSTALL SSL_ENABLED INSTALLED_AT BACKUP_REMOTE BACKUP_REMOTE_KEEP \
                    VIDEO_ENABLED VIDEO_LIVE VIDEO_PATH VIDEO_PORT VIDEO_INTERNAL_PORT VIDEO_DB_PORT VIDEO_DATA_DIR VIDEO_BACKUP_MEDIA \
-                   AUTO_UPDATE; do
+                   AUTO_UPDATE UPDATE_URL UPDATE_GITHUB; do
             printf '%s=%q\n' "${var}" "${!var:-}"
         done
     } > "${tmp}"
@@ -510,6 +510,8 @@ php_bin_for() { command -v "php${1}" 2>/dev/null || command -v php 2>/dev/null; 
 
 # version_ge 8.5 8.2 → 0, если первая версия не меньше второй
 version_ge() { [[ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1)" == "$2" ]]; }
+# Версия $1 строго новее $2.
+version_gt() { [[ "$1" != "$2" ]] && version_ge "$1" "$2"; }
 
 php_version_ok() {
     # php_version_ok /usr/bin/php8.3 → 0 если >= PHP_MIN_VERSION
@@ -828,7 +830,8 @@ case "\${cmd}" in
   status              Состояние портала и диагностика
   update [--archive FILE|--source DIR]   Обновление до новой версии без вопросов (без параметров — архив
                       новее установленного ищется в /var/lib/${APP_ID}/updates, текущем каталоге, /root, /tmp)
-  auto-update on [--time ЧЧ:ММ] | off | status | run   Обновление по расписанию из /var/lib/${APP_ID}/updates
+  auto-update on [--time ЧЧ:ММ] [--github ВЛ/РЕПО | --url АДРЕС] | off | status | run
+                                        Обновление по расписанию (каталог /var/lib/${APP_ID}/updates, релизы GitHub, веб-сервер)
   backup              Резервная копия (база данных + файлы; --no-remote — без отправки во внешнее хранилище)
   restore ARCHIVE     Восстановление из резервной копии
   verify-backup [ARCHIVE]   Пробное восстановление копии во временную базу (по умолчанию — последней)
@@ -844,7 +847,7 @@ case "\${cmd}" in
   acknowledge-remind  Напоминания о неподтверждённом ознакомлении (--days=N, --dry-run)
   telegram            Уведомления в Telegram: разбор сообщений бота (--status, --check, --send "текст" --user ЛОГИН)
   video <команда>     Раздел «Видео» (видеопортал по адресу /video, общий вход и роли с порталом):
-                      enable [--no-live] [--backup-media] | status | restart | logs [api|worker|mediamtx] | disable
+                      enable [--no-live] [--backup-media] | status | restart | sync-users | logs [api|worker|mediamtx] | disable
   logs                Журнал приложения
   uninstall           Удаление портала
 HELP
@@ -1485,6 +1488,142 @@ download() {
     rm -f "${tmp}"
     _log_raw "Не удалось скачать ${url}"
     return 1
+}
+
+# --- Источник обновлений: каталог на веб-сервере или релизы GitHub (docportal auto-update on --url | --github) ---
+# Каталог на веб-сервере (UPDATE_URL): файл latest.txt с номером последней версии и рядом архивы
+# docportal-<версия>.tar.gz и .sha256 — так их выкладывает сборка релиза (scripts/build-release.sh, CI).
+# Релизы GitHub (UPDATE_GITHUB=владелец/репозиторий): открытый репозиторий — те же файлы через
+# https://github.com/…/releases/latest/download/; закрытый — через API GitHub с токеном (файл
+# ${CONF_DIR}/update-token, права 600; токену достаточно права чтения содержимого репозитория).
+UPDATE_TOKEN_FILE="${CONF_DIR}/update-token"
+REMOTE_VERSION=""; REMOTE_ARCHIVE_URL=""; REMOTE_SHA_URL=""; REMOTE_ACCEPT=""; REMOTE_ERROR=""
+
+# Описание источника для сообщений.
+update_source_label() {
+    if [[ -n "${UPDATE_GITHUB:-}" ]]; then printf 'релизы GitHub %s%s' "${UPDATE_GITHUB}" "$([[ -s "${UPDATE_TOKEN_FILE}" ]] && echo ' (с токеном)')"
+    elif [[ -n "${UPDATE_URL:-}" ]]; then printf '%s' "${UPDATE_URL}"
+    else printf 'только каталог /var/lib/%s/updates' "${APP_ID}"; fi
+}
+
+# GET с заголовками (токен — через файл заголовков, не в аргументах процесса): update_http_get URL ФАЙЛ [ACCEPT]
+update_http_get() {
+    local url=$1 dest=$2 accept=${3:-} hdr rc=0
+    hdr=$(umask 077; mktemp)
+    [[ -n "${accept}" ]] && printf 'Accept: %s\n' "${accept}" >> "${hdr}"
+    if [[ "${url}" == https://api.github.com/* && -s "${UPDATE_TOKEN_FILE}" ]]; then
+        printf 'Authorization: Bearer %s\n' "$(tr -d ' \r\n' < "${UPDATE_TOKEN_FILE}")" >> "${hdr}"
+        printf 'X-GitHub-Api-Version: 2022-11-28\n' >> "${hdr}"
+    fi
+    curl -fsSL --retry 5 --retry-delay 5 --retry-connrefused --connect-timeout 20 --max-time "${DOWNLOAD_MAX_TIME:-1800}" \
+        -H "@${hdr}" -o "${dest}" "${url}" 2>>"${LOG_FILE:-/dev/null}" 9>&- || rc=$?
+    rm -f "${hdr}"
+    return ${rc}
+}
+
+# Значение из JSON (php или python3): json_value ФАЙЛ ВЫРАЖЕНИЕ — выражение: tag_name | asset:ИМЯ (url вложения)
+json_value() {
+    local file=$1 expr=$2
+    if command -v php >/dev/null 2>&1; then
+        php -r '$d = json_decode((string) file_get_contents($argv[1]), true); $e = $argv[2];
+            if (!is_array($d)) { exit(1); }
+            if (str_starts_with($e, "asset:")) { foreach (($d["assets"] ?? []) as $a) { if (($a["name"] ?? "") === substr($e, 6)) { echo $a["url"] ?? ""; exit(0); } } exit(1); }
+            echo is_scalar($d[$e] ?? null) ? $d[$e] : ""; ' "${file}" "${expr}"
+    elif command -v python3 >/dev/null 2>&1; then
+        python3 -c 'import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8")); e = sys.argv[2]
+if e.startswith("asset:"):
+    m = [a.get("url", "") for a in d.get("assets", []) if a.get("name") == e[6:]]
+    sys.exit(0 if m and print(m[0]) is None else 1)
+v = d.get(e); print(v if isinstance(v, (str, int, float)) else "")' "${file}" "${expr}"
+    else
+        return 2
+    fi
+}
+
+# Последняя версия на источнике: заполняет REMOTE_VERSION, REMOTE_ARCHIVE_URL, REMOTE_SHA_URL, REMOTE_ACCEPT
+# (или REMOTE_ERROR и код 1). Источник не задан — код 2.
+remote_latest() {
+    REMOTE_VERSION=""; REMOTE_ARCHIVE_URL=""; REMOTE_SHA_URL=""; REMOTE_ACCEPT=""; REMOTE_ERROR=""
+    local tmp base v
+    tmp=$(mktemp)
+    if [[ -n "${UPDATE_GITHUB:-}" && -s "${UPDATE_TOKEN_FILE}" ]]; then
+        # Закрытый репозиторий: описание последнего релиза и вложения — через API.
+        if ! update_http_get "https://api.github.com/repos/${UPDATE_GITHUB}/releases/latest" "${tmp}" "application/vnd.github+json"; then
+            REMOTE_ERROR="API GitHub не ответил на запрос последнего релиза ${UPDATE_GITHUB} (нет доступа к api.github.com, неверный токен или в репозитории нет релизов)"
+            rm -f "${tmp}"; return 1
+        fi
+        v=$(json_value "${tmp}" tag_name) || { [[ $? -eq 2 ]] && REMOTE_ERROR="для чтения ответа API GitHub нужен php или python3" || REMOTE_ERROR="непонятный ответ API GitHub"; rm -f "${tmp}"; return 1; }
+        v=${v#v}
+        REMOTE_ARCHIVE_URL=$(json_value "${tmp}" "asset:${APP_ID}-${v}.tar.gz" || true)
+        REMOTE_SHA_URL=$(json_value "${tmp}" "asset:${APP_ID}-${v}.tar.gz.sha256" || true)
+        REMOTE_ACCEPT="application/octet-stream"
+        rm -f "${tmp}"
+        [[ -n "${REMOTE_ARCHIVE_URL}" ]] || { REMOTE_ERROR="в последнем релизе ${UPDATE_GITHUB} (${v}) нет архива ${APP_ID}-${v}.tar.gz"; return 1; }
+    else
+        if [[ -n "${UPDATE_GITHUB:-}" ]]; then base="https://github.com/${UPDATE_GITHUB}/releases/latest/download"
+        elif [[ -n "${UPDATE_URL:-}" ]]; then base="${UPDATE_URL%/}"
+        else rm -f "${tmp}"; return 2; fi
+        if ! update_http_get "${base}/latest.txt" "${tmp}"; then
+            REMOTE_ERROR="не удалось получить ${base}/latest.txt (нет доступа к источнику обновлений$([[ -n "${UPDATE_GITHUB:-}" ]] && echo ', репозиторий закрыт — нужен токен (--token-file), или в релизе нет latest.txt'))"
+            rm -f "${tmp}"; return 1
+        fi
+        v=$(head -n1 "${tmp}" | tr -d ' \r\nv')
+        rm -f "${tmp}"
+        REMOTE_ARCHIVE_URL="${base}/${APP_ID}-${v}.tar.gz"
+        REMOTE_SHA_URL="${REMOTE_ARCHIVE_URL}.sha256"
+    fi
+    [[ "${v}" =~ ^[0-9]+(\.[0-9]+)*$ ]] || { REMOTE_ERROR="источник сообщил непонятный номер версии «${v:0:40}»"; return 1; }
+    REMOTE_VERSION="${v}"
+    return 0
+}
+
+# Скачать новую версию с источника в каталог обновлений (если она новее установленной и обновление на неё не
+# проваливалось): remote_fetch_update КАТАЛОГ УСТАНОВЛЕННАЯ_ВЕРСИЯ [auto]. Код 0 — архив на месте или скачивать
+# нечего; 1 — ошибка (описание в REMOTE_ERROR); 2 — источник не задан.
+remote_fetch_update() {
+    local dir=$1 installed=$2 mode=${3:-} rc=0
+    remote_latest || rc=$?
+    [[ ${rc} -eq 0 ]] || return ${rc}
+    if ! version_gt "${REMOTE_VERSION}" "${installed:-0}"; then
+        info "Источник обновлений ($(update_source_label)): последняя версия ${REMOTE_VERSION} — новее установленной ${installed} нет." >&2
+        return 0
+    fi
+    if [[ "${mode}" == "auto" && -e "${dir}/.failed-${REMOTE_VERSION}" ]]; then
+        info "Версия ${REMOTE_VERSION} не скачивается: обновление на неё уже не удалось (${dir}/.failed-${REMOTE_VERSION})." >&2
+        return 0
+    fi
+    local dest="${dir}/${APP_ID}-${REMOTE_VERSION}.tar.gz" free
+    mkdir -p "${dir}" && chmod 700 "${dir}" 2>/dev/null || true
+    if [[ -s "${dest}" && -s "${dest}.sha256" ]] && (cd "${dir}" && sha256sum -c --status "$(basename "${dest}").sha256" 2>/dev/null); then
+        info "Архив версии ${REMOTE_VERSION} уже скачан: ${dest}" >&2
+        return 0
+    fi
+    free=$(free_space_mb "${dir}" 2>/dev/null || true)
+    if [[ "${free}" =~ ^[0-9]+$ && ${free} -lt 1024 ]]; then
+        REMOTE_ERROR="мало места в ${dir} для архива новой версии (свободно ${free} МБ)"; return 1
+    fi
+    info "Скачивается версия ${REMOTE_VERSION} ($(update_source_label))…" >&2
+    rm -f "${dest}.sha256"
+    if [[ -n "${REMOTE_SHA_URL}" ]] && update_http_get "${REMOTE_SHA_URL}" "${dest}.sha256.part" "${REMOTE_ACCEPT}"; then
+        # В файле контрольной суммы — имя архива, каким его выложили; проверяем по нашему имени.
+        printf '%s  %s\n' "$(awk 'NR==1 {print $1}' "${dest}.sha256.part")" "$(basename "${dest}")" > "${dest}.sha256"
+        rm -f "${dest}.sha256.part"
+    else
+        rm -f "${dest}.sha256.part"
+        warn "У версии ${REMOTE_VERSION} на источнике нет файла контрольной суммы (.sha256) — архив проверяется только распаковкой."
+    fi
+    if ! update_http_get "${REMOTE_ARCHIVE_URL}" "${dest}.part" "${REMOTE_ACCEPT}"; then
+        rm -f "${dest}.part" "${dest}.sha256"
+        REMOTE_ERROR="не удалось скачать архив версии ${REMOTE_VERSION} (${REMOTE_ARCHIVE_URL%%\?*})"; return 1
+    fi
+    if [[ -s "${dest}.sha256" ]] && [[ "$(sha256sum "${dest}.part" | awk '{print $1}')" != "$(awk 'NR==1 {print $1}' "${dest}.sha256")" ]]; then
+        rm -f "${dest}.part" "${dest}.sha256"
+        REMOTE_ERROR="скачанный архив версии ${REMOTE_VERSION} не совпал с контрольной суммой (загрузка повреждена) — повтор в следующий раз"; return 1
+    fi
+    chmod 600 "${dest}.part" && mv -f "${dest}.part" "${dest}"
+    ok "Скачана версия ${REMOTE_VERSION}: ${dest} ($(human_size "$(stat -c %s "${dest}")"))" >&2
+    return 0
 }
 
 # Доступен ли узел по TCP (без HTTP-запроса): net_reachable ХОСТ [ПОРТ=443]

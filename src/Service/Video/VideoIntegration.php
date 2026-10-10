@@ -51,6 +51,12 @@ final class VideoIntegration
         return $this->basePath.('/' === $path[0] ? $path : '/'.$path);
     }
 
+    /** Общий секрет для подписи запросов портала к видеопорталу (заголовок X-Video-Secret). */
+    public function sharedSecret(): string
+    {
+        return $this->sharedSecret;
+    }
+
     /** Проверка подписи запроса видеопортала: секрет сравнивается за постоянное время. */
     public function verifySecret(?string $provided): bool
     {

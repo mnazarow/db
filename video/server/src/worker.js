@@ -26,6 +26,7 @@ import { deliverWebhook } from './lib/webhooks.js';
 import { sendXapi } from './lib/xapi.js';
 import { telegramNotify, pollUpdates as telegramPoll } from './lib/telegram.js';
 import { notify } from './lib/notify.js';
+import { relayToPortal } from './lib/portal-notify.js';
 import { publish } from './db.js';
 
 assertConfig();
@@ -41,6 +42,8 @@ const HANDLERS = {
   import_url: runImportUrl,
   ai_enrich: runAiEnrich,
   telegram: async (job) => ({ sent: await telegramNotify(job.payload.userId, job.payload) }),
+  // 1.13 — уведомления о задачах письмом и в Telegram через портал документации (раздел «Видео»)
+  portal_notify: async (job) => ({ sent: await relayToPortal(job.payload || {}) }),
   rag_push: runRagPush,
   recompute_storage: async () => ({ videos: await recomputeStorage() }),
   // 1.3

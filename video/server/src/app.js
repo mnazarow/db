@@ -13,6 +13,7 @@ import authPlugin from './plugins/auth.js';
 import { HttpError, escapeHtml, userOrIpKey } from './lib/util.js';
 import { publicSettings } from './lib/settings.js';
 import { one, many } from './db.js';
+import internalRoutes from './routes/internal.js';
 import authRoutes from './routes/auth.js';
 import videoRoutes from './routes/videos.js';
 import uploadRoutes from './routes/uploads.js';
@@ -74,7 +75,7 @@ export async function buildApp({ logger = true } = {}) {
     allowList: (req) => {
       // Только путь: раньше учитывалась и query-строка, и любой запрос с «/hls/» в параметрах обходил лимит
       const p = (req.url || '').split('?')[0];
-      return !p.startsWith('/api/') || p.startsWith('/api/media/auth') || p.includes('/hls/');
+      return !p.startsWith('/api/') || p.startsWith('/api/media/auth') || p.startsWith('/api/internal/') || p.includes('/hls/');
     },
     // Считаем по сотруднику, если он вошёл, иначе по адресу. Раньше — только по адресу: сотрудники
     // за одним NAT или прокси делили общий предел (чат эфира, комментарии, запись на вебинар)
@@ -89,7 +90,7 @@ export async function buildApp({ logger = true } = {}) {
   // Маршруты панели администратора не трогаем — иначе выключенное нельзя было бы включить обратно.
   app.addHook('onRequest', async (req, reply) => {
     const p = (req.url || '').split('?')[0];
-    if (!p.startsWith('/api/') || p.startsWith('/api/admin/')) return;
+    if (!p.startsWith('/api/') || p.startsWith('/api/admin/') || p.startsWith('/api/internal/')) return;
     const key = featureForPath(p);
     if (key && req.settings && req.settings[key] === false) {
       reply.code(404).send({ error: 'Раздел отключён администратором портала', feature: key });
@@ -140,6 +141,7 @@ export async function buildApp({ logger = true } = {}) {
   });
 
   // API
+  await app.register(internalRoutes, { prefix: '/api/internal' });
   await app.register(authRoutes, { prefix: '/api/auth' });
   await app.register(videoRoutes, { prefix: '/api/videos' });
   await app.register(uploadRoutes, { prefix: '/api/uploads' });

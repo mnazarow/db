@@ -23,7 +23,7 @@ final class GuestAccessSubscriber implements EventSubscriberInterface
     use TargetPathTrait;
 
     /** Маршруты, доступные всегда: вход (в том числе через SSO и второй фактор), выход и проверка состояния. */
-    private const PUBLIC_ROUTES = ['app_login', 'app_logout', 'app_health', 'app_health_details', 'app_metrics', 'app_login_sso', 'app_login_sso_callback', 'app_2fa_verify', 'onlyoffice_file', 'onlyoffice_callback', 'app_verify_form', 'app_verify', 'video_session'];
+    private const PUBLIC_ROUTES = ['app_login', 'app_logout', 'app_health', 'app_health_details', 'app_metrics', 'app_login_sso', 'app_login_sso_callback', 'app_2fa_verify', 'onlyoffice_file', 'onlyoffice_callback', 'app_verify_form', 'app_verify', 'video_session', 'video_users', 'video_notify'];
 
     public function __construct(
         private readonly Security $security,

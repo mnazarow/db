@@ -194,6 +194,7 @@ export async function upsertPortalUser(pu) {
   const name = String(pu.displayName || pu.username || 'Сотрудник').trim().slice(0, 80) || 'Сотрудник';
   const email = String(pu.email || '').trim().toLowerCase();
   const realEmail = EMAIL_RE.test(email) && !isPlaceholderEmail(email) ? email : null;
+  const department = String(pu.department || '').trim().replace(/\s+/g, ' ').slice(0, 200) || null;
 
   let u = await one('SELECT * FROM users WHERE portal_user_id = $1', [pid]);
   if (!u && realEmail) {
@@ -207,10 +208,10 @@ export async function upsertPortalUser(pu) {
     if (await one('SELECT 1 FROM users WHERE email = $1', [mail])) mail = placeholderEmail(pu.username, pid, 1);
     const handle = await uniqueHandle(handleBase(pu.username));
     u = await one(
-      `INSERT INTO users(email, handle, display_name, password_hash, role, status, auth_provider, email_verified_at, approved_at, can_upload, can_stream, portal_user_id)
-       VALUES ($1, $2, $3, NULL, $4, 'active', 'portal', now(), now(), $5, $6, $7)
+      `INSERT INTO users(email, handle, display_name, password_hash, role, status, auth_provider, email_verified_at, approved_at, can_upload, can_stream, portal_user_id, department)
+       VALUES ($1, $2, $3, NULL, $4, 'active', 'portal', now(), now(), $5, $6, $7, $8)
        ON CONFLICT (portal_user_id) DO NOTHING RETURNING *`,
-      [mail, handle, name, rights.role, rights.can_upload, rights.can_stream, pid],
+      [mail, handle, name, rights.role, rights.can_upload, rights.can_stream, pid, department],
     ) || await one('SELECT * FROM users WHERE portal_user_id = $1', [pid]);
     if (!u) throw new Error('не удалось завести учётную запись видеопортала');
     return { id: u.id, created: true, changed: true };
@@ -223,14 +224,57 @@ export async function upsertPortalUser(pu) {
   if (u.role !== rights.role) add('role', rights.role);
   if (u.can_upload !== rights.can_upload) add('can_upload', rights.can_upload);
   if (u.can_stream !== rights.can_stream) add('can_stream', rights.can_stream);
+  if ((u.department ?? null) !== department) add('department', department);
   // Блокировку в видеопортале (например, за комментарии) портал не снимает; заявки и отказы прежней
-  // регистрации не нужны — сотрудник уже вошёл в портал.
-  if (u.status !== 'active' && u.status !== 'blocked') { add('status', 'active'); sets.push('approved_at = COALESCE(approved_at, now())'); }
+  // регистрации не нужны — сотрудник уже вошёл в портал. Заблокированного порталом (уволен, отключён —
+  // см. portal-sync.js) портал и разблокирует: раз он сообщает о сотруднике, тот снова активен.
+  let unblocked = false;
+  if (u.status === 'blocked' && u.portal_blocked) { add('status', 'active'); sets.push('portal_blocked = false'); unblocked = true; }
+  else if (u.status !== 'active' && u.status !== 'blocked') { add('status', 'active'); sets.push('approved_at = COALESCE(approved_at, now())'); }
   if (u.deleted_at) sets.push('deleted_at = NULL');
   if (u.auth_provider !== 'portal') add('auth_provider', 'portal');
   if (realEmail && String(u.email).toLowerCase() !== realEmail && !(await one('SELECT 1 FROM users WHERE email = $1 AND id <> $2', [realEmail, u.id]))) add('email', realEmail);
-  if (!sets.length) return { id: u.id, created: false, changed: false };
+  if (!sets.length) return { id: u.id, created: false, changed: false, unblocked: false };
   sets.push('updated_at = now()');
   await query(`UPDATE users SET ${sets.join(', ')} WHERE id = $1`, params);
-  return { id: u.id, created: false, changed: true };
+  return { id: u.id, created: false, changed: true, unblocked };
+}
+
+// --- Запросы видеопортала к порталу (справочник сотрудников, уведомления) -----------------------------
+
+/**
+ * Запрос к внутреннему адресу портала (PORTAL_INTERNAL_URL + путь) с общим секретом: JSON туда и обратно.
+ * Возвращает { status, data }; сетевые ошибки и таймаут — исключение.
+ */
+export function portalApi(method, pathname, body = null, { timeoutMs = 30000, maxBytes = 64 * 1024 * 1024 } = {}) {
+  const base = new URL(config.portal.url);
+  const target = new URL(`${base.pathname.replace(/\/+$/, '')}${pathname}`, base);
+  const lib = target.protocol === 'https:' ? https : http;
+  const payload = body === null ? null : Buffer.from(JSON.stringify(body));
+  const headers = { accept: 'application/json', 'x-video-secret': config.portal.secret, 'user-agent': 'CorpVideo' };
+  if (config.portal.host) headers.host = config.portal.host;
+  if (payload) { headers['content-type'] = 'application/json'; headers['content-length'] = String(payload.length); }
+  return new Promise((resolve, reject) => {
+    const req = lib.request(target, { method, headers, timeout: timeoutMs }, (res) => {
+      const chunks = [];
+      let size = 0;
+      res.on('data', (c) => { size += c.length; if (size > maxBytes) { req.destroy(new Error('слишком большой ответ портала')); return; } chunks.push(c); });
+      res.on('end', () => {
+        let data = null;
+        try { data = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { /* не JSON */ }
+        resolve({ status: res.statusCode, data });
+      });
+      res.on('error', reject);
+    });
+    req.on('timeout', () => req.destroy(new Error(`портал не ответил за ${Math.round(timeoutMs / 1000)} с`)));
+    req.on('error', reject);
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+/** Понятное описание отказа портала. */
+export function portalError(status, data) {
+  if (status === 404) return 'портал не принял запрос (404): проверьте, что раздел «Видео» включён в портале (VIDEO_ENABLED=1), портал обновлён до 1.8.0+ и секреты PORTAL_SHARED_SECRET / VIDEO_SHARED_SECRET совпадают';
+  return `портал ответил ${status}${data?.error ? `: ${data.error}` : ''}`;
 }

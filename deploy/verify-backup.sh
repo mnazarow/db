@@ -166,6 +166,37 @@ gzip -t "${WORK}/${ROOT}/db.sql.gz" 2>>"${LOG_FILE}" || fail "выгрузка �
 zgrep -q -m1 'CREATE TABLE' "${WORK}/${ROOT}/db.sql.gz" || fail "в выгрузке базы нет таблиц"
 note "архив цел (${files_in_archive} файлов)"
 
+# --- 1a. Раздел «Видео»: выгрузка базы видеопортала ------------------------------------------------------------
+# Формат pg_dump -Fc проверяется оглавлением (pg_restore --list): читается ли выгрузка целиком и есть ли в ней
+# таблицы видеопортала. Временную базу PostgreSQL для неё не создаём — оглавление читается без сервера.
+if grep -qxF "${ROOT}/video/db.dump" "${WORK}/list.txt"; then
+    step "Выгрузка базы раздела «Видео»"
+    tar -xzf "${ARCHIVE}" -C "${WORK}" "${ROOT}/video/db.dump" 2>>"${LOG_FILE}" || fail "не удалось извлечь выгрузку базы видеопортала"
+    vdump="${WORK}/${ROOT}/video/db.dump"
+    [[ "$(head -c 5 "${vdump}" 2>/dev/null)" == "PGDMP" ]] || fail "выгрузка базы видеопортала (video/db.dump) повреждена: это не выгрузка pg_dump"
+    vtoc=""
+    if [[ "${INSTALL_MODE}" == "docker" ]] && (cd "${APP_DIR}/docker" 2>/dev/null && docker compose ps --status running video-db 2>/dev/null | grep -q video-db); then
+        vtoc=$(cd "${APP_DIR}/docker" && docker compose exec -T video-db pg_restore --list < "${vdump}" 2>>"${LOG_FILE}") || fail "выгрузка базы видеопортала не читается (pg_restore --list) — подробности в ${LOG_FILE}"
+    elif command -v pg_restore >/dev/null 2>&1; then
+        vtoc=$(pg_restore --list "${vdump}" 2>>"${LOG_FILE}") || fail "выгрузка базы видеопортала не читается (pg_restore --list) — подробности в ${LOG_FILE}"
+    fi
+    if [[ -n "${vtoc}" ]]; then
+        vmissing=()
+        for t in users videos schema_migrations; do grep -qE "TABLE public ${t} " <<<"${vtoc}" || vmissing+=("${t}"); done
+        [[ ${#vmissing[@]} -eq 0 ]] || fail "в выгрузке базы видеопортала нет таблиц: ${vmissing[*]}"
+        ok "Выгрузка базы видеопортала читается: $(grep -c ' TABLE DATA ' <<<"${vtoc}") таблиц с данными, $(human_size "$(stat -c %s "${vdump}")")"
+        note "база видеопортала читается"
+    else
+        soft "pg_restore не найден — выгрузка базы видеопортала проверена только по заголовку"
+    fi
+    if grep -q "^${ROOT}/video/media/" "${WORK}/list.txt"; then
+        ok "Видеофайлы в копии: $(grep -c "^${ROOT}/video/media/.*[^/]$" "${WORK}/list.txt" || true)"
+    fi
+    rm -f "${vdump}"
+elif [[ "${VIDEO_ENABLED:-0}" == "1" ]]; then
+    soft "раздел «Видео» включён, а в копии нет выгрузки его базы (video/db.dump) — копия сделана до его включения или скриптом старой версии"
+fi
+
 # --- 2. Пробное восстановление базы ---------------------------------------------------------------------------
 step "Пробное восстановление базы данных"
 if ! vdb_ready; then

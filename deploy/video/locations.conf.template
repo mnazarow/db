@@ -39,6 +39,11 @@ location ^~ ${VIDEO_PATH}/ {
     add_header X-Content-Type-Options nosniff always;
     add_header Referrer-Policy strict-origin-when-cross-origin always;
 
+    # Сведения для портала (состояние, модерация, поиск) — только по внутреннему адресу API, не через сайт.
+    location ^~ ${VIDEO_PATH}/api/internal/ {
+        return 404;
+    }
+
     # Медиафайлы (HLS-сегменты, миниатюры, субтитры): права проверяет API, файлы отдаёт nginx.
     location ^~ ${VIDEO_PATH}/media/ {
         auth_request /__docportal_video_media_auth;

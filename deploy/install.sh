@@ -10,8 +10,8 @@
 #    sudo ./deploy/install.sh --domain docs.example.ru --ssl-email admin@example.ru
 #    sudo ./deploy/install.sh --domain docs.example.ru --ldap-host dc1.example.local --ldap-base-dn "DC=example,DC=local" --ldap-upn-suffix example.local
 #    sudo ./deploy/install.sh --mode docker --port 8080      # установка в Docker
-#    sudo ./deploy/install.sh --archive docportal-1.8.0.tar.gz --yes
-#    sudo ./deploy/install.sh --domain docs.example.ru --with-video   # вместе с разделом «Видео» (/video)
+#    sudo ./deploy/install.sh --archive docportal-1.8.0.tar.gz
+#    sudo ./deploy/install.sh --domain docs.example.ru --no-video     # без раздела «Видео» (/video)
 #
 #  Полный список параметров: ./deploy/install.sh --help
 # =============================================================================
@@ -91,6 +91,13 @@ Docker:
   --with-extras             И то, и другое.
   --no-swap                 Не создавать файл подкачки на сервере с малой памятью (по умолчанию создаётся
                             /${APP_ID}.swap, если памяти вместе с подкачкой меньше 2 ГБ).
+
+Автоматическое обновление (по умолчанию включено: ежедневно в 04:30 портал обновляется, если в каталоге
+/var/lib/${APP_ID}/updates или в источнике ниже появилась версия новее; управление — ${APP_ID} auto-update):
+  --update-github ВЛ/РЕПО   Скачивать новые версии из релизов GitHub.
+  --update-token-file ФАЙЛ  Токен GitHub для закрытого репозитория.
+  --update-url АДРЕС        Скачивать из каталога на веб-сервере (АДРЕС/latest.txt и архивы).
+  --no-auto-update          Не включать автоматическое обновление.
   --confirm                 Спросить подтверждение перед началом (по умолчанию установка идёт без вопросов).
   --yes, -y                 Не задавать вопросов (так и по умолчанию; оставлено для совместимости).
   --verbose                 Подробный вывод.
@@ -150,6 +157,12 @@ VIDEO_REASON=""
 # --no-video — явный отказ: обновления не будут включать раздел «Видео» сами (VIDEO_ENABLED=0).
 VIDEO_OPT_OUT="0"
 NO_SWAP="0"
+# Автоматическое обновление по расписанию (docportal auto-update): включается при установке; источник новых
+# версий — каталог /var/lib/docportal/updates и, если задан, релизы GitHub или каталог на веб-сервере.
+AUTO_UPDATE_ON="1"
+AUTO_UPDATE_GITHUB=""
+AUTO_UPDATE_URL=""
+AUTO_UPDATE_TOKEN_FILE=""
 # Установка полностью автоматическая: вопрос «Начать установку?» — только с --confirm.
 ASSUME_YES="1"
 VERBOSE="0"
@@ -206,6 +219,10 @@ parse_args() {
             --with-video) WITH_VIDEO="1"; shift ;;
             --no-video) WITH_VIDEO="0"; VIDEO_OPT_OUT="1"; shift ;;
             --no-swap) NO_SWAP="1"; shift ;;
+            --no-auto-update) AUTO_UPDATE_ON="0"; shift ;;
+            --update-github) AUTO_UPDATE_GITHUB="${2:-}"; shift 2 ;;
+            --update-url) AUTO_UPDATE_URL="${2:-}"; shift 2 ;;
+            --update-token-file) AUTO_UPDATE_TOKEN_FILE="${2:-}"; shift 2 ;;
             --confirm) ASSUME_YES="0"; shift ;;
             --video-no-live) VIDEO_LIVE="0"; shift ;;
             --video-backup-media) VIDEO_BACKUP_MEDIA="1"; shift ;;
@@ -226,6 +243,14 @@ validate_args() {
     [[ "${DB_USER}" =~ ^[a-zA-Z0-9_]{1,32}$ ]] || die "--db-user: допустимы латинские буквы, цифры и подчёркивание (до 32 символов)."
     if [[ -n "${ADMIN_PASSWORD}" && ${#ADMIN_PASSWORD} -lt 8 ]]; then die "--admin-password: не менее 8 символов."; fi
     if [[ -n "${SSL_EMAIL}" && -z "${DOMAIN}" ]]; then die "--ssl-email требует --domain."; fi
+    if [[ -n "${AUTO_UPDATE_GITHUB}" && ! "${AUTO_UPDATE_GITHUB}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then die "--update-github: укажите репозиторий как ВЛАДЕЛЕЦ/РЕПОЗИТОРИЙ."; fi
+    if [[ -n "${AUTO_UPDATE_URL}" && ! "${AUTO_UPDATE_URL}" =~ ^https?://[^[:space:]]+$ ]]; then die "--update-url: укажите адрес каталога обновлений (http:// или https://)."; fi
+    if [[ -n "${AUTO_UPDATE_GITHUB}" && -n "${AUTO_UPDATE_URL}" ]]; then die "Укажите один источник обновлений: --update-github или --update-url."; fi
+    if [[ -n "${AUTO_UPDATE_TOKEN_FILE}" ]]; then
+        [[ -n "${AUTO_UPDATE_GITHUB}" ]] || die "--update-token-file нужен только вместе с --update-github."
+        [[ -s "${AUTO_UPDATE_TOKEN_FILE}" ]] || die "--update-token-file: файл с токеном не найден или пуст: ${AUTO_UPDATE_TOKEN_FILE}"
+        AUTO_UPDATE_TOKEN_FILE="$(cd "$(dirname "${AUTO_UPDATE_TOKEN_FILE}")" && pwd)/$(basename "${AUTO_UPDATE_TOKEN_FILE}")"
+    fi
     if [[ -n "${DOMAIN}" && ! "${DOMAIN}" =~ ^[a-zA-Z0-9.-]+$ ]]; then die "--domain: недопустимое доменное имя «${DOMAIN}»."; fi
     [[ "${APP_DIR}" == /* ]] || die "--dir: укажите абсолютный путь."
     if [[ -n "${LDAP_HOST}" ]]; then
@@ -1273,12 +1298,18 @@ EOF
     printf ' Параметры:          %s\n' "${CONF_FILE}"
     printf ' Учётные данные:     %s (удалите после первого входа)\n' "${CONF_DIR}/admin-credentials.txt"
     printf ' Журнал установки:   %s\n' "${LOG_FILE}"
-    printf ' Управление:         %s status | update | backup | restore | maintenance | video | console | logs | uninstall\n' "${APP_ID}"
+    printf ' Управление:         %s status | update | auto-update | backup | restore | maintenance | video | console | logs | uninstall\n' "${APP_ID}"
     case "${VIDEO_RESULT:-}" in
         ok) printf ' Раздел «Видео»:     %s/video/ (вход — через портал)\n' "${url}" ;;
         error) printf ' Раздел «Видео»:     %sне включён%s — см. предупреждение выше; повторить: %s video enable\n' "${C_YELLOW}" "${C_RESET}" "${APP_ID}" ;;
         *) [[ -n "${VIDEO_REASON}" ]] && printf ' Раздел «Видео»:     не установлен — %s; включить: %s video enable\n' "${VIDEO_REASON}" "${APP_ID}" ;;
     esac
+    if [[ "${AUTO_UPDATE_RESULT:-}" == "ok" ]]; then
+        local au_src="архив в /var/lib/${APP_ID}/updates"
+        [[ -n "${AUTO_UPDATE_GITHUB}" ]] && au_src="релизы GitHub ${AUTO_UPDATE_GITHUB}"
+        [[ -n "${AUTO_UPDATE_URL}" ]] && au_src="${AUTO_UPDATE_URL}"
+        printf ' Автообновление:     ежедневно в 04:30, источник — %s (%s auto-update status)\n' "${au_src}" "${APP_ID}"
+    fi
     printf '%s\n' "=============================================================="
     printf ' Дальше: войдите под администратором, смените пароль (шапка → имя пользователя),\n'
     printf ' создайте разделы и назначьте модераторов в «Панель администратора → Разделы и модераторы».\n'
@@ -1342,6 +1373,20 @@ main() {
         done
         if [[ "${VIDEO_RESULT}" == "error" ]]; then
             warn "Портал установлен, но раздел «Видео» включить не удалось (журнал — ${LOG_DIR}/video-enable-*.log). Исправьте причину и выполните: ${APP_ID} video enable"
+        fi
+    fi
+    # Автоматическое обновление по расписанию: ошибка здесь — предупреждение (портал уже установлен).
+    AUTO_UPDATE_RESULT=""
+    if [[ "${AUTO_UPDATE_ON}" == "1" ]]; then
+        local au_args=(on)
+        [[ -n "${AUTO_UPDATE_GITHUB}" ]] && au_args+=(--github "${AUTO_UPDATE_GITHUB}")
+        [[ -n "${AUTO_UPDATE_URL}" ]] && au_args+=(--url "${AUTO_UPDATE_URL}")
+        [[ -n "${AUTO_UPDATE_TOKEN_FILE}" ]] && au_args+=(--token-file "${AUTO_UPDATE_TOKEN_FILE}")
+        if bash "${SCRIPT_DIR}/auto-update.sh" "${au_args[@]}" >>"${LOG_FILE}" 2>&1; then
+            AUTO_UPDATE_RESULT="ok"
+        else
+            AUTO_UPDATE_RESULT="error"
+            warn "Автоматическое обновление не включено (см. ${LOG_FILE}). Включить: ${APP_ID} auto-update on"
         fi
     fi
     [[ -n "${CREATED_TMP}" ]] && rm -rf "${CREATED_TMP}" || true

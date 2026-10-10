@@ -1,6 +1,8 @@
-# Раздел «Видео» портала документации: проверка сессии портала для видеопортала.
+# Раздел «Видео» портала документации: внутренние адреса портала для видеопортала.
 # Отдельный сервер только на ${INTERNAL_LISTEN} (снаружи недоступен): видеопортал передаёт сюда cookie
-# браузера и общий секрет (VIDEO_SHARED_SECRET), портал отвечает, кто вошёл. Создаётся deploy/video.sh.
+# браузера и общий секрет (VIDEO_SHARED_SECRET), портал отвечает, кто вошёл (/internal/video/session);
+# здесь же — справочник сотрудников (/internal/video/users) и уведомления письмом и в Telegram
+# (/internal/video/notify). Создаётся deploy/video.sh.
 server {
     listen ${INTERNAL_LISTEN};
     server_name _;
@@ -12,14 +14,16 @@ server {
     if ($http_x_forwarded_proto = "https") {
         set $docportal_video_https on;
     }
-    location = /internal/video/session {
+    location ^~ /internal/video/ {
+        client_max_body_size 1m;
         fastcgi_pass ${FASTCGI_PASS};
         include fastcgi_params;
         fastcgi_param SCRIPT_FILENAME ${SCRIPT_ROOT}/index.php;
         fastcgi_param SCRIPT_NAME /index.php;
         fastcgi_param DOCUMENT_ROOT ${SCRIPT_ROOT};
         fastcgi_param HTTPS $docportal_video_https;
-        fastcgi_read_timeout 30;
+        # Уведомление отправляет письма сразу (до 50 адресатов за запрос).
+        fastcgi_read_timeout 150;
     }
     location / {
         return 404;

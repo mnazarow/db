@@ -123,9 +123,6 @@ update_exit() {
 }
 trap update_exit EXIT
 
-# version_gt A B — версия A новее B.
-version_gt() { [[ "$1" != "$2" ]] && version_ge "$1" "$2"; }
-
 # Архив новее установленной версии: docportal-<версия>.tar.gz (при равных версиях полный архив важнее -src).
 find_update_archive() {
     local dirs=("${UPDATES_DIR}") d f v best="" best_v="${APP_VERSION:-0}"
@@ -157,6 +154,17 @@ if [[ -z "${ARCHIVE}" && -z "${SOURCE_DIR}" ]]; then
     # Запущена установленная копия (docportal update) или режим расписания — ищем архив новой версии.
     if [[ "${AUTO_MODE}" == "1" || "${DEFAULT_SOURCE}" == "${APP_DIR}" || "${DEFAULT_SOURCE}" == "${APP_DIR}"/* ]]; then
         mkdir -p "${UPDATES_DIR}" && chmod 700 "${UPDATES_DIR}" 2>/dev/null || true
+        # Источник обновлений (docportal auto-update on --url | --github): новая версия сначала скачивается
+        # в каталог обновлений — дальше всё как с архивом, положенным туда вручную.
+        REMOTE_FAILED=""
+        if [[ -n "${UPDATE_URL:-}${UPDATE_GITHUB:-}" ]]; then
+            remote_rc=0
+            remote_fetch_update "${UPDATES_DIR}" "${APP_VERSION}" "$([[ "${AUTO_MODE}" == "1" ]] && echo auto)" || remote_rc=$?
+            if [[ ${remote_rc} -eq 1 ]]; then
+                REMOTE_FAILED="${REMOTE_ERROR}"
+                warn "Источник обновлений ($(update_source_label)): ${REMOTE_ERROR}"
+            fi
+        fi
         if ! ARCHIVE=$(find_update_archive) || [[ -z "${ARCHIVE}" ]]; then
             ARCHIVE=""
             if [[ "${AUTO_MODE}" == "1" ]]; then
@@ -168,7 +176,9 @@ if [[ -z "${ARCHIVE}" && -z "${SOURCE_DIR}" ]]; then
                     [[ -e "${marker}" ]] || continue
                     if version_gt "${marker##*/.failed-}" "${APP_VERSION:-0}"; then skipped+="${skipped:+, }${marker##*/.failed-}"; fi
                 done
-                if [[ -n "${skipped}" ]]; then
+                if [[ -n "${REMOTE_FAILED}" ]]; then
+                    record_job auto-update warning "Источник обновлений недоступен: ${REMOTE_FAILED}" "${SECONDS}" || true
+                elif [[ -n "${skipped}" ]]; then
                     warn "Обновление на ${skipped} уже не удалось — повторно автоматически не выполняется. Исправьте причину и удалите отметку: rm ${UPDATES_DIR}/.failed-<версия> (или обновитесь вручную: ${APP_ID} update)."
                     record_job auto-update warning "Обновление на ${skipped} не удалось ранее и повторно не выполняется — исправьте причину и удалите ${UPDATES_DIR}/.failed-<версия>" "${SECONDS}" || true
                 else
@@ -177,7 +187,8 @@ if [[ -z "${ARCHIVE}" && -z "${SOURCE_DIR}" ]]; then
                 fi
                 exit 0
             fi
-            die "Архив новой версии не найден (нужен ${APP_ID}-<версия>.tar.gz новее ${APP_VERSION}). Положите его в ${UPDATES_DIR} (или в текущий каталог, /root, /tmp) и повторите, либо укажите явно: ${APP_ID} update --archive ФАЙЛ"
+            [[ -n "${REMOTE_FAILED}" ]] && die "Новая версия не скачана: ${REMOTE_FAILED}. Можно положить архив ${APP_ID}-<версия>.tar.gz в ${UPDATES_DIR} вручную и повторить, либо указать явно: ${APP_ID} update --archive ФАЙЛ"
+            die "Архив новой версии не найден (нужен ${APP_ID}-<версия>.tar.gz новее ${APP_VERSION}). Положите его в ${UPDATES_DIR} (или в текущий каталог, /root, /tmp) и повторите, либо укажите явно: ${APP_ID} update --archive ФАЙЛ$([[ -z "${UPDATE_URL:-}${UPDATE_GITHUB:-}" ]] && printf '. Скачивать новые версии автоматически: %s auto-update on --github ВЛАДЕЛЕЦ/РЕПОЗИТОРИЙ (или --url АДРЕС)' "${APP_ID}")"
         fi
         info "Найден архив новой версии: ${ARCHIVE}"
     fi
@@ -602,8 +613,14 @@ CREATED_TMP=""
 trap - ERR
 set +e
 UPDATE_DONE="1"
-# Эта версия установлена — отметка о прошлой неудаче (если была) больше не нужна.
+# Эта версия установлена — отметка о прошлой неудаче (если была) больше не нужна. Архивы более старых
+# версий в каталоге обновлений тоже (архив установленной версии остаётся — для повторной установки).
 rm -f "${UPDATES_DIR}/.failed-${NEW_VERSION}" 2>/dev/null
+for old_archive in "${UPDATES_DIR}"/"${APP_ID}"-[0-9]*.tar.gz; do
+    [[ -f "${old_archive}" ]] || continue
+    old_v=$(basename "${old_archive}"); old_v=${old_v#"${APP_ID}"-}; old_v=${old_v%.tar.gz}; old_v=${old_v%-src}
+    [[ "${old_v}" =~ ^[0-9]+(\.[0-9]+)*$ ]] && version_gt "${NEW_VERSION}" "${old_v}" && rm -f "${old_archive}" "${old_archive}.sha256"
+done
 
 # Раздел «Видео»: если он ещё не был настроен (переход с версии до 1.8.0 или установка без него), он
 # включается сам, когда серверу хватает ресурсов. Выключенный администратором (docportal video disable,
@@ -641,6 +658,19 @@ maybe_enable_video() {
     return 1
 }
 maybe_enable_video || true
+
+# Автоматическое обновление: включено при установке 1.8.0+; при переходе с более старой версии (о нём ещё не
+# решали — AUTO_UPDATE пусто) включается так же. Выключенное администратором (auto-update off) не трогается.
+if [[ -z "${AUTO_UPDATE:-}" && "${AUTO_MODE}" != "1" ]]; then
+    au_script="${APP_DIR}/current/deploy/auto-update.sh"
+    [[ "${INSTALL_MODE}" == "docker" ]] && au_script="${APP_DIR}/deploy/auto-update.sh"
+    if [[ -f "${au_script}" ]] && bash "${au_script}" on >>"${LOG_FILE}" 2>&1; then
+        AUTO_UPDATE="1"
+        ok "Автоматическое обновление включено: ежедневно в 04:30 из /var/lib/${APP_ID}/updates (${APP_ID} auto-update status; выключить — auto-update off)"
+    else
+        warn "Автоматическое обновление не включено (см. ${LOG_FILE}). Включить: ${APP_ID} auto-update on"
+    fi
+fi
 
 [[ "${AUTO_MODE}" == "1" ]] && record_job auto-update ok "Обновлено до ${NEW_VERSION}" "${SECONDS}"
 printf '\n%sОбновление завершено: версия %s.%s Журнал: %s\n' "${C_GREEN}${C_BOLD}" "${NEW_VERSION}" "${C_RESET}" "${LOG_FILE}"
