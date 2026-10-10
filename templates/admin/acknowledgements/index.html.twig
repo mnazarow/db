@@ -1,7 +1,10 @@
 {% extends 'admin/_layout.html.twig' %}
+{% import '_macros.html.twig' as m %}
 
 {% block title %}Ознакомление{% endblock %}
 {% block admin_title %}Ознакомление{% endblock %}
+
+{% macro heat_level(pct, assigned) %}{% if assigned == 0 %}none{% elseif pct >= 100 %}full{% elseif pct >= 80 %}high{% elseif pct >= 50 %}mid{% else %}low{% endif %}{% endmacro %}
 
 {% block admin_body %}
 <div class="grid grid--stats">
@@ -11,6 +14,80 @@
     <div class="card"><div class="stat__label">Просрочено</div><div class="stat__value {{ totals.overdue > 0 ? 'text-danger' }}">{{ totals.overdue }}</div><div class="stat__hint">срок прошёл, подтверждения нет</div></div>
 </div>
 
+<nav class="tabs tabs--links" aria-label="Вид сводки">
+    <a class="tab {{ view == 'documents' ? 'is-active' }}" href="{{ path('admin_acknowledgements') }}"{% if view == 'documents' %} aria-current="page"{% endif %}>По документам</a>
+    <a class="tab {{ view == 'departments' ? 'is-active' }}" href="{{ path('admin_acknowledgements', {view: 'departments'}) }}"{% if view == 'departments' %} aria-current="page"{% endif %}>По подразделениям</a>
+</nav>
+
+{% if view == 'departments' %}
+<div class="card toolbar">
+    <form method="get" class="filters">
+        <input type="hidden" name="view" value="departments">
+        <select class="form-control form-control--inline" name="section" aria-label="Раздел" data-autosubmit><option value="">Все разделы</option>{{ m.section_option_tree(tree, section) }}</select>
+        <select class="form-control form-control--inline" name="sort" aria-label="Порядок подразделений" data-autosubmit>
+            <option value="name" {{ sort == 'name' ? 'selected' }}>По названию подразделения</option>
+            <option value="pct" {{ sort == 'pct' ? 'selected' }}>Сначала отстающие</option>
+        </select>
+        <noscript><button class="btn btn--ghost btn--small" type="submit">Показать</button></noscript>
+        <a class="btn btn--ghost btn--small" href="{{ path('admin_acknowledgements_departments_csv', {section: section ? section.id : null}) }}">Выгрузить CSV</a>
+    </form>
+</div>
+
+<div class="card table-card">
+    <div class="card__head card__head--padded">
+        <h2 class="h-section">Подразделения × документы</h2>
+        <div class="heat-legend" aria-label="Обозначения">
+            <span class="heat heat--full">100%</span><span class="heat heat--high">80–99%</span><span class="heat heat--mid">50–79%</span><span class="heat heat--low">меньше 50%</span><span class="heat heat--none">не назначено</span>
+        </div>
+    </div>
+    {% if matrix.departments|length == 0 %}
+        <div class="table-card__empty">{{ section ? 'В этом разделе ознакомление по опубликованным документам не назначалось.' : 'Ознакомление по опубликованным документам пока никому не назначено.' }}</div>
+    {% else %}
+    <div class="table-scroll"><table class="admin-table heatmap">
+        <thead>
+            <tr>
+                <th scope="col" class="heatmap__corner">Подразделение</th>
+                <th scope="col" class="col-num heatmap__total">Всего</th>
+                {% for column in matrix.documents %}
+                    <th scope="col" class="heatmap__doc"><a href="{{ path('app_document_acknowledgements', {id: column.document.id}) }}" title="{{ column.document.title }}{{ column.document.code ? ' (' ~ column.document.code ~ ')' }} — {{ column.document.section.fullName }}">{{ column.document.code ?: column.document.title }}</a></th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+        {% for department in matrix.departments %}
+            <tr>
+                <th scope="row" class="heatmap__dept {{ department.no_department ? 'text-muted' }}">{{ department.name }}</th>
+                <td class="col-num heatmap__total"><span class="heat heat--{{ _self.heat_level(department.pct, department.assigned)|trim }}" title="Ознакомились {{ department.confirmed }} из {{ department.assigned }} по всем документам{{ department.overdue > 0 ? ', просрочено ' ~ department.overdue }}">{{ department.pct }}%</span></td>
+                {% for column in matrix.documents %}
+                    {% set cell = department.cells[column.document.id] ?? null %}
+                    <td class="heatmap__cell">
+                        {% if cell %}
+                            <span class="heat heat--{{ _self.heat_level(cell.pct, cell.assigned)|trim }}" title="{{ department.name }} — «{{ column.document.title }}»: ознакомились {{ cell.confirmed }} из {{ cell.assigned }}{{ cell.overdue > 0 ? ', просрочено ' ~ cell.overdue }}">{{ cell.confirmed }}/{{ cell.assigned }}{% if cell.overdue > 0 %}<span class="heat__overdue" aria-label="просрочено {{ cell.overdue }}">!</span>{% endif %}</span>
+                        {% else %}
+                            <span class="heat heat--none" title="{{ department.name }}: ознакомление не назначено">—</span>
+                        {% endif %}
+                    </td>
+                {% endfor %}
+            </tr>
+        {% endfor %}
+        </tbody>
+        <tfoot>
+            <tr>
+                <th scope="row" class="heatmap__dept">Все подразделения</th>
+                <td class="col-num heatmap__total"><span class="heat heat--{{ _self.heat_level(matrix.totals.pct, matrix.totals.assigned)|trim }}">{{ matrix.totals.pct }}%</span></td>
+                {% for column in matrix.documents %}
+                    <td class="heatmap__cell"><span class="heat heat--{{ _self.heat_level(column.pct, column.assigned)|trim }}" title="Всего по документу: ознакомились {{ column.confirmed }} из {{ column.assigned }}{{ column.overdue > 0 ? ', просрочено ' ~ column.overdue }}">{{ column.pct }}%</span></td>
+                {% endfor %}
+            </tr>
+        </tfoot>
+    </table></div>
+    {% endif %}
+    <div class="card__padded">
+        <p class="form-help">В ячейке — сколько сотрудников подразделения ознакомились с последней назначенной им редакцией документа; «!» — есть просроченные. Учитываются опубликованные документы и действующие учётные записи; подразделения с разным регистром букв («Отдел кадров» и «отдел кадров») объединены.
+        {% if matrix.hidden_documents > 0 %}Показаны {{ matrix.documents|length }} документов с последними назначениями, ещё {{ matrix.hidden_documents }} — в выгрузке CSV и в столбце «Всего».{% endif %}</p>
+    </div>
+</div>
+{% else %}
 <div class="card table-card">
     <div class="card__head card__head--padded">
         <h2 class="h-section">По документам</h2>
@@ -40,7 +117,8 @@
     </table></div>
     {% endif %}
     <div class="card__padded">
-        <p class="form-help">Ознакомление назначается в карточке документа (кнопка «Ознакомление» в блоке «Управление») модератором раздела или администратором. Напоминания рассылаются ежедневно командой <code>app:documents:acknowledge-remind</code>.</p>
+        <p class="form-help">Ознакомление назначается в карточке документа (кнопка «Ознакомление» в блоке «Управление») модератором раздела или администратором. Напоминания рассылаются ежедневно командой <code>app:documents:acknowledge-remind</code>. Кто из подразделений отстаёт — на вкладке «По подразделениям».</p>
     </div>
 </div>
+{% endif %}
 {% endblock %}

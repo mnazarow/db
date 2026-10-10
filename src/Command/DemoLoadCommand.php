@@ -571,7 +571,12 @@ HTML, true, [
         // document_deletion, document_text и document_acknowledgement тоже очищаем: иначе записи остались бы
         // от прежних демо-данных и относились бы к идентификаторам, которые после перезагрузки
         // принадлежат другим документам (TRUNCATE сбрасывает счётчик, и номера выдаются заново).
-        foreach (['document_event', 'document_version', 'document_text', 'document_acknowledgement', 'document_approval', 'document_question', 'document_comment', 'document_subscription', 'document_link', 'material_row', 'material_parameter', 'document', 'document_kind', 'document_deletion', 'document_template', 'section_moderator', 'section'] as $table) {
+        // document_allowed_user — списки допуска документов с ограниченным доступом: без очистки строки
+        // «привязались» бы к новым документам с теми же номерами.
+        foreach (['document_event', 'document_version', 'document_version_content', 'document_text', 'document_acknowledgement', 'document_approval', 'document_question', 'document_comment', 'document_subscription', 'document_link', 'document_allowed_user', 'material_row', 'material_parameter', 'document', 'document_kind', 'document_deletion', 'document_template', 'section_moderator', 'section'] as $table) {
+            if (!$this->connection->createSchemaManager()->tablesExist([$table])) {
+                continue;
+            }
             $this->connection->executeStatement('TRUNCATE TABLE '.$table);
         }
         $this->connection->executeStatement('SET FOREIGN_KEY_CHECKS = 1');

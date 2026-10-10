@@ -18,7 +18,7 @@
     {% include '_flashes.html.twig' %}
     <div class="card card--form quiz-card">
         <h2 class="h-section">Проверка знаний</h2>
-        <p>Ответьте на {{ questions|length }} {{ questions|length|plural(['вопрос', 'вопроса', 'вопросов']) }} по документу.
+        <p>Ответьте на {{ questions|length|plural(['вопрос', 'вопроса', 'вопросов']) }} по документу.
             Ознакомление подтверждается, когда все ответы верны; если ошиблись — прочитайте документ ещё раз и попробуйте снова.
             {% if acknowledgement.quizAttempts > 0 %}<br>Попыток: {{ acknowledgement.quizAttempts }}.{% endif %}</p>
         {% if result and not result.passed %}

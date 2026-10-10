@@ -32,6 +32,12 @@ class DocumentEvent
     public const MOVE = 'move';
     public const DELETE = 'delete';
     public const EXPIRY_NOTICE = 'expiry_notice';
+    /** Новая редакция загружена, но ждёт согласования (сотрудники видят прежнюю). */
+    public const DRAFT_VERSION = 'draft_version';
+    /** Согласование: запрос, решение, отзыв (подписчикам и в webhook не отправляется). */
+    public const APPROVAL = 'approval';
+    /** Ознакомление: назначение и подтверждение (подписчикам и в webhook не отправляется). */
+    public const ACKNOWLEDGE = 'acknowledge';
 
     /** Имя, под которым в журнале записываются просмотры и скачивания без входа. */
     public const GUEST_NAME = 'Гость';
@@ -49,6 +55,9 @@ class DocumentEvent
         self::MOVE => 'Перемещение',
         self::DELETE => 'Удаление',
         self::EXPIRY_NOTICE => 'Уведомление о сроке',
+        self::DRAFT_VERSION => 'Новая редакция (на согласование)',
+        self::APPROVAL => 'Согласование',
+        self::ACKNOWLEDGE => 'Ознакомление',
     ];
 
     #[ORM\Id]

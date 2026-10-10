@@ -24,6 +24,15 @@ final class DocumentPreviewer
     /** Больше этого файлы не конвертируем: страница ждала бы минутами. */
     public const MAX_INPUT_BYTES = 50 * 1024 * 1024;
 
+    /**
+     * Сколько помнить неудачную конвертацию (повреждённый или защищённый паролем файл, тайм-аут):
+     * иначе каждый просмотр страницы снова запускал бы LibreOffice на минуты.
+     */
+    public const FAILURE_TTL_SECONDS = 12 * 3600;
+
+    /** Временные каталоги конвертации старше этого остались от прерванных процессов — их можно удалять. */
+    private const STALE_WORK_SECONDS = 3600;
+
     private ?bool $available = null;
 
     public function __construct(
@@ -60,6 +69,14 @@ final class DocumentPreviewer
         return null !== $path && is_file($path);
     }
 
+    /** Недавняя конвертация этой версии не удалась — повторять её пока не нужно. */
+    public function hasFailed(DocumentVersion $version): bool
+    {
+        $path = $this->cachePath($version);
+
+        return null !== $path && $this->failedRecently($path);
+    }
+
     /**
      * Путь к PDF-предпросмотру версии; при необходимости запускает конвертацию.
      * Возвращает null, если предпросмотр невозможен (нет LibreOffice, формат не тот, ошибка).
@@ -77,6 +94,9 @@ final class DocumentPreviewer
         if (is_file($cache)) {
             return $cache;
         }
+        if ($this->failedRecently($cache)) {
+            return null;
+        }
         if (filesize($source) > self::MAX_INPUT_BYTES) {
             $this->logger->info('Предпросмотр пропущен: файл слишком большой', ['version' => $version->getId(), 'bytes' => filesize($source)]);
 
@@ -89,24 +109,17 @@ final class DocumentPreviewer
     /** Удаляет готовые предпросмотры документа (при удалении документа или версии). */
     public function forget(int $documentId): void
     {
-        $dir = $this->previewDir.'/'.$documentId;
-        if (!is_dir($dir)) {
-            return;
-        }
-        foreach (glob($dir.'/*') ?: [] as $file) {
-            @unlink($file);
-        }
-        @rmdir($dir);
+        $this->removeTree($this->previewDir.'/'.$documentId);
     }
 
-    /** Полностью очищает кэш предпросмотров (файлы соберутся заново при обращении). */
+    /**
+     * Полностью очищает кэш предпросмотров (файлы соберутся заново при обращении), вместе с отметками
+     * о неудачных конвертациях и временными каталогами прерванных процессов.
+     */
     public function clear(): void
     {
         foreach (glob($this->previewDir.'/*', \GLOB_ONLYDIR) ?: [] as $dir) {
-            foreach (glob($dir.'/*') ?: [] as $file) {
-                @unlink($file);
-            }
-            @rmdir($dir);
+            $this->removeTree($dir);
         }
     }
 
@@ -136,6 +149,13 @@ final class DocumentPreviewer
         return \sprintf('%s/%d/%d-%s.pdf', $this->previewDir, $documentId, $versionId, $checksum);
     }
 
+    private function failedRecently(string $cache): bool
+    {
+        $mtime = @filemtime($cache.'.failed');
+
+        return false !== $mtime && time() - $mtime < self::FAILURE_TTL_SECONDS;
+    }
+
     private function convert(string $source, string $cache, DocumentVersion $version): ?string
     {
         $dir = \dirname($cache);
@@ -148,13 +168,15 @@ final class DocumentPreviewer
         $lock = @fopen($cache.'.lock', 'c');
         if (false !== $lock) {
             flock($lock, \LOCK_EX);
-            if (is_file($cache)) {
+            // Пока ждали замок, другой запрос мог уже подготовить предпросмотр — или убедиться, что это невозможно.
+            if (is_file($cache) || $this->failedRecently($cache)) {
                 flock($lock, \LOCK_UN);
                 fclose($lock);
 
-                return $cache;
+                return is_file($cache) ? $cache : null;
             }
         }
+        $this->removeStaleWork($dir);
         $work = $dir.'/tmp-'.bin2hex(random_bytes(6));
         $profile = $work.'/profile';
         $result = null;
@@ -175,7 +197,7 @@ final class DocumentPreviewer
                 '--convert-to', 'pdf',
                 '--outdir', $work,
                 $input,
-            ], $this->timeoutSeconds, $work, ['HOME' => $work]);
+            ], $this->timeoutSeconds, $work, ['HOME' => $work, 'TMPDIR' => $work]);
             $produced = preg_replace('/\.[^.]+$/', '.pdf', $input);
             if (null === $produced || !is_file($produced) || filesize($produced) < 5) {
                 $this->logger->warning('Не удалось подготовить предпросмотр', [
@@ -183,12 +205,16 @@ final class DocumentPreviewer
                     'code' => $run['code'],
                     'error' => mb_substr(trim($run['err'].' '.$run['out']), 0, 300),
                 ]);
+                // Отметка о неудаче: повторная попытка — не раньше чем через FAILURE_TTL_SECONDS
+                // (или после очистки кэша предпросмотров в панели администратора).
+                @touch($cache.'.failed');
 
                 return null;
             }
             // Запись «через временный файл»: читатель не должен увидеть недописанный PDF.
             if (@rename($produced, $cache)) {
                 $result = $cache;
+                @unlink($cache.'.failed');
             }
         } finally {
             $this->removeTree($work);
@@ -200,6 +226,20 @@ final class DocumentPreviewer
         }
 
         return $result;
+    }
+
+    /**
+     * Удаляет временные каталоги конвертации, оставшиеся от прерванных процессов (например, когда
+     * PHP-FPM остановил слишком долгий запрос и блок finally не выполнился).
+     */
+    private function removeStaleWork(string $dir): void
+    {
+        foreach (glob($dir.'/tmp-*', \GLOB_ONLYDIR) ?: [] as $work) {
+            $mtime = @filemtime($work);
+            if (false !== $mtime && time() - $mtime > self::STALE_WORK_SECONDS) {
+                $this->removeTree($work);
+            }
+        }
     }
 
     private function removeTree(string $dir): void

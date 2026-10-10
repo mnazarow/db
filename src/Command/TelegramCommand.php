@@ -90,17 +90,29 @@ final class TelegramCommand extends Command
 
                 return Command::FAILURE;
             }
-            $result = $this->telegram->send($chat, $text, true);
+            // Текст из консоли уходит без HTML-разметки: знаки «<» и «&» в нём — обычные символы.
+            $result = $this->telegram->send($chat, $text, true, false);
             $result['ok'] ? $io->success($result['message']) : $io->error($result['message']);
 
             return $result['ok'] ? Command::SUCCESS : Command::FAILURE;
         }
 
+        // Команда запускается cron каждую минуту и пишет вывод в журнал: когда разбирать нечего,
+        // она молчит (подробности — с ключом -v).
         $stats = $this->telegram->poll(max(1, (int) $input->getOption('limit')));
+        if (null !== $stats['skipped']) {
+            if ($output->isVerbose()) {
+                $io->note($stats['messages']);
+            }
+
+            return Command::SUCCESS;
+        }
         foreach ($stats['messages'] as $message) {
             $io->warning($message);
         }
-        $io->writeln(\sprintf('Разобрано сообщений: %d, привязано чатов: %d, ошибок: %d.', $stats['updates'], $stats['linked'], $stats['errors']));
+        if ($stats['updates'] > 0 || $stats['errors'] > 0 || $output->isVerbose()) {
+            $io->writeln(\sprintf('[%s] Разобрано сообщений: %d, привязано чатов: %d, ошибок: %d.', date('Y-m-d H:i:s'), $stats['updates'], $stats['linked'], $stats['errors']));
+        }
 
         return $stats['errors'] > 0 && 0 === $stats['updates'] ? Command::FAILURE : Command::SUCCESS;
     }

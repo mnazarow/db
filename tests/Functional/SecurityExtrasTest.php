@@ -166,6 +166,15 @@ final class SecurityExtrasTest extends PortalTestCase
         self::assertSelectorTextContains('.login__title', 'Подтверждение входа');
         $token = (string) $crawler->filter('form input[name="_token"]')->first()->attr('value');
 
+        // Со страницы второго фактора можно выйти и войти под другой учётной записью (POST с токеном).
+        $this->client->submit($crawler->filter('form.login__switch')->form());
+        self::assertResponseRedirects();
+        $this->client->request('GET', '/login/2fa');
+        self::assertResponseRedirects('/login', null, 'после выхода страница кода недоступна');
+        $this->formLogin('kuznetsova');
+        $crawler = $this->client->request('GET', '/login/2fa');
+        $token = (string) $crawler->filter('form input[name="_token"]')->first()->attr('value');
+
         // Неверный код: страница остаётся закрытой.
         $this->client->request('POST', '/login/2fa', ['_token' => $token, 'code' => '000000']);
         self::assertResponseIsSuccessful();
@@ -204,6 +213,77 @@ final class SecurityExtrasTest extends PortalTestCase
         $this->client->request('POST', '/profile/2fa', ['_token' => $token, 'action' => 'disable', 'code' => Totp::code($secret)]);
         self::assertFalse($this->user('kuznetsova')->isTotpEnabled());
         self::assertSame(0, $this->user('kuznetsova')->countRecoveryCodes());
+    }
+
+    public function testTooManyWrongCodesLogOutAndLockPerUser(): void
+    {
+        $user = $this->user('smirnov');
+        $secret = Totp::generateSecret();
+        $user->setTotpSecret($secret)->confirmTotp()->setRecoveryCodes(['eeee-ffff']);
+        $this->em()->flush();
+
+        try {
+            // Пять неверных кодов — вход отменяется полностью: токен не переживает очистку сессии.
+            $this->formLogin('smirnov');
+            for ($i = 1; $i <= TwoFactorSubscriber::MAX_ATTEMPTS; ++$i) {
+                $crawler = $this->client->request('GET', '/login/2fa');
+                self::assertResponseIsSuccessful(\sprintf('попытка %d: форма кода доступна', $i));
+                $token = (string) $crawler->filter('form input[name="_token"]')->first()->attr('value');
+                $this->client->request('POST', '/login/2fa', ['_token' => $token, 'code' => '000000']);
+            }
+            self::assertResponseRedirects('/login');
+            $this->client->request('GET', '/profile/2fa');
+            self::assertResponseRedirects('/login', null, 'после отмены входа профиль недоступен — второй фактор не обойти');
+            $this->client->request('GET', '/login/2fa');
+            self::assertResponseRedirects('/login');
+
+            // Ещё пять неверных кодов после нового входа — исчерпан лимит по пользователю:
+            // даже верный код не принимается, пока не пройдёт окно ограничения.
+            $this->formLogin('smirnov');
+            for ($i = 1; $i <= TwoFactorSubscriber::MAX_ATTEMPTS; ++$i) {
+                $crawler = $this->client->request('GET', '/login/2fa');
+                $token = (string) $crawler->filter('form input[name="_token"]')->first()->attr('value');
+                $this->client->request('POST', '/login/2fa', ['_token' => $token, 'code' => '111111']);
+            }
+            $this->formLogin('smirnov');
+            $crawler = $this->client->request('GET', '/login/2fa');
+            $token = (string) $crawler->filter('form input[name="_token"]')->first()->attr('value');
+            $this->client->request('POST', '/login/2fa', ['_token' => $token, 'code' => Totp::code($secret)]);
+            self::assertResponseRedirects('/login');
+            self::assertStringContainsString('временно заблокирован', $this->client->followRedirect()->text());
+            $this->client->request('GET', '/documents/1');
+            self::assertStringNotContainsString('/login/2fa', (string) $this->client->getResponse()->headers->get('Location'));
+        } finally {
+            static::getContainer()->get('app.login_limiter_pool')->clear();
+            $this->em()->clear();
+            $this->user('smirnov')->setTotpSecret(null);
+            $this->em()->flush();
+        }
+    }
+
+    public function testRememberedSessionWithoutVerifiedMarkIsBlocked(): void
+    {
+        // Вход без события LoginSuccess (программный, как у восстановленной сессии) — отметки о втором
+        // факторе нет, значит портал закрыт до ввода кода (проверка «от обратного»).
+        $user = $this->user('kuznetsova');
+        $secret = Totp::generateSecret();
+        $user->setTotpSecret($secret)->confirmTotp();
+        $this->em()->flush();
+        try {
+            $this->loginAs('kuznetsova');
+            $this->client->request('GET', '/');
+            self::assertResponseRedirects('/login/2fa');
+            $crawler = $this->client->request('GET', '/login/2fa');
+            $token = (string) $crawler->filter('form input[name="_token"]')->first()->attr('value');
+            $this->client->request('POST', '/login/2fa', ['_token' => $token, 'code' => Totp::code($secret)]);
+            self::assertResponseRedirects('/');
+            $this->client->request('GET', '/');
+            self::assertResponseIsSuccessful();
+        } finally {
+            $this->em()->clear();
+            $this->user('kuznetsova')->setTotpSecret(null);
+            $this->em()->flush();
+        }
     }
 
     public function testAdminPolicyRequiresTwoFactor(): void
@@ -347,7 +427,7 @@ final class SecurityExtrasTest extends PortalTestCase
         parse_str((string) parse_url((string) $this->client->getResponse()->headers->get('Location'), \PHP_URL_QUERY), $query);
         $this->transport()->reset();
         $this->transport()->enqueue(
-            new HttpResponse(200, json_encode(['access_token' => 'at', 'id_token' => $this->idToken(['nonce' => $query['nonce']])], \JSON_THROW_ON_ERROR)),
+            new HttpResponse(200, json_encode(['access_token' => 'at', 'id_token' => $this->idToken(['nonce' => $query['nonce'], 'sub' => 'sso-unknown'])], \JSON_THROW_ON_ERROR)),
             new HttpResponse(200, json_encode(['preferred_username' => 'unknown-person'], \JSON_THROW_ON_ERROR))
         );
         $this->transport()->setDefault($this->discovery());
@@ -355,6 +435,87 @@ final class SecurityExtrasTest extends PortalTestCase
         self::assertResponseRedirects('/login');
         self::assertStringContainsString('не заведён в портале', $this->client->followRedirect()->text());
         self::assertNull(static::getContainer()->get(UserRepository::class)->findOneByUsername('unknown-person'));
+
+        // Локальную учётную запись портала (например, admin) нельзя «перехватить» логином из утверждений провайдера.
+        self::assertSame('/login', $this->ssoCallback(['sub' => 'sso-evil'], ['preferred_username' => 'admin@evil.example']));
+        self::assertStringContainsString('локальная учётная запись', $this->client->followRedirect()->text());
+        self::assertTrue($this->user('admin')->isLocal(), 'учётная запись администратора осталась локальной');
+        self::assertNull($this->user('admin')->getSsoSubject());
+
+        // userinfo с чужим sub не принимается.
+        self::assertSame('/login', $this->ssoCallback(['sub' => 'sso-a'], ['sub' => 'sso-b', 'preferred_username' => 'someone']));
+        self::assertStringContainsString('не относятся к выданному токену', $this->client->followRedirect()->text());
+    }
+
+    public function testSsoAccountIsBoundToProviderSubject(): void
+    {
+        $this->settings()->setSso([
+            'enabled' => true,
+            'issuer' => 'https://sso.example.local/realms/company',
+            'client_id' => 'docportal',
+            'client_secret' => 'secret',
+            'create_users' => true,
+            'username_claim' => 'preferred_username',
+        ]);
+        // Первый вход создаёт учётную запись и привязывает её к sub.
+        self::assertSame('/', $this->ssoCallback(['sub' => 'sso-bind-1'], ['preferred_username' => 'orlova']));
+        $orlova = $this->user('orlova');
+        self::assertSame('https://sso.example.local/realms/company|sso-bind-1', $orlova->getSsoSubject());
+
+        // Другой пользователь провайдера с тем же логином в свою учётную запись не попадёт.
+        $this->client->getCookieJar()->clear();
+        self::assertSame('/login', $this->ssoCallback(['sub' => 'sso-bind-2'], ['preferred_username' => 'orlova']));
+        self::assertStringContainsString('уже связан с другой учётной записью', $this->client->followRedirect()->text());
+
+        // Смена логина у провайдера не мешает: учётная запись находится по sub.
+        $this->client->getCookieJar()->clear();
+        self::assertSame('/', $this->ssoCallback(['sub' => 'sso-bind-1'], ['preferred_username' => 'orlova.new']));
+        self::assertNull(static::getContainer()->get(UserRepository::class)->findOneByUsername('orlova.new'));
+
+        // Приложение у провайдера зарегистрировано заново — у сотрудника новый sub, вход отклоняется,
+        // пока администратор не снимет привязку в карточке пользователя.
+        $this->client->getCookieJar()->clear();
+        self::assertSame('/login', $this->ssoCallback(['sub' => 'sso-bind-3'], ['preferred_username' => 'orlova']));
+        $id = (int) $this->user('orlova')->getId();
+        $this->loginAs('admin');
+        $crawler = $this->client->request('GET', '/admin/users/'.$id.'/edit');
+        self::assertResponseIsSuccessful();
+        $this->client->request('POST', '/admin/users/'.$id.'/sso-unbind', ['_token' => 'bad']);
+        self::assertResponseStatusCodeSame(403);
+        $this->client->submit($crawler->selectButton('Снять привязку к SSO')->form());
+        self::assertResponseRedirects('/admin/users/'.$id.'/edit');
+        self::assertStringContainsString('Привязка к SSO снята', $this->client->followRedirect()->text());
+        $this->em()->clear();
+        self::assertNull($this->user('orlova')->getSsoSubject());
+        self::assertSame(0, $this->client->getCrawler()->filter('.sso-binding')->count(), 'без привязки кнопки нет');
+
+        $this->client->getCookieJar()->clear();
+        self::assertSame('/', $this->ssoCallback(['sub' => 'sso-bind-3'], ['preferred_username' => 'orlova']));
+        $this->em()->clear();
+        self::assertSame('https://sso.example.local/realms/company|sso-bind-3', $this->user('orlova')->getSsoSubject());
+    }
+
+    /**
+     * Полный проход входа через SSO с заданными утверждениями; возвращает адрес перенаправления.
+     *
+     * @param array<string, mixed> $idClaims
+     * @param array<string, mixed> $userinfo
+     */
+    private function ssoCallback(array $idClaims, array $userinfo): string
+    {
+        $this->warmDiscovery();
+        $this->transport()->setDefault($this->discovery());
+        $this->client->request('GET', '/login/sso');
+        parse_str((string) parse_url((string) $this->client->getResponse()->headers->get('Location'), \PHP_URL_QUERY), $query);
+        $this->transport()->reset();
+        $this->transport()->enqueue(
+            new HttpResponse(200, json_encode(['access_token' => 'at', 'id_token' => $this->idToken(['nonce' => $query['nonce']] + $idClaims)], \JSON_THROW_ON_ERROR)),
+            new HttpResponse(200, json_encode($userinfo, \JSON_THROW_ON_ERROR))
+        );
+        $this->transport()->setDefault($this->discovery());
+        $this->client->request('GET', '/login/sso/callback?code=code-'.bin2hex(random_bytes(3)).'&state='.$query['state']);
+
+        return (string) $this->client->getResponse()->headers->get('Location');
     }
 
     /** Вход через настоящую форму: срабатывают события входа (второй фактор, журнал). */

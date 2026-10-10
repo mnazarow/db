@@ -173,6 +173,7 @@ final class DocumentController extends AbstractController
         $this->trackView($document, $request, $user);
         $canManage = $this->access->canEditDocument($user, $document);
         $current = $document->getCurrentVersion();
+        $pendingVersion = $canManage || $this->access->isPendingApprover($user, $document) ? $document->getPendingVersion() : null;
         $comments = $this->comments->isEnabled() ? $this->comments->forDocument($document) : [];
         $editable = $deletable = [];
         foreach ($comments as $comment) {
@@ -183,13 +184,18 @@ final class DocumentController extends AbstractController
         return $this->render('document/show.html.twig', [
             'document' => $document,
             'current' => $current,
-            'versions' => $document->getVersions(),
+            // Новая редакция, ждущая согласования, видна только модераторам раздела и согласующему.
+            'versions' => array_values(array_filter($document->getVersions()->toArray(), fn (DocumentVersion $v): bool => $this->access->canViewVersion($user, $document, $v))),
+            'pending_version' => $pendingVersion,
+            'pending_decision' => null !== $pendingVersion ? $this->approvalRepository->findDecided($document, $pendingVersion->getNumber()) : null,
+            'can_promote' => null !== $pendingVersion && $canManage && $this->approvals->canPromote($document, $pendingVersion),
             'can_manage' => $canManage,
             'inline' => null !== $current && $current->isFile() && FileStorage::isInlineViewable($current->getMimeType(), $current->getExtension()),
             'file_exists' => null !== $current && $current->isFile() ? $this->manager->getStorage()->exists($current) : true,
             // Офисные файлы показываем через конвертацию в PDF (LibreOffice) — по кнопке, чтобы не ждать в карточке.
             'previewable' => null !== $current && $this->previewer->isAvailable() && $this->previewer->supports($current),
             'preview_ready' => null !== $current && $this->previewer->isAvailable() && $this->previewer->supports($current) && $this->previewer->isReady($current),
+            'preview_failed' => null !== $current && $this->previewer->isAvailable() && $this->previewer->supports($current) && $this->previewer->hasFailed($current),
             'preview_extensions' => $this->previewer->isAvailable() ? DocumentPreviewer::CONVERTIBLE : [],
             // Согласование: текущий запрос, решение по текущей редакции и правило публикации.
             'approval' => $this->approvalRepository->findPending($document),
@@ -215,7 +221,9 @@ final class DocumentController extends AbstractController
             'subscribed' => $this->subscriptions->isSubscribedToDocument($user, $document),
             'subscribed_section' => $this->subscriptions->coveringSection($user, $document),
             // Связи с другими документами.
-            'links' => $this->links->forDocument($document),
+            // Связанные документы, которые пользователь не видит (черновики, ограниченный доступ, внутренние
+            // для гостя), не показываются — даже их названия.
+            'links' => array_values(array_filter($this->links->forDocument($document), fn (array $row): bool => $this->isGranted(PortalVoter::DOCUMENT_VIEW, $row['document']))),
             'link_types' => DocumentLink::LABELS,
             // Строки таблиц материалов, из которых загружен документ.
             'material_rows' => $canManage ? $this->materialRows($document, $user) : [],
@@ -299,11 +307,15 @@ final class DocumentController extends AbstractController
                     }
                     $this->manager->updateMetadata($document, $previousSection, $user, $ip);
                     // Название и тип документа — это название и тип строки таблицы материалов.
-                    $this->materials->syncFromDocument($document);
-                    $this->addFlash('success', null !== $newVersion ? \sprintf('Сохранена версия %d.', $newVersion->getNumber()) : 'Карточка документа сохранена.');
+                    $this->materials->syncFromDocument($document, $user);
+                    if (null !== $newVersion && !$document->isVersionReleased($newVersion)) {
+                        $this->addFlash('warning', \sprintf('Сохранена редакция %d. По настройкам портала она вступит в силу после согласования — отправьте её на согласование; до решения сотрудники видят редакцию %d.', $newVersion->getNumber(), $document->getCurrentVersion()?->getNumber() ?? 0));
+                    } else {
+                        $this->addFlash('success', null !== $newVersion ? \sprintf('Сохранена версия %d.', $newVersion->getNumber()) : 'Карточка документа сохранена.');
+                    }
 
                     return $this->redirectToRoute('app_document_show', ['id' => $document->getId()]);
-                } catch (\InvalidArgumentException|\RuntimeException $e) {
+                } catch (\InvalidArgumentException|\RuntimeException|\DomainException $e) {
                     $form->get($document->isFile() ? 'file' : 'content')->addError(new FormError($e->getMessage()));
                 }
             }
@@ -335,7 +347,7 @@ final class DocumentController extends AbstractController
     #[IsGranted(PortalVoter::DOCUMENT_VIEW, subject: 'document')]
     public function downloadVersion(Document $document, int $number, Request $request, #[CurrentUser] ?User $user): Response
     {
-        $version = $document->findVersion($number) ?? throw $this->createNotFoundException('Версия не найдена.');
+        $version = $this->visibleVersion($document, $number, $user);
 
         return $this->serveVersion($document, $version, $request, $user);
     }
@@ -352,9 +364,9 @@ final class DocumentController extends AbstractController
 
     #[Route('/{id}/versions/{number}/preview', name: 'app_document_version_preview', requirements: ['id' => '\d+', 'number' => '\d+'], methods: ['GET'])]
     #[IsGranted(PortalVoter::DOCUMENT_VIEW, subject: 'document')]
-    public function previewVersion(Document $document, int $number): Response
+    public function previewVersion(Document $document, int $number, #[CurrentUser] ?User $user): Response
     {
-        $version = $document->findVersion($number) ?? throw $this->createNotFoundException('Версия не найдена.');
+        $version = $this->visibleVersion($document, $number, $user);
 
         return $this->servePreview($document, $version);
     }
@@ -363,7 +375,7 @@ final class DocumentController extends AbstractController
     #[IsGranted(PortalVoter::DOCUMENT_VIEW, subject: 'document')]
     public function version(Document $document, int $number, #[CurrentUser] ?User $user): Response
     {
-        $version = $document->findVersion($number) ?? throw $this->createNotFoundException('Версия не найдена.');
+        $version = $this->visibleVersion($document, $number, $user);
         if ($version->isFile()) {
             return $this->redirectToRoute('app_document_version_download', ['id' => $document->getId(), 'number' => $number]);
         }
@@ -377,10 +389,10 @@ final class DocumentController extends AbstractController
 
     #[Route('/{id}/versions/{a}/compare/{b}', name: 'app_document_compare', requirements: ['id' => '\d+', 'a' => '\d+', 'b' => '\d+'], methods: ['GET'])]
     #[IsGranted(PortalVoter::DOCUMENT_VIEW, subject: 'document')]
-    public function compare(Document $document, int $a, int $b): Response
+    public function compare(Document $document, int $a, int $b, #[CurrentUser] ?User $user): Response
     {
-        $va = $document->findVersion($a) ?? throw $this->createNotFoundException('Версия не найдена.');
-        $vb = $document->findVersion($b) ?? throw $this->createNotFoundException('Версия не найдена.');
+        $va = $this->visibleVersion($document, $a, $user);
+        $vb = $this->visibleVersion($document, $b, $user);
         $lines = ($va->isPage() && $vb->isPage()) ? $this->diff->compare($va, $vb) : [];
 
         return $this->render('document/compare.html.twig', [
@@ -403,6 +415,28 @@ final class DocumentController extends AbstractController
             $new = $this->manager->restoreVersion($document, $version, $user, $request->getClientIp());
             $this->addFlash('success', \sprintf('Версия %d восстановлена как версия %d.', $number, $new->getNumber()));
         } catch (\DomainException|\RuntimeException|\InvalidArgumentException $e) {
+            $this->addFlash('danger', $e->getMessage());
+        }
+
+        return $this->redirectToRoute('app_document_show', ['id' => $document->getId()]);
+    }
+
+    /** Новая редакция становится текущей (после согласования или у неопубликованного документа). */
+    #[Route('/{id}/versions/{number}/promote', name: 'app_document_version_promote', requirements: ['id' => '\d+', 'number' => '\d+'], methods: ['POST'])]
+    #[IsGranted(PortalVoter::DOCUMENT_EDIT, subject: 'document')]
+    public function promote(Document $document, int $number, Request $request, #[CurrentUser] User $user): Response
+    {
+        $this->checkToken($request, $document);
+        $version = $document->findVersion($number) ?? throw $this->createNotFoundException('Версия не найдена.');
+        if (!$this->approvals->canPromote($document, $version)) {
+            $this->addFlash('danger', 'По настройкам портала новая редакция опубликованного документа вступает в силу только после согласования. Отправьте её на согласование.');
+
+            return $this->redirectToRoute('app_document_show', ['id' => $document->getId()]);
+        }
+        try {
+            $this->manager->promoteVersion($document, $version, $user, $request->getClientIp());
+            $this->addFlash('success', \sprintf('Редакция %d стала текущей%s.', $number, $document->isPublished() ? ' — сотрудники видят её' : ''));
+        } catch (\DomainException $e) {
             $this->addFlash('danger', $e->getMessage());
         }
 
@@ -510,6 +544,8 @@ final class DocumentController extends AbstractController
             $this->manager->recordDownload($document, $version, $user, $request->getClientIp());
             $response = new Response($html, 200, ['Content-Type' => 'text/html; charset=UTF-8']);
             $response->headers->set('Content-Disposition', HeaderUtils::makeDisposition(ResponseHeaderBag::DISPOSITION_ATTACHMENT, self::asciiName($document->getTitle()).'.html', 'document.html'));
+            $response->headers->set('X-Content-Type-Options', 'nosniff');
+            $response->headers->set('Content-Security-Policy', FileStorage::SANDBOX_CSP);
 
             return $response;
         }
@@ -522,8 +558,14 @@ final class DocumentController extends AbstractController
             $this->manager->recordDownload($document, $version, $user, $request->getClientIp());
         }
         $response = new BinaryFileResponse($path);
-        $response->headers->set('Content-Type', $version->getMimeType() ?: 'application/octet-stream');
+        $inlineType = $inline ? FileStorage::inlineContentType($version->getExtension()) : null;
+        // В браузере файл открывается с типом по расширению из белого списка; при скачивании — с исходным типом.
+        $response->headers->set('Content-Type', $inlineType ?? ($version->getMimeType() ?: 'application/octet-stream'));
         $response->headers->set('X-Content-Type-Options', 'nosniff');
+        if ('application/pdf' !== $inlineType) {
+            // Скрипты в SVG, HTML и т. п. не выполняются даже при прямом открытии ссылки.
+            $response->headers->set('Content-Security-Policy', FileStorage::SANDBOX_CSP);
+        }
         $name = $version->getOriginalName() ?? ('document.'.$version->getExtension());
         $response->setContentDisposition($inline ? ResponseHeaderBag::DISPOSITION_INLINE : ResponseHeaderBag::DISPOSITION_ATTACHMENT, $name, self::asciiName($name));
         $response->setPrivate();
@@ -541,6 +583,17 @@ final class DocumentController extends AbstractController
         }
         $session->set($key, time());
         $this->manager->recordView($document, $user, $request->getClientIp());
+    }
+
+    /** Версия документа, если пользователь может её видеть (новую редакцию до согласования — только модераторы и согласующий). */
+    private function visibleVersion(Document $document, int $number, ?User $user): DocumentVersion
+    {
+        $version = $document->findVersion($number);
+        if (null === $version || !$this->access->canViewVersion($user, $document, $version)) {
+            throw $this->createNotFoundException('Версия не найдена.');
+        }
+
+        return $version;
     }
 
     private function checkToken(Request $request, Document $document): void

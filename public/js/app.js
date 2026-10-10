@@ -13,12 +13,13 @@
     }
 
     ready(function () {
-        /* Подтверждения */
+        /* Подтверждения: data-confirm у формы или у нажатой кнопки (например, «Удалить» рядом с «Сохранить») */
         document.addEventListener('submit', function (e) {
             var form = e.target;
-            if (form && form.hasAttribute('data-confirm')) {
-                if (!window.confirm(form.getAttribute('data-confirm'))) { e.preventDefault(); }
-            }
+            if (!form || !form.getAttribute) { return; }
+            var button = e.submitter || null;
+            var message = (button && button.getAttribute('data-confirm')) || form.getAttribute('data-confirm');
+            if (message && !window.confirm(message)) { e.preventDefault(); }
         });
 
         /* Мобильное меню */
@@ -150,7 +151,137 @@
         /* Импорт из каталога: выполнение задания порциями с показом хода */
         var jobCard = document.querySelector('[data-import-job]');
         if (jobCard) { importJob(jobCard); }
+
+        /* PDF-сборник раздела: выбор документов и сборка порциями */
+        var bundleForm = document.querySelector('[data-bundle-form]');
+        if (bundleForm) { bundleChoice(bundleForm); }
+        var bundleCard = document.querySelector('[data-bundle-job]');
+        if (bundleCard) { bundleJob(bundleCard); }
     });
+
+    function pluralRu(n, forms) {
+        var a = Math.abs(n) % 100, b = a % 10;
+        var form = (a > 10 && a < 20) ? forms[2] : (b > 1 && b < 5) ? forms[1] : (b === 1 ? forms[0] : forms[2]);
+        return n + ' ' + form;
+    }
+
+    function bundleChoice(form) {
+        var boxes = function () { return form.querySelectorAll('input[name="documents[]"]'); };
+        var counter = form.querySelector('[data-bundle-counter]');
+        var syncGroups = function () {
+            Array.prototype.forEach.call(form.querySelectorAll('[data-bundle-group]'), function (g) {
+                var box = g.closest('.ack-people__group');
+                if (!box) { return; }
+                var all = box.querySelectorAll('input[name="documents[]"]');
+                var on = box.querySelectorAll('input[name="documents[]"]:checked');
+                g.checked = all.length > 0 && on.length === all.length;
+                g.indeterminate = on.length > 0 && on.length < all.length;
+            });
+        };
+        var recount = function () {
+            if (counter) { counter.textContent = 'отмечено: ' + form.querySelectorAll('input[name="documents[]"]:checked').length + ' из ' + boxes().length; }
+            syncGroups();
+        };
+        var setAll = function (value) {
+            Array.prototype.forEach.call(boxes(), function (b) { b.checked = value; });
+            recount();
+        };
+        var allBtn = form.querySelector('[data-bundle-all]');
+        var noneBtn = form.querySelector('[data-bundle-none]');
+        if (allBtn) { allBtn.addEventListener('click', function () { setAll(true); }); }
+        if (noneBtn) { noneBtn.addEventListener('click', function () { setAll(false); }); }
+        Array.prototype.forEach.call(form.querySelectorAll('[data-bundle-group]'), function (group) {
+            group.addEventListener('change', function () {
+                var box = group.closest('.ack-people__group');
+                if (!box) { return; }
+                Array.prototype.forEach.call(box.querySelectorAll('input[name="documents[]"]'), function (b) { b.checked = group.checked; });
+                recount();
+            });
+        });
+        form.addEventListener('change', function (e) {
+            if (e.target && e.target.name === 'documents[]') { recount(); }
+        });
+        recount();
+    }
+
+    function bundleJob(card) {
+        var url = card.getAttribute('data-bundle-job');
+        var token = card.getAttribute('data-token');
+        var finished = card.getAttribute('data-finished') === '1';
+        var running = false, failures = 0;
+        var q = function (selector) { return card.querySelector(selector); };
+        var bar = q('[data-job-bar]'), position = q('[data-job-position]'), percent = q('[data-job-percent]');
+        var phase = q('[data-job-phase]'), status = q('[data-job-status]'), errorBox = q('[data-job-error]');
+        var networkBox = q('[data-job-network]'), download = q('[data-job-download]'), size = q('[data-job-size]');
+        var removeForm = q('[data-job-delete]');
+        var rows = document.querySelectorAll('[data-job-items] [data-item]');
+
+        function badge(cls, text) {
+            return '<span class="badge badge--' + cls + '"><span class="badge__dot"></span>' + escapeHtml(text) + '</span>';
+        }
+        function render(data) {
+            if (bar) { bar.style.width = data.percent + '%'; bar.parentNode.setAttribute('aria-valuenow', data.percent); }
+            if (position) { position.textContent = data.position; }
+            if (percent) { percent.textContent = data.percent; }
+            if (phase) { phase.textContent = data.finished ? 'готово' : (data.phase === 'merge' ? 'объединение файлов' : 'документы'); }
+            Object.keys(data.counters || {}).forEach(function (key) {
+                var el = card.querySelector('[data-counter="' + key + '"]');
+                if (el) { el.textContent = data.counters[key]; }
+            });
+            (data.items || []).forEach(function (item, i) {
+                var cell = rows[i] ? rows[i].querySelector('[data-item-result]') : null;
+                if (!cell) { return; }
+                if (item.status === 'ok') { cell.innerHTML = badge('done', pluralRu(item.pages, ['страница', 'страницы', 'страниц'])); }
+                else if (item.status === 'note') { cell.innerHTML = badge('soon', 'Только реквизиты') + '<div class="hints">' + escapeHtml(item.note || '') + '</div>'; }
+            });
+            if (data.error) {
+                if (errorBox) { errorBox.textContent = data.error; errorBox.hidden = false; }
+                if (status) { status.innerHTML = badge('overdue', 'Ошибка'); }
+            }
+            if (data.download && download) {
+                download.setAttribute('href', data.download.url);
+                download.hidden = false;
+                if (size) { size.textContent = ' (' + pluralRu(data.download.pages || 0, ['страница', 'страницы', 'страниц']) + ', ' + data.download.size + ')'; }
+            }
+            if (data.finished) {
+                finished = true;
+                if (!data.error && status) { status.innerHTML = badge('done', 'Готов'); }
+                var removeLabel = removeForm ? removeForm.querySelector('[data-job-delete-label]') : null;
+                if (removeLabel) { removeLabel.textContent = 'Удалить сборник'; }
+            }
+        }
+        function tick() {
+            if (finished || running) { return; }
+            running = true;
+            var body = new FormData();
+            body.append('_token', token);
+            fetch(url, { method: 'POST', body: body, credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+                .then(function (r) {
+                    if (r.status === 409) { return { busy: true }; }
+                    if (!r.ok) { return r.json().catch(function () { return {}; }).then(function (d) { throw new Error(d.error || ('Ошибка сервера ' + r.status)); }); }
+                    return r.json();
+                })
+                .then(function (data) {
+                    running = false;
+                    failures = 0;
+                    if (networkBox) { networkBox.hidden = true; }
+                    if (data.busy) { setTimeout(tick, 2000); return; }
+                    render(data);
+                    if (!finished) { setTimeout(tick, 150); }
+                })
+                .catch(function (err) {
+                    running = false;
+                    failures++;
+                    if (failures >= 5) {
+                        if (errorBox) { errorBox.textContent = err.message + ' Обновите страницу, чтобы продолжить.'; errorBox.hidden = false; }
+                        return;
+                    }
+                    if (networkBox) { networkBox.hidden = false; }
+                    setTimeout(tick, 3000);
+                });
+        }
+        if (!finished) { tick(); }
+    }
 
     function importJob(card) {
         var url = card.getAttribute('data-import-job');

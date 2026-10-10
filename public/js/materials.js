@@ -145,6 +145,10 @@
         if (!doc) {
             return '<button type="button" class="mt-upload" data-upload title="Загрузить файл: документ получит название и тип из строки">Загрузить файл</button>';
         }
+        if (doc.hidden) {
+            // Документ перенесён в раздел, где у сотрудника нет прав, или доступ к нему ограничен.
+            return '<span class="mt-muted" title="Документ перенесён в другой раздел или доступ к нему ограничен. Его можно отвязать от строки в меню «⋯».">документ недоступен</span>';
+        }
         var ext = (doc.extension || 'файл').toUpperCase().slice(0, 4);
         var draft = doc.status !== 'published' ? '<span class="tag tag--kind" title="Документ ещё не опубликован">' + (doc.status === 'archived' ? 'архив' : 'черновик') + '</span>' : '';
         return '<span class="mt-file">'
@@ -152,8 +156,12 @@
             + '<span class="mt-file__ext">' + esc(ext) + '</span>'
             + '<span class="mt-file__name">' + esc(doc.fileName || doc.title) + '</span></a>'
             + '<span class="mt-file__ver">v' + esc(doc.version) + '</span>' + draft
-            + '<button type="button" class="mt-file__again" data-upload title="Загрузить новую версию" aria-label="Загрузить новую версию">⤒</button>'
+            + (doc.manageable ? '<button type="button" class="mt-file__again" data-upload title="Загрузить новую версию" aria-label="Загрузить новую версию файла «' + esc(row.title) + '»">⤒</button>' : '')
             + '</span>';
+    }
+
+    function canUpload(row) {
+        return !row.document || row.document.manageable;
     }
 
     function cellClasses(row, col) {
@@ -168,7 +176,7 @@
         columns.forEach(function (col) {
             html += '<td class="' + cellClasses(row, col) + '" data-key="' + col.key + '" tabindex="-1">' + cellHtml(row, col) + '</td>';
         });
-        html += '<td class="mt__actions"><button type="button" class="mt__row-menu" data-row-menu aria-label="Действия со строкой" title="Действия со строкой">⋯</button></td>';
+        html += '<td class="mt__actions"><button type="button" class="mt__row-menu" data-row-menu aria-haspopup="menu" aria-label="Действия со строкой «' + esc(row.title || 'без названия') + '»" title="Действия со строкой">⋯</button></td>';
         return html + '</tr>';
     }
 
@@ -188,7 +196,12 @@
             list.sort(function (a, b) {
                 var x = sort.key === 'state' ? a.row.state : displayValue(a.row, sort.key);
                 var y = sort.key === 'state' ? b.row.state : displayValue(b.row, sort.key);
-                if (col && col.type === 'number') { return sort.dir * ((parseFloat(x) || 0) - (parseFloat(y) || 0)); }
+                if (col && col.type === 'number') {
+                    // Сравниваем хранимые значения («1.5»): в показе дробная часть — через запятую.
+                    x = rawValue(a.row, sort.key); y = rawValue(b.row, sort.key);
+                    if (x === '' || y === '') { return x === y ? 0 : (x === '' ? 1 : -1); }
+                    return sort.dir * ((parseFloat(x) || 0) - (parseFloat(y) || 0));
+                }
                 if (col && col.type === 'date') { x = rawValue(a.row, sort.key); y = rawValue(b.row, sort.key); }
                 if (!x && y) { return 1; }
                 if (x && !y) { return -1; }
@@ -203,10 +216,19 @@
         emptyNote.hidden = rows.length > 0;
         table.querySelectorAll('[data-sort]').forEach(function (button) {
             var th = button.closest('th');
-            th.classList.toggle('is-sorted-asc', sort.key === button.dataset.sort && sort.dir === 1);
-            th.classList.toggle('is-sorted-desc', sort.key === button.dataset.sort && sort.dir === -1);
+            var sorted = sort.key === button.dataset.sort;
+            th.classList.toggle('is-sorted-asc', sorted && sort.dir === 1);
+            th.classList.toggle('is-sorted-desc', sorted && sort.dir === -1);
+            th.setAttribute('aria-sort', sorted ? (sort.dir === 1 ? 'ascending' : 'descending') : 'none');
         });
-        if (active) { highlight(false); }
+        if (active) { highlight(false); } else { tabStop(null); }
+    }
+
+    // В таблицу можно войти клавишей Tab: одна ячейка (выбранная или первая) доступна для фокуса.
+    function tabStop(cell) {
+        body.querySelectorAll('td[data-key][tabindex="0"]').forEach(function (el) { el.setAttribute('tabindex', '-1'); });
+        var target = cell || body.querySelector('td[data-key]');
+        if (target) { target.setAttribute('tabindex', '0'); }
     }
 
     function renderRow(row) {
@@ -224,10 +246,34 @@
             return;
         }
         var number = tr.querySelector('.mt__num').textContent;
+        var focused = document.activeElement;
+        var hadFocus = tr.contains(focused);
+        var onMenu = hadFocus && focused.hasAttribute('data-row-menu');
         var holder = document.createElement('tbody');
         holder.innerHTML = rowHtml(row, number);
         tr.replaceWith(holder.firstChild);
-        if (active && active.row === row.id) { highlight(false); }
+        // Фокус был в заменённой строке — возвращаем его на то же место, иначе он ушёл бы в начало
+        // страницы и стрелки, Enter и ввод перестали бы работать до щелчка мышью.
+        if (onMenu) {
+            focusMenuButton(row.id);
+        } else if (active && active.row === row.id) {
+            // Без прокрутки: ответ сервера не должен сдвигать страницу, которую пользователь листает.
+            highlight(false);
+            var cell = hadFocus ? cellElement(active.row, active.key) : null;
+            if (cell) { cell.focus({ preventScroll: true }); }
+        } else if (hadFocus && columns.length) {
+            active = { row: row.id, key: columns[0].key };
+            highlight(false);
+            var first = cellElement(row.id, columns[0].key);
+            if (first) { first.focus({ preventScroll: true }); }
+        }
+        // Ячейка, доступная клавише Tab, могла быть в этой строке.
+        if (!body.querySelector('td[data-key][tabindex="0"]')) { tabStop(active ? cellElement(active.row, active.key) : null); }
+    }
+
+    function focusMenuButton(rowId) {
+        var button = body.querySelector('tr[data-row="' + rowId + '"] [data-row-menu]');
+        if (button) { button.focus({ preventScroll: true }); }
     }
 
     function renderSummary(summary) {
@@ -255,8 +301,9 @@
         body.querySelectorAll('.is-active').forEach(function (el) { el.classList.remove('is-active'); });
         if (!active) { return; }
         var cell = cellElement(active.row, active.key);
-        if (!cell) { return; }
+        if (!cell) { tabStop(null); return; }
         cell.classList.add('is-active');
+        tabStop(cell);
         if (focus !== false) {
             cell.focus({ preventScroll: true });
             cell.scrollIntoView({ block: 'nearest', inline: 'nearest' });
@@ -285,6 +332,7 @@
         var col = column(key);
         var row = findRow(rowId);
         if (!col || !col.editable || !row) { return; }
+        if (editing && editing.row === rowId && editing.key === key) { return; } // редактор уже открыт
         if (editing) { commit(0, 0); }
         var cell = cellElement(rowId, key);
         if (!cell) { return; }
@@ -309,9 +357,13 @@
             input.value = typed != null ? typed : original;
         } else {
             input = document.createElement('input');
-            input.type = col.type === 'date' ? 'date' : (col.type === 'link' ? 'url' : 'text');
+            // Календарь — только для дат в формате ГГГГ-ММ-ДД: значение другого вида (например, «III кв. 2025»
+            // из Excel) поле даты не покажет, и сохранение молча стёрло бы его — такое правим как текст.
+            var isoDate = col.type === 'date' && (original === '' || /^\d{4}-\d{2}-\d{2}$/.test(original)) && typed == null;
+            input.type = isoDate ? 'date' : (col.type === 'link' ? 'url' : 'text');
             if (col.type === 'number') { input.inputMode = 'decimal'; }
-            input.value = typed != null && col.type !== 'date' ? typed : original;
+            if (col.type === 'date' && !isoDate) { input.placeholder = 'ДД.ММ.ГГГГ'; }
+            input.value = typed != null ? typed : original;
         }
         input.className = 'mt__editor';
         input.setAttribute('aria-label', 'Значение');
@@ -353,22 +405,60 @@
             if (!fromBlur) { select(current.row, current.key); move(dRow, dCol); }
             return;
         }
+        // Значение сразу записывается в строку: повторное открытие ячейки до ответа сервера должно
+        // показать новый текст, а не прежний (иначе продолжение правки затирало бы сохранённое).
+        var previous = fieldSnapshot(row, current.key);
+        setLocalValue(row, current.key, value);
         var cell = cellElement(current.row, current.key);
         if (cell) {
             cell.classList.remove('is-editing');
             cell.classList.add('is-saving');
-            cell.textContent = value;
+            cell.textContent = current.key === 'kind' ? displayValue(row, 'kind') : value;
         }
         if (!fromBlur) { select(current.row, current.key); move(dRow, dCol); }
         request('/rows/' + current.row, { field: current.key, value: value }).then(function (res) {
-            if (res.row) { replaceRow(res.row); }
+            if (res.row) {
+                replaceRow(res.row);
+            } else if (!res.ok) {
+                // Ответа со строкой нет (нет связи) — возвращаем прежнее значение только этого поля и только
+                // если его не успели изменить ещё раз: остальные правки строки могли уже сохраниться.
+                var fresh = findRow(current.row);
+                if (fresh && rawValue(fresh, current.key) === value) {
+                    restoreField(fresh, current.key, previous);
+                    renderRow(fresh);
+                }
+            }
             if (res.ok) {
                 renderSummary(res.summary);
             } else {
                 toast(res.error || 'Не удалось сохранить.', true);
-                if (!res.row) { renderRow(row); }
             }
         });
+    }
+
+    function fieldSnapshot(row, key) {
+        if (key === 'title') { return row.title; }
+        if (key === 'kind') { return row.kind ? { id: row.kind.id, name: row.kind.name } : null; }
+        var field = row.values && row.values[key];
+        return field ? JSON.parse(JSON.stringify(field)) : null;
+    }
+
+    function restoreField(row, key, snapshot) {
+        if (key === 'title') { row.title = snapshot; return; }
+        if (key === 'kind') { row.kind = snapshot; return; }
+        row.values = row.values || {};
+        if (snapshot) { row.values[key] = snapshot; } else { delete row.values[key]; }
+    }
+
+    function setLocalValue(row, key, value) {
+        if (key === 'title') { row.title = value; return; }
+        if (key === 'kind') {
+            var found = kinds.filter(function (k) { return String(k.id) === String(value); })[0];
+            row.kind = found ? { id: found.id, name: found.name } : null;
+            return;
+        }
+        row.values = row.values || {};
+        row.values[key] = { value: value, display: value };
     }
 
     function replaceRow(fresh) {
@@ -411,11 +501,20 @@
         if (!window.confirm(text)) { return; }
         request('/rows/' + id + '/delete', {}).then(function (res) {
             if (!res.ok) { toast(res.error || 'Не удалось удалить строку.', true); return; }
+            var key = active ? active.key : (columns[0] && columns[0].key);
+            // Соседняя строка — та, что видна рядом на экране (с учётом сортировки и фильтров).
+            var tr = body.querySelector('tr[data-row="' + id + '"]');
+            var neighbour = tr ? (tr.nextElementSibling || tr.previousElementSibling) : null;
+            var nextId = neighbour && neighbour.dataset.row ? parseInt(neighbour.dataset.row, 10) : null;
             rows.splice(rowIndex(id), 1);
             if (active && active.row === id) { active = null; }
             render();
             renderSummary(res.summary);
             toast('Строка удалена.');
+            // Фокус был на удалённой строке (меню «⋯») — переводим его на соседнюю строку.
+            if ((document.activeElement === document.body || !document.activeElement) && nextId !== null && key && cellElement(nextId, key)) {
+                select(nextId, key);
+            }
         });
     }
 
@@ -427,7 +526,11 @@
             if (!res.ok) { toast(res.error || 'Не удалось переместить строку.', true); return; }
             var tmp = rows[index]; rows[index] = rows[target]; rows[target] = tmp;
             sort.key = null;
+            var focusLost = function () { return document.activeElement === document.body || !document.activeElement; };
+            var hadMenuFocus = focusLost() || (document.activeElement.hasAttribute && document.activeElement.hasAttribute('data-row-menu'));
             render();
+            // Таблица перерисована целиком: фокус возвращается на кнопку «⋯» перемещённой строки.
+            if (hadMenuFocus && focusLost()) { focusMenuButton(id); }
         });
     }
 
@@ -503,8 +606,55 @@
         if (!tr) { return; }
         e.preventDefault();
         tr.classList.remove('is-drop');
+        var dropRow = findRow(parseInt(tr.dataset.row, 10));
+        if (dropRow && !canUpload(dropRow)) { toast('Документ этой строки недоступен для правки — отвяжите его, чтобы загрузить новый файл.', true); return; }
         if (e.dataTransfer.files.length) { upload(parseInt(tr.dataset.row, 10), e.dataTransfer.files[0]); }
     });
+
+    // ---- История изменений строки ----------------------------------------------------------------
+
+    var historyDialog = document.querySelector('[data-mt-history]');
+
+    function historyValues(change) {
+        var hasOld = change.old !== null && change.old !== '';
+        var hasNew = change.new !== null && change.new !== '';
+        if (!hasOld && !hasNew) { return ''; }
+        return '<div class="mt-history-list__values">'
+            + (hasOld ? '<del>' + esc(change.old) + '</del>' + (hasNew || change.action === 'update' || change.action === 'import' ? ' → ' : '') : '')
+            + (hasNew ? '<ins>' + esc(change.new) + '</ins>' : (change.action === 'update' || change.action === 'import' ? '<span class="mt-muted">пусто</span>' : ''))
+            + '</div>';
+    }
+
+    function openHistory(id) {
+        if (!historyDialog) { return; }
+        var row = findRow(id);
+        var bodyEl = historyDialog.querySelector('[data-mt-history-body]');
+        historyDialog.querySelector('[data-mt-history-title]').textContent = 'История: ' + ((row && row.title) || 'без названия');
+        bodyEl.innerHTML = '<p class="mt-muted">Загрузка…</p>';
+        historyDialog.returnFocusTo = id;
+        historyDialog.showModal();
+        fetch(config.base + '/rows/' + id + '/history', { credentials: 'same-origin', headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(function (response) {
+                return response.json().catch(function () { return { ok: false, error: 'Ошибка сервера (' + response.status + ').' }; });
+            })
+            .then(function (res) {
+                if (!res.ok) { bodyEl.innerHTML = '<p class="form-error">' + esc(res.error || 'Не удалось загрузить историю.') + '</p>'; return; }
+                if (!res.changes.length) { bodyEl.innerHTML = '<p class="mt-muted">Изменений пока не было (журнал ведётся с версии 1.7.0).</p>'; return; }
+                bodyEl.innerHTML = '<ol class="mt-history-list">' + res.changes.map(function (c) {
+                    return '<li><div class="mt-history-list__head"><time datetime="' + esc(c.atIso) + '">' + esc(c.at) + '</time> · ' + esc(c.user) + '</div>'
+                        + '<div>' + esc(c.actionLabel) + (c.fieldLabel ? ': <b>' + esc(c.fieldLabel) + '</b>' : '') + '</div>'
+                        + historyValues(c) + '</li>';
+                }).join('') + '</ol>';
+            })
+            .catch(function () { bodyEl.innerHTML = '<p class="form-error">Нет связи с порталом — история не загружена.</p>'; });
+    }
+
+    if (historyDialog) {
+        historyDialog.querySelector('[data-mt-history-close]').addEventListener('click', function () { historyDialog.close(); });
+        historyDialog.addEventListener('close', function () {
+            if (historyDialog.returnFocusTo) { focusMenuButton(historyDialog.returnFocusTo); historyDialog.returnFocusTo = null; }
+        });
+    }
 
     // ---- Меню строки -------------------------------------------------------------------------------
 
@@ -522,13 +672,14 @@
         var items = [
             ['insert', 'Вставить строку ниже'],
             ['up', 'Переместить вверх'],
-            ['down', 'Переместить вниз'],
-            ['upload', row.document ? 'Загрузить новую версию файла' : 'Загрузить файл']
+            ['down', 'Переместить вниз']
         ];
+        if (canUpload(row)) { items.push(['upload', row.document ? 'Загрузить новую версию файла' : 'Загрузить файл']); }
         if (row.document) {
-            items.push(['open', 'Открыть документ']);
+            if (!row.document.hidden) { items.push(['open', 'Открыть документ']); }
             items.push(['detach', 'Отвязать файл от строки']);
         }
+        items.push(['history', 'История изменений']);
         items.push(['delete', 'Удалить строку']);
         menu.innerHTML = items.map(function (item) {
             return '<button type="button" role="menuitem" data-menu="' + item[0] + '"' + (item[0] === 'delete' ? ' class="is-danger"' : '') + '>' + item[1] + '</button>';
@@ -539,14 +690,29 @@
         menu.style.left = Math.max(8, window.scrollX + rect.right - menu.offsetWidth) + 'px';
         menu.addEventListener('click', function (e) {
             var action = e.target.dataset.menu;
+            if (!action) { return; }
             closeMenu();
+            // Фокус возвращается на кнопку «⋯» строки (а не в начало страницы); действия, которые
+            // открывают редактор или диалог, переводят его дальше сами.
+            focusMenuButton(id);
             if (action === 'insert') { addRow(id); }
             if (action === 'up') { moveRow(id, -1); }
             if (action === 'down') { moveRow(id, 1); }
             if (action === 'upload') { uploadRow = id; fileInput.click(); }
-            if (action === 'open' && row.document) { location.href = row.document.url; }
+            if (action === 'open' && row.document && row.document.url) { location.href = row.document.url; }
             if (action === 'detach') { detach(id); }
+            if (action === 'history') { openHistory(id); }
             if (action === 'delete') { deleteRow(id); }
+        });
+        menu.addEventListener('keydown', function (e) {
+            var buttons = Array.prototype.slice.call(menu.querySelectorAll('button'));
+            var index = buttons.indexOf(document.activeElement);
+            if (e.key === 'Escape') { e.preventDefault(); closeMenu(); focusMenuButton(id); return; }
+            if (e.key === 'ArrowDown') { e.preventDefault(); buttons[(index + 1) % buttons.length].focus(); return; }
+            if (e.key === 'ArrowUp') { e.preventDefault(); buttons[(index - 1 + buttons.length) % buttons.length].focus(); return; }
+            // Tab закрывает меню и переходит к следующему за кнопкой «⋯» элементу (фокус ставится на кнопку,
+            // а сам переход выполняет браузер).
+            if (e.key === 'Tab') { closeMenu(); focusMenuButton(id); }
         });
         var first = menu.querySelector('button');
         if (first) { first.focus(); }
@@ -570,28 +736,45 @@
         select(id, cell.dataset.key);
     });
 
+    body.addEventListener('focusin', function (e) {
+        var cell = e.target.closest && e.target.closest('td[data-key]');
+        var tr = cell ? cell.closest('tr[data-row]') : null;
+        if (!cell || cell !== e.target || !tr || cell.classList.contains('is-editing')) { return; }
+        var id = parseInt(tr.dataset.row, 10);
+        if (!active || active.row !== id || active.key !== cell.dataset.key) {
+            active = { row: id, key: cell.dataset.key };
+            highlight(false);
+        }
+    });
+
     body.addEventListener('dblclick', function (e) {
         var cell = e.target.closest('td[data-key]');
         var tr = e.target.closest('tr[data-row]');
-        if (!cell || !tr || e.target.closest('a, button')) { return; }
+        // Двойной щелчок внутри открытого редактора — это выделение слова, а не новая правка.
+        if (!cell || !tr || e.target.closest('a, button, .mt__editor') || cell.classList.contains('is-editing')) { return; }
         startEdit(parseInt(tr.dataset.row, 10), cell.dataset.key);
     });
 
     table.addEventListener('keydown', function (e) {
         if (editing) {
+            if (e.target !== editing.input) { return; }
             var isTextarea = editing.input.tagName === 'TEXTAREA';
             if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); return; }
             if (e.key === 'Enter' && !(isTextarea && (e.altKey || e.shiftKey))) { e.preventDefault(); commit(1, 0); return; }
             if (e.key === 'Tab') { e.preventDefault(); commit(0, e.shiftKey ? -1 : 1); return; }
             return;
         }
-        if (!active || e.target.closest('.mt-menu')) { return; }
+        // Клавиши таблицы работают, только когда фокус на самой ячейке: на кнопках (сортировка, меню строки,
+        // загрузка файла) и ссылках Enter, пробел и Delete должны делать своё, а Tab — уводить фокус дальше.
+        var cellTarget = e.target.closest && e.target.closest('td[data-key]');
+        if (!active || !cellTarget || cellTarget !== e.target || e.altKey || e.ctrlKey || e.metaKey) { return; }
+        var tr = cellTarget.closest('tr[data-row]');
+        if (tr) { active = { row: parseInt(tr.dataset.row, 10), key: cellTarget.dataset.key }; }
         switch (e.key) {
             case 'ArrowUp': e.preventDefault(); move(-1, 0); return;
             case 'ArrowDown': e.preventDefault(); move(1, 0); return;
             case 'ArrowLeft': e.preventDefault(); move(0, -1); return;
             case 'ArrowRight': e.preventDefault(); move(0, 1); return;
-            case 'Tab': e.preventDefault(); move(0, e.shiftKey ? -1 : 1); return;
             case 'Enter': case 'F2': e.preventDefault(); startEdit(active.row, active.key); return;
             case 'Delete': case 'Backspace': e.preventDefault(); clearCell(); return;
         }

@@ -1,0 +1,39 @@
+# Проверки портала в GitLab CI: синтаксис конфигурации и шаблонов, соответствие миграций схеме,
+# автотесты PHPUnit на MariaDB и проверка скриптов развёртывания shellcheck.
+stages:
+  - test
+
+phpunit:
+  stage: test
+  image: php:8.2-cli
+  services:
+    - name: mariadb:10.11
+      alias: mariadb
+  variables:
+    MARIADB_ROOT_PASSWORD: root
+    MARIADB_DATABASE: docportal_test
+    MARIADB_USER: docportal
+    MARIADB_PASSWORD: docportal
+    APP_ENV: test
+    DATABASE_URL: "mysql://docportal:docportal@mariadb:3306/docportal?serverVersion=10.11.14-MariaDB&charset=utf8mb4"
+  before_script:
+    - apt-get update -q && apt-get install -y -q --no-install-recommends git unzip poppler-utils fonts-dejavu-core mariadb-client
+    - curl -sSLf -o /usr/local/bin/install-php-extensions https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions
+    - chmod +x /usr/local/bin/install-php-extensions && install-php-extensions intl pdo_mysql zip gd ldap @composer
+    - composer install --no-interaction --no-progress --prefer-dist
+    # Ожидание базы данных (служба запускается параллельно с заданием).
+    - for i in $(seq 1 30); do mariadb-admin ping -h mariadb -udocportal -pdocportal --silent && break; sleep 2; done
+  script:
+    - php bin/console lint:container
+    - php bin/console lint:twig templates
+    - php bin/console lint:yaml config translations --parse-tags
+    - php bin/console doctrine:migrations:migrate --no-interaction --allow-no-migration
+    - php bin/console doctrine:schema:validate
+    - rm -rf var/cache/test
+    - vendor/bin/phpunit
+
+shellcheck:
+  stage: test
+  image: koalaman/shellcheck-alpine:stable
+  script:
+    - shellcheck -x -S warning -e SC2034 deploy/*.sh docker/entrypoint.sh scripts/*.sh

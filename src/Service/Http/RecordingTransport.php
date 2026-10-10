@@ -46,6 +46,20 @@ final class RecordingTransport implements HttpTransportInterface
         return $this->default ?? new HttpResponse(200, '{}');
     }
 
+    /** Тело очередного ответа записывается в файл (если ответ успешный и не больше $maxBytes). */
+    public function download(string $url, string $path, array $headers, int $timeoutSeconds, int $maxBytes): HttpResponse
+    {
+        $response = $this->request('GET', $url, null, $headers, $timeoutSeconds);
+        if (\strlen($response->body) > $maxBytes) {
+            return new HttpResponse($response->status, '', 'Файл больше допустимого размера.');
+        }
+        if ($response->ok()) {
+            file_put_contents($path, $response->body);
+        }
+
+        return new HttpResponse($response->status, '', $response->error);
+    }
+
     /** @return array{method: string, url: string, body: ?string, headers: array<string, string>, timeout: int}|null */
     public function last(): ?array
     {

@@ -129,6 +129,7 @@ INSTALLED_AT=""
 
 # Что было создано в ходе установки (для отката при ошибке).
 CREATED_APP_DIR="0"; CREATED_DB="0"; CREATED_DB_USER="0"; CREATED_NGINX_SITE="0"; CREATED_CONF="0"; CREATED_TMP=""; DOCKER_STARTED="0"; ADDED_PHP_REPO="0"
+CREATED_MAINT_DIR=""; CREATED_MAINT_SNIPPET="0"
 
 parse_args() {
     while [[ $# -gt 0 ]]; do
@@ -209,6 +210,14 @@ validate_args() {
     fi
 }
 
+# Имя хоста для адреса портала (APP_DEFAULT_URI): домен, иначе первый IP-адрес сервера.
+portal_host() {
+    local ip
+    if [[ -n "${DOMAIN}" ]]; then printf '%s' "${DOMAIN}"; return; fi
+    ip=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -v ':' | head -n1 || true)
+    printf '%s' "${ip:-localhost}"
+}
+
 # --- Подготовка исходников ---------------------------------------------------------
 prepare_source() {
     step "Подготовка исходных файлов"
@@ -283,6 +292,9 @@ rollback() {
         rm -f "/etc/nginx/sites-enabled/${APP_ID}.conf" "/etc/nginx/sites-available/${APP_ID}.conf" "/etc/nginx/conf.d/${APP_ID}.conf"
         nginx -t >>"${LOG_FILE}" 2>&1 && svc reload nginx || true
     fi
+    # Правило режима обслуживания — после сайта, который его подключал.
+    [[ "${CREATED_MAINT_SNIPPET}" == "1" ]] && rm -f "${MAINTENANCE_SNIPPET}" "${MAINTENANCE_SNIPPET}.prev"
+    [[ -n "${CREATED_MAINT_DIR}" && "${INSTALL_MODE}" == "native" ]] && rm -rf "${CREATED_MAINT_DIR}"
     if [[ "${CREATED_DB}" == "1" || "${CREATED_DB_USER}" == "1" ]] && [[ "${DB_LOCAL}" == "1" ]]; then
         [[ "${CREATED_DB}" == "1" ]] && mysql_root_exec "DROP DATABASE IF EXISTS \`${DB_NAME}\`;" || true
         [[ "${CREATED_DB_USER}" == "1" ]] && mysql_root_exec "DROP USER IF EXISTS '${DB_USER}'@'localhost'; DROP USER IF EXISTS '${DB_USER}'@'127.0.0.1';" || true
@@ -291,7 +303,11 @@ rollback() {
         rm -rf "${APP_DIR}"
     fi
     [[ "${CREATED_CONF}" == "1" ]] && rm -f "${CONF_FILE}" || true
-    rm -f /etc/cron.d/"${APP_ID}" "/usr/local/bin/${APP_ID}"
+    rm -f /etc/cron.d/"${APP_ID}" "/usr/local/bin/${APP_ID}" "/etc/logrotate.d/${APP_ID}"
+    if [[ -n "${PHP_POOL_DIR:-}" && -f "${PHP_POOL_DIR}/zz-${APP_ID}.conf" ]]; then
+        rm -f "${PHP_POOL_DIR}/zz-${APP_ID}.conf"
+        svc restart "${PHP_FPM_SERVICE}" || true
+    fi
     [[ -n "${CREATED_TMP}" ]] && rm -rf "${CREATED_TMP}" || true
     warn "Откат выполнен. Установленные системные пакеты сохранены."
 }
@@ -360,6 +376,7 @@ install_php_debian() {
     PHP_BIN="/usr/bin/php${PHP_VERSION}"
     PHP_INI_DIR_FPM="/etc/php/${PHP_VERSION}/fpm/conf.d"
     PHP_INI_DIR_CLI="/etc/php/${PHP_VERSION}/cli/conf.d"
+    PHP_POOL_DIR="/etc/php/${PHP_VERSION}/fpm/pool.d"
     SERVICE_USER="www-data"
     # Убедимся, что php по умолчанию — нужной версии.
     update-alternatives --set php "/usr/bin/php${PHP_VERSION}" >>"${LOG_FILE}" 2>&1 || true
@@ -382,6 +399,7 @@ install_php_rhel() {
     PHP_BIN="/usr/bin/php"
     PHP_INI_DIR_FPM="/etc/php.d"
     PHP_INI_DIR_CLI="/etc/php.d"
+    PHP_POOL_DIR="/etc/php-fpm.d"
     SERVICE_USER="apache"
     # PHP-FPM должен слушать unix-сокет, доступный nginx.
     sed -i 's|^listen = .*|listen = /run/php-fpm/www.sock|; s|^;listen.owner = .*|listen.owner = nginx|; s|^;listen.group = .*|listen.group = nginx|; s|^listen.acl_users = .*|listen.acl_users = apache,nginx|' /etc/php-fpm.d/www.conf
@@ -438,6 +456,9 @@ max_execution_time = 180
 max_input_time = 180
 date.timezone = ${TIMEZONE}
 expose_php = Off
+; Время жизни сессии: столько же, сколько SESSION_LIFETIME приложения (12 ч). Задание очистки сессий
+; Debian/Ubuntu (phpsessionclean) читает значение отсюда — без него сессии удалялись через 24 минуты простоя.
+session.gc_maxlifetime = 43200
 opcache.enable = 1
 opcache.enable_cli = 0
 opcache.memory_consumption = 192
@@ -451,6 +472,7 @@ realpath_cache_ttl = 600
     if [[ "${PHP_INI_DIR_CLI}" != "${PHP_INI_DIR_FPM}" ]]; then
         printf '%s' "${ini_body}" > "${PHP_INI_DIR_CLI}/90-${APP_ID}.ini"
     fi
+    configure_fpm_pool "${PHP_POOL_DIR}"
     svc enable "${PHP_FPM_SERVICE}" || die "Не удалось запустить службу ${PHP_FPM_SERVICE}."
     svc restart "${PHP_FPM_SERVICE}" || die "Не удалось перезапустить ${PHP_FPM_SERVICE}."
     ok "PHP-FPM настроен (${PHP_FPM_SOCK})"
@@ -557,7 +579,8 @@ write_env_local_native() {
     mkdir -p "${APP_DIR}/shared"
     local secret url
     secret=$(gen_secret_hex)
-    if [[ -n "${DOMAIN}" ]]; then url="http://${DOMAIN}"; [[ "${HTTP_PORT}" != "80" ]] && url="${url}:${HTTP_PORT}"; else url="http://localhost"; [[ "${HTTP_PORT}" != "80" ]] && url="${url}:${HTTP_PORT}"; fi
+    # Адрес портала для ссылок в письмах и уведомлениях: домен, а без него — IP-адрес сервера.
+    url="http://$(portal_host)"; [[ "${HTTP_PORT}" != "80" ]] && url="${url}:${HTTP_PORT}"
     local pw_url
     pw_url=$(php -r 'echo rawurlencode($argv[1]);' "${DB_PASSWORD}")
     umask 027
@@ -567,31 +590,32 @@ write_env_local_native() {
 APP_ENV=prod
 APP_DEBUG=0
 APP_SECRET=${secret}
-APP_NAME="${APP_NAME}"
-APP_COMPANY="${APP_COMPANY}"
+APP_NAME=$(env_quote "${APP_NAME}")
+APP_COMPANY=$(env_quote "${APP_COMPANY}")
 APP_DEFAULT_URI=${url}
 APP_TIMEZONE=${TIMEZONE}
-DATABASE_URL="mysql://${DB_USER}:${pw_url}@${DB_HOST}:${DB_PORT}/${DB_NAME}?serverVersion=${DB_SERVER_VERSION}&charset=utf8mb4"
+DATABASE_URL=$(env_quote "mysql://${DB_USER}:${pw_url}@${DB_HOST}:${DB_PORT}/${DB_NAME}?serverVersion=${DB_SERVER_VERSION}&charset=utf8mb4")
 STORAGE_DIR=${APP_DIR}/shared/storage
 # Каталог импорта: положите сюда папки с документами и запустите импорт в панели администратора.
 IMPORT_DIR=${APP_DIR}/shared/import
 UPLOAD_MAX_MB=100
 TRUSTED_PROXIES=
-MAILER_DSN=${MAIL_DSN:-null://null}
-MAIL_FROM="${MAIL_FROM:-${APP_NAME} <noreply@${DOMAIN:-localhost}>}"
+MAILER_DSN=$(env_quote "${MAIL_DSN:-null://null}")
+MAIL_FROM=$(env_quote "${MAIL_FROM:-${APP_NAME} <noreply@${DOMAIN:-localhost}>}")
 LDAP_ENABLED=$([[ -n "${LDAP_HOST}" ]] && echo 1 || echo 0)
 LDAP_HOST=${LDAP_HOST:-dc.example.local}
 LDAP_PORT=${LDAP_PORT}
 LDAP_ENCRYPTION=${LDAP_ENCRYPTION}
-LDAP_BASE_DN="${LDAP_BASE_DN:-DC=example,DC=local}"
-LDAP_BIND_DN="${LDAP_BIND_DN}"
-LDAP_BIND_PASSWORD="${LDAP_BIND_PASSWORD}"
-LDAP_UPN_SUFFIX="${LDAP_UPN_SUFFIX}"
-LDAP_ADMIN_GROUP="${LDAP_ADMIN_GROUP}"
-LDAP_USER_GROUP="${LDAP_USER_GROUP}"
+LDAP_BASE_DN=$(env_quote "${LDAP_BASE_DN:-DC=example,DC=local}")
+LDAP_BIND_DN=$(env_quote "${LDAP_BIND_DN}")
+LDAP_BIND_PASSWORD=$(env_quote "${LDAP_BIND_PASSWORD}")
+LDAP_UPN_SUFFIX=$(env_quote "${LDAP_UPN_SUFFIX}")
+LDAP_ADMIN_GROUP=$(env_quote "${LDAP_ADMIN_GROUP}")
+LDAP_USER_GROUP=$(env_quote "${LDAP_USER_GROUP}")
 EOF
     umask 022
-    chown "${SERVICE_USER}:${SERVICE_USER}" "${env_file}"
+    # Настройки читает пользователь службы, но изменить их он не может (владелец — root).
+    chown "root:${SERVICE_USER}" "${env_file}"
     chmod 640 "${env_file}"
     ok "Файл ${env_file} создан"
 }
@@ -605,13 +629,16 @@ set_permissions() {
     chmod 751 "${rel}"
     chmod -R o+rX "${rel}/public"
     chmod 750 "${APP_DIR}/shared/storage" "${APP_DIR}/shared/log"
+    # Настройки читает пользователь службы, но изменить их он не может (владелец — root).
+    [[ -f "${APP_DIR}/shared/.env.local" ]] && chown "root:${SERVICE_USER}" "${APP_DIR}/shared/.env.local" && chmod 640 "${APP_DIR}/shared/.env.local"
     # Каталог импорта: группа службы может записывать, новые файлы наследуют группу (setgid).
     chmod 2770 "${APP_DIR}/shared/import"
     chmod +x "${rel}/bin/console" "${rel}"/deploy/*.sh 2>/dev/null || true
     if command -v getenforce >/dev/null 2>&1 && [[ "$(getenforce 2>/dev/null)" == "Enforcing" ]]; then
         info "SELinux в режиме Enforcing — настройка контекстов"
+        # Правила по шаблону: каталоги var/ всех будущих релизов (update.sh) получают тот же контекст.
         semanage fcontext -a -t httpd_sys_rw_content_t "${APP_DIR}/shared(/.*)?" >>"${LOG_FILE}" 2>&1 || true
-        semanage fcontext -a -t httpd_sys_rw_content_t "${rel}/var(/.*)?" >>"${LOG_FILE}" 2>&1 || true
+        semanage fcontext -a -t httpd_sys_rw_content_t "${APP_DIR}/releases/[^/]+/var(/.*)?" >>"${LOG_FILE}" 2>&1 || true
         restorecon -R "${APP_DIR}" >>"${LOG_FILE}" 2>&1 || true
         setsebool -P httpd_can_network_connect_db 1 >>"${LOG_FILE}" 2>&1 || true
         setsebool -P httpd_can_network_connect 1 >>"${LOG_FILE}" 2>&1 || true
@@ -651,6 +678,18 @@ configure_nginx_native() {
     local LISTEN_V6=""
     [[ -f /proc/net/if_inet6 ]] && LISTEN_V6="    listen [::]:${HTTP_PORT};
 "
+    # Правило режима обслуживания (страница «Идёт обновление портала» на время миграций) — до сайта:
+    # сайт его подключает, и без файла nginx -t не пройдёт.
+    local maint_dir
+    maint_dir=$(maintenance_dir)
+    if [[ ! -d "$(dirname "${maint_dir}")" ]]; then CREATED_MAINT_DIR="$(dirname "${maint_dir}")";
+    elif [[ ! -d "${maint_dir}" ]]; then CREATED_MAINT_DIR="${maint_dir}"; fi
+    install -d -m 755 "$(dirname "${maint_dir}")" "${maint_dir}"
+    maintenance_write_page "" || die "Не удалось подготовить страницу режима обслуживания."
+    # SELinux (RHEL): каталог режима должен быть доступен nginx, иначе режим не будет работать.
+    maintenance_selinux_label
+    write_maintenance_snippet || die "Не удалось записать ${MAINTENANCE_SNIPPET}."
+    CREATED_MAINT_SNIPPET="1"
     cat > "${conf_path}" <<EOF
 # Портал «${APP_TITLE}» — создано install.sh $(date '+%Y-%m-%d %H:%M')
 server {
@@ -658,6 +697,7 @@ server {
 ${LISTEN_V6}    server_name ${server_name};
 
     root ${APP_DIR}/current/public;
+    include ${MAINTENANCE_SNIPPET};
     index index.php;
 
     client_max_body_size 128M;
@@ -691,10 +731,10 @@ ${LISTEN_V6}    server_name ${server_name};
         return 404;
     }
 
+    # Без add_header внутри location: иначе nginx не отправляет заголовки безопасности уровня server.
     location ~* \\.(css|js|woff2?|svg|png|jpg|ico)\$ {
         expires 30d;
         access_log off;
-        add_header Cache-Control "public";
         try_files \$uri =404;
     }
 
@@ -739,7 +779,7 @@ configure_ssl_native() {
         apt) pkg_install certbot python3-certbot-nginx ;;
         dnf) pkg_install certbot python3-certbot-nginx ;;
     esac
-    if certbot --nginx -d "${DOMAIN}" --non-interactive --agree-tos -m "${SSL_EMAIL}" --redirect >>"${LOG_FILE}" 2>&1; then
+    if certbot --nginx -d "${DOMAIN}" --non-interactive --agree-tos -m "${SSL_EMAIL}" --redirect >>"${LOG_FILE}" 2>&1 9>&-; then
         SSL_ENABLED="1"
         sed -i "s|^APP_DEFAULT_URI=.*|APP_DEFAULT_URI=https://${DOMAIN}|" "${APP_DIR}/shared/.env.local"
         ok "HTTPS включён: https://${DOMAIN} (сертификат обновляется автоматически)"
@@ -749,54 +789,30 @@ configure_ssl_native() {
 }
 
 configure_firewall() {
+    # Вызывается до certbot: для проверки домена Let's Encrypt нужен открытый порт 80, для работы — 443.
+    local ssl="0"
+    [[ -n "${SSL_EMAIL}" || "${SSL_ENABLED}" == "1" ]] && ssl="1"
     if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep_has "Status: active"; then
         info "Открытие порта ${HTTP_PORT} в ufw"
         ufw allow "${HTTP_PORT}/tcp" >>"${LOG_FILE}" 2>&1 || warn "Не удалось открыть порт в ufw."
-        [[ "${SSL_ENABLED}" == "1" ]] && ufw allow 443/tcp >>"${LOG_FILE}" 2>&1 || true
+        if [[ "${ssl}" == "1" ]]; then ufw allow 80/tcp >>"${LOG_FILE}" 2>&1 || true; ufw allow 443/tcp >>"${LOG_FILE}" 2>&1 || true; fi
     elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
         info "Открытие порта ${HTTP_PORT} в firewalld"
         firewall-cmd --permanent --add-port="${HTTP_PORT}/tcp" >>"${LOG_FILE}" 2>&1 || warn "Не удалось открыть порт в firewalld."
-        [[ "${SSL_ENABLED}" == "1" ]] && firewall-cmd --permanent --add-service=https >>"${LOG_FILE}" 2>&1 || true
+        if [[ "${ssl}" == "1" ]]; then
+            firewall-cmd --permanent --add-service=http >>"${LOG_FILE}" 2>&1 || true
+            firewall-cmd --permanent --add-service=https >>"${LOG_FILE}" 2>&1 || true
+        fi
         firewall-cmd --reload >>"${LOG_FILE}" 2>&1 || true
     fi
 }
 
 
 install_backup_cron() {
-    if [[ "${BACKUP_CRON}" != "1" ]]; then
-        cat > "/etc/cron.d/${APP_ID}" <<EOF
-# Портал «${APP_TITLE}» (создано install.sh):
-#  - ежедневная проверка сроков актуальности документов и рассылка уведомлений в 08:00;
-#  - ежечасно — описания документов через LLM (работает только если интеграция включена в панели администратора);
-#  - ежечасно — индексация содержимого документов для полнотекстового поиска;
-#  - ежедневно — напоминания об ознакомлении с документами;
-#  - каждую минуту — разбор сообщений бота Telegram (работает только если уведомления включены в панели администратора).
-0 8 * * * root /usr/local/bin/${APP_ID} console app:documents:expiry --no-interaction >> ${LOG_DIR}/expiry-cron.log 2>&1
-20 * * * * root /usr/local/bin/${APP_ID} console app:documents:describe --missing --limit=50 --quiet-if-disabled --no-interaction >> ${LOG_DIR}/describe-cron.log 2>&1
-40 * * * * root /usr/local/bin/${APP_ID} console app:search:reindex --limit=500 --no-interaction >> ${LOG_DIR}/reindex-cron.log 2>&1
-30 8 * * * root /usr/local/bin/${APP_ID} console app:documents:acknowledge-remind --no-interaction >> ${LOG_DIR}/acknowledge-cron.log 2>&1
-* * * * * root /usr/local/bin/${APP_ID} console app:telegram:poll --no-interaction >> ${LOG_DIR}/telegram-cron.log 2>&1
-EOF
-        chmod 644 "/etc/cron.d/${APP_ID}"
-        return 0
-    fi
-    cat > "/etc/cron.d/${APP_ID}" <<EOF
-# Портал «${APP_TITLE}» (создано install.sh):
-#  - ежедневная проверка сроков актуальности документов и рассылка уведомлений в 08:00;
-#  - ежедневная резервная копия в 03:15;
-#  - ежечасно — описания документов через LLM (работает только если интеграция включена в панели администратора);
-#  - ежечасно — индексация содержимого документов для полнотекстового поиска;
-#  - ежедневно — напоминания об ознакомлении с документами;
-#  - каждую минуту — разбор сообщений бота Telegram (работает только если уведомления включены в панели администратора).
-0 8 * * * root /usr/local/bin/${APP_ID} console app:documents:expiry --no-interaction >> ${LOG_DIR}/expiry-cron.log 2>&1
-15 3 * * * root /usr/local/bin/${APP_ID} backup --quiet >> ${LOG_DIR}/backup-cron.log 2>&1
-20 * * * * root /usr/local/bin/${APP_ID} console app:documents:describe --missing --limit=50 --quiet-if-disabled --no-interaction >> ${LOG_DIR}/describe-cron.log 2>&1
-40 * * * * root /usr/local/bin/${APP_ID} console app:search:reindex --limit=500 --no-interaction >> ${LOG_DIR}/reindex-cron.log 2>&1
-30 8 * * * root /usr/local/bin/${APP_ID} console app:documents:acknowledge-remind --no-interaction >> ${LOG_DIR}/acknowledge-cron.log 2>&1
-* * * * * root /usr/local/bin/${APP_ID} console app:telegram:poll --no-interaction >> ${LOG_DIR}/telegram-cron.log 2>&1
-EOF
-    chmod 644 "/etc/cron.d/${APP_ID}"
-    if has_systemd; then svc enable cron >/dev/null 2>&1 || svc enable crond >/dev/null 2>&1 || true; fi
+    # Native: задания приложения (+ резервная копия); Docker: только резервная копия — задания
+    # приложения выполняет контейнер cron (см. docker/entrypoint.sh).
+    write_cron_file "${BACKUP_CRON}"
+    install_logrotate
 }
 
 # health_check [попытки]: ждёт корректного ответа /health (см. health_probe в common.sh —
@@ -828,7 +844,8 @@ install_native() {
     fi
     [[ "${CREATED_APP_DIR}" == "1" ]] || CREATED_APP_DIR="1"
     mkdir -p "${APP_DIR}/releases" "${APP_DIR}/shared"
-    local release="${APP_DIR}/releases/${APP_VERSION}-$(date '+%Y%m%d%H%M%S')"
+    local release
+    release="${APP_DIR}/releases/${APP_VERSION}-$(date '+%Y%m%d%H%M%S')"
     install_release "${SOURCE_DIR}" "${release}"
     write_env_local_native
     link_shared "${release}"
@@ -841,8 +858,8 @@ install_native() {
     # Работоспособность проверяется по HTTP ДО включения HTTPS: на этом этапе ошибка означает,
     # что приложение или веб-сервер настроены неверно, и установка откатывается.
     health_check || die "Установка завершена, но портал не отвечает. Проверьте: systemctl status nginx ${PHP_FPM_SERVICE}; журналы /var/log/nginx/${APP_ID}.error.log и ${APP_DIR}/shared/log/prod.log"
-    configure_ssl_native
     configure_firewall
+    configure_ssl_native
     install_cli_wrapper
     install_backup_cron
     # После включения HTTPS certbot перенаправляет HTTP→HTTPS; повторная проверка идёт уже по
@@ -872,7 +889,7 @@ install_docker_engine() {
                     local codename; codename=$(. /etc/os-release && echo "${VERSION_CODENAME:-}")
                     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/${OS_ID} ${codename} stable" > /etc/apt/sources.list.d/docker.list
                     _APT_UPDATED=0
-                    if env DEBIAN_FRONTEND=noninteractive apt-get update -q >>"${LOG_FILE}" 2>&1 && env DEBIAN_FRONTEND=noninteractive apt-get install -y -q docker-ce docker-ce-cli containerd.io docker-compose-plugin >>"${LOG_FILE}" 2>&1; then
+                    if env DEBIAN_FRONTEND=noninteractive apt-get update -q >>"${LOG_FILE}" 2>&1 && env DEBIAN_FRONTEND=noninteractive apt-get install -y -q docker-ce docker-ce-cli containerd.io docker-compose-plugin >>"${LOG_FILE}" 2>&1 9>&-; then
                         installed="1"
                     else
                         rm -f /etc/apt/sources.list.d/docker.list; _APT_UPDATED=0
@@ -881,7 +898,7 @@ install_docker_engine() {
                 if [[ "${installed}" != "1" ]]; then
                     warn "Официальный репозиторий Docker недоступен, устанавливается docker.io из репозитория ОС."
                     pkg_install docker.io
-                    apt-get install -y -q docker-compose-v2 >>"${LOG_FILE}" 2>&1 || apt-get install -y -q docker-compose-plugin >>"${LOG_FILE}" 2>&1 || warn "Плагин docker compose не установлен из репозитория ОС."
+                    apt-get install -y -q docker-compose-v2 >>"${LOG_FILE}" 2>&1 9>&- || apt-get install -y -q docker-compose-plugin >>"${LOG_FILE}" 2>&1 9>&- || warn "Плагин docker compose не установлен из репозитория ОС."
                 fi
                 ;;
             rhel)
@@ -929,16 +946,19 @@ install_docker() {
         die "Каталог ${APP_DIR} уже существует и не пуст. Удалите его или укажите другой каталог: --dir"
     fi
     mkdir -p "${APP_DIR}"; CREATED_APP_DIR="1"
-    rsync -a --exclude '/var/' --exclude '/.env.local' --exclude '/.git/' --exclude '/docker/.env' --exclude '/docker/mysql-data/' "${SOURCE_DIR}/" "${APP_DIR}/" >>"${LOG_FILE}" 2>&1 || die "Не удалось скопировать файлы проекта."
+    rsync -a --exclude '/var/' --exclude '/.env.local' --exclude '/.git/' --exclude '/docker/.env' --exclude '/docker/mysql-data/' --exclude '/maintenance/' "${SOURCE_DIR}/" "${APP_DIR}/" >>"${LOG_FILE}" 2>&1 || die "Не удалось скопировать файлы проекта."
     chmod +x "${APP_DIR}"/deploy/*.sh "${APP_DIR}/docker/entrypoint.sh" "${APP_DIR}/bin/console" 2>/dev/null || true
+    # Каталог режима обслуживания подключается в контейнер web: страница «Идёт обновление портала».
+    maintenance_write_page "" || warn "Не удалось подготовить страницу режима обслуживания."
 
     step "Создание конфигурации docker/.env"
     [[ -n "${DB_PASSWORD}" ]] || DB_PASSWORD=$(gen_password 24)
+    # docker-compose.yml подставляет пароль в DATABASE_URL как есть — символы @ : / ? # % его ломают.
+    [[ "${DB_PASSWORD}" =~ ^[A-Za-z0-9._~-]+$ ]] || die "--db-password: в режиме docker допустимы латинские буквы, цифры и символы . _ ~ -"
     if [[ -z "${ADMIN_PASSWORD}" ]]; then ADMIN_PASSWORD=$(gen_password 14); ADMIN_GENERATED="1"; fi
     local root_pw secret url
     root_pw=$(gen_password 24); secret=$(gen_secret_hex)
-    if [[ -n "${DOMAIN}" ]]; then url="http://${DOMAIN}"; else url="http://localhost"; fi
-    [[ "${HTTP_PORT}" != "80" ]] && url="${url}:${HTTP_PORT}"
+    url="http://$(portal_host)"; [[ "${HTTP_PORT}" != "80" ]] && url="${url}:${HTTP_PORT}"
     umask 077
     cat > "${APP_DIR}/docker/.env" <<EOF
 # Настройки Docker-развёртывания портала «${APP_TITLE}» (создано install.sh $(date '+%Y-%m-%d %H:%M')).
@@ -959,27 +979,31 @@ MYSQL_PASSWORD=${DB_PASSWORD}
 APP_ENV=prod
 APP_DEBUG=0
 APP_SECRET=${secret}
-APP_NAME=${APP_NAME}
-APP_COMPANY=${APP_COMPANY}
+APP_NAME=$(compose_env_value "${APP_NAME}")
+APP_COMPANY=$(compose_env_value "${APP_COMPANY}")
 APP_DEFAULT_URI=${url}
 APP_TIMEZONE=${TIMEZONE}
 UPLOAD_MAX_MB=100
-TRUSTED_PROXIES=172.16.0.0/12,10.0.0.0/8,192.168.0.0/16
-MAILER_DSN=${MAIL_DSN:-null://null}
-MAIL_FROM=${MAIL_FROM:-${APP_NAME} <noreply@${DOMAIN:-localhost}>}
+# nginx передаёт запросы в PHP-FPM по FastCGI с настоящим адресом клиента, поэтому прокси по умолчанию не нужны.
+# Если перед порталом стоит ещё один обратный прокси — укажите здесь его адрес (иначе клиенты локальной
+# сети смогут подменять свой IP заголовком X-Forwarded-For и обходить ограничения доступа по IP).
+TRUSTED_PROXIES=
+MAILER_DSN=$(compose_env_value "${MAIL_DSN:-null://null}")
+MAIL_FROM=$(compose_env_value "${MAIL_FROM:-${APP_NAME} <noreply@${DOMAIN:-localhost}>}")
 LDAP_ENABLED=$([[ -n "${LDAP_HOST}" ]] && echo 1 || echo 0)
 LDAP_HOST=${LDAP_HOST:-dc.example.local}
 LDAP_PORT=${LDAP_PORT}
 LDAP_ENCRYPTION=${LDAP_ENCRYPTION}
-LDAP_BASE_DN=${LDAP_BASE_DN:-DC=example,DC=local}
-LDAP_BIND_DN=${LDAP_BIND_DN}
-LDAP_BIND_PASSWORD=${LDAP_BIND_PASSWORD}
-LDAP_UPN_SUFFIX=${LDAP_UPN_SUFFIX}
-LDAP_ADMIN_GROUP=${LDAP_ADMIN_GROUP}
-LDAP_USER_GROUP=${LDAP_USER_GROUP}
+LDAP_BASE_DN=$(compose_env_value "${LDAP_BASE_DN:-DC=example,DC=local}")
+LDAP_BIND_DN=$(compose_env_value "${LDAP_BIND_DN}")
+LDAP_BIND_PASSWORD=$(compose_env_value "${LDAP_BIND_PASSWORD}")
+LDAP_UPN_SUFFIX=$(compose_env_value "${LDAP_UPN_SUFFIX}")
+LDAP_ADMIN_GROUP=$(compose_env_value "${LDAP_ADMIN_GROUP}")
+LDAP_USER_GROUP=$(compose_env_value "${LDAP_USER_GROUP}")
 
+# Первый администратор создаётся при первом запуске; пароль удаляется из файла после успешной установки.
 ADMIN_USER=${ADMIN_USER}
-ADMIN_PASSWORD=${ADMIN_PASSWORD}
+ADMIN_PASSWORD=$(compose_env_value "${ADMIN_PASSWORD}")
 EOF
     umask 022
     chmod 600 "${APP_DIR}/docker/.env"
@@ -1001,6 +1025,9 @@ EOF
         (cd "${APP_DIR}/docker" && ${COMPOSE_CMD} logs --tail=100 app >>"${LOG_FILE}" 2>&1) || true
         die "Контейнеры запущены, но портал не отвечает. Журнал контейнера: cd ${APP_DIR}/docker && ${COMPOSE_CMD} logs app"
     }
+    # Администратор создан — пароль в docker/.env больше не нужен (он выведен в конце установки и
+    # сохранён в ${CONF_DIR}/admin-credentials.txt).
+    sed -i '/^ADMIN_PASSWORD=/d' "${APP_DIR}/docker/.env" || true
 }
 
 # =============================================================================
@@ -1029,7 +1056,7 @@ EOF
     printf ' Параметры:          %s\n' "${CONF_FILE}"
     printf ' Учётные данные:     %s (удалите после первого входа)\n' "${CONF_DIR}/admin-credentials.txt"
     printf ' Журнал установки:   %s\n' "${LOG_FILE}"
-    printf ' Управление:         %s status | update | backup | restore | console | logs | uninstall\n' "${APP_ID}"
+    printf ' Управление:         %s status | update | backup | restore | maintenance | console | logs | uninstall\n' "${APP_ID}"
     printf '%s\n' "=============================================================="
     printf ' Дальше: войдите под администратором, смените пароль (шапка → имя пользователя),\n'
     printf ' создайте разделы и назначьте модераторов в «Панель администратора → Разделы и модераторы».\n'
@@ -1046,6 +1073,7 @@ main() {
     prepare_source
     setup_traps
 
+    acquire_lock 0
     info "Режим: ${INSTALL_MODE}; каталог: ${APP_DIR}; порт: ${HTTP_PORT}; домен: ${DOMAIN:-не задан}"
     if [[ "${ASSUME_YES}" != "1" ]]; then
         confirm "Начать установку?" || die "Установка отменена."
@@ -1059,6 +1087,9 @@ main() {
     fi
 
     INSTALLED_AT="$(date '+%Y-%m-%d %H:%M:%S')"
+    # uninstall.sh --purge удаляет базу и пользователя БД, только если их создала установка.
+    DB_CREATED_BY_INSTALL="${CREATED_DB}"; DB_USER_CREATED_BY_INSTALL="${CREATED_DB_USER}"
+    [[ "${INSTALL_MODE}" == "docker" ]] && { DB_CREATED_BY_INSTALL="1"; DB_USER_CREATED_BY_INSTALL="1"; }
     save_conf; CREATED_CONF="1"
     [[ -n "${CREATED_TMP}" ]] && rm -rf "${CREATED_TMP}" || true
     ROLLBACK_ENABLED="0"

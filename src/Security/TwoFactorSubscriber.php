@@ -9,6 +9,7 @@ use App\Service\PortalSettings;
 use Symfony\Bundle\SecurityBundle\Security;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 use Symfony\Component\HttpFoundation\RedirectResponse;
+use Symfony\Component\HttpFoundation\Session\SessionInterface;
 use Symfony\Component\HttpKernel\Event\RequestEvent;
 use Symfony\Component\HttpKernel\KernelEvents;
 use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
@@ -20,8 +21,12 @@ use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
  */
 final class TwoFactorSubscriber implements EventSubscriberInterface
 {
-    /** Ключ сессии: вход выполнен, но код второго фактора ещё не введён. */
-    public const SESSION_PENDING = '2fa_pending';
+    /**
+     * Ключ сессии: идентификатор пользователя, подтвердившего второй фактор в этой сессии.
+     * Проверка «от обратного» (нет отметки — нет доступа) не зависит от того, каким путём выполнен вход
+     * и не сбросилась ли сессия: пользователь с включённым вторым фактором без отметки видит только форму кода.
+     */
+    public const SESSION_VERIFIED = '2fa_verified';
 
     /** Ключ сессии: число неудачных попыток ввода кода. */
     public const SESSION_ATTEMPTS = '2fa_attempts';
@@ -44,6 +49,18 @@ final class TwoFactorSubscriber implements EventSubscriberInterface
         return [KernelEvents::REQUEST => ['onRequest', 7]];
     }
 
+    /** Подтверждён ли второй фактор этим пользователем в текущей сессии. */
+    public static function isVerified(SessionInterface $session, User $user): bool
+    {
+        return null !== $user->getId() && $session->get(self::SESSION_VERIFIED) === $user->getId();
+    }
+
+    public static function markVerified(SessionInterface $session, User $user): void
+    {
+        $session->set(self::SESSION_VERIFIED, $user->getId());
+        $session->remove(self::SESSION_ATTEMPTS);
+    }
+
     public function onRequest(RequestEvent $event): void
     {
         if (!$event->isMainRequest()) {
@@ -58,7 +75,7 @@ final class TwoFactorSubscriber implements EventSubscriberInterface
         if (!$user instanceof User) {
             return;
         }
-        if ($request->hasSession() && true === $request->getSession()->get(self::SESSION_PENDING)) {
+        if ($user->isTotpEnabled() && !($request->hasSession() && self::isVerified($request->getSession(), $user))) {
             if (\in_array($route, self::ALLOWED_ROUTES, true)) {
                 return;
             }

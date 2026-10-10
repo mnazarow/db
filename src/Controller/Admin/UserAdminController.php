@@ -11,6 +11,7 @@ use App\Repository\UserRepository;
 use App\Security\Ldap\LdapClient;
 use App\Security\Ldap\LdapException;
 use App\Service\UserManager;
+use Psr\Log\LoggerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\Form\FormError;
 use Symfony\Component\HttpFoundation\Request;
@@ -29,6 +30,7 @@ final class UserAdminController extends AbstractController
         private readonly UserManager $userManager,
         private readonly SectionModeratorRepository $moderators,
         private readonly LdapClient $ldap,
+        private readonly LoggerInterface $auditLogger,
     ) {
     }
 
@@ -160,6 +162,26 @@ final class UserAdminController extends AbstractController
         }
 
         return $this->redirectToRoute('admin_users');
+    }
+
+    /**
+     * Снимает привязку учётной записи к субъекту SSO. Нужна, когда у провайдера сменился издатель или
+     * идентификатор пользователя (перерегистрация приложения, пересоздание учётной записи): при следующем
+     * входе через SSO запись привяжется к новому идентификатору.
+     */
+    #[Route('/{id}/sso-unbind', name: 'admin_user_sso_unbind', requirements: ['id' => '\d+'], methods: ['POST'])]
+    public function ssoUnbind(User $user, Request $request, #[CurrentUser] User $actor): Response
+    {
+        $this->checkToken($request, $user);
+        if (null !== $user->getSsoSubject()) {
+            $old = $user->getSsoSubject();
+            $user->setSsoSubject(null);
+            $this->userManager->save($user, $actor);
+            $this->auditLogger->warning('Снята привязка учётной записи к SSO', ['user' => $user->getUsername(), 'subject' => $old, 'by' => $actor->getUsername()]);
+            $this->addFlash('success', 'Привязка к SSO снята: при следующем входе через SSO учётная запись привяжется к новому идентификатору пользователя у провайдера.');
+        }
+
+        return $this->redirectToRoute('admin_user_edit', ['id' => $user->getId()]);
     }
 
     #[Route('/{id}/delete', name: 'admin_user_delete', requirements: ['id' => '\d+'], methods: ['POST'])]

@@ -17,6 +17,9 @@ use App\Service\Notification\TelegramNotifier;
 use App\Service\PortalSettings;
 use App\Service\SubscriptionService;
 use App\Tests\PortalTestCase;
+use Symfony\Bundle\FrameworkBundle\Console\Application;
+use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\Console\Tester\CommandTester;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
 
 /**
@@ -243,11 +246,11 @@ final class DiscussionTest extends PortalTestCase
             new HttpResponse(200, '{"ok":true,"result":{"message_id":2}}'),
         );
         $stats = $this->telegram()->poll();
-        self::assertSame(['updates' => 1, 'linked' => 1, 'errors' => 0, 'messages' => []], $stats);
+        self::assertSame(['updates' => 1, 'linked' => 1, 'errors' => 0, 'skipped' => null, 'messages' => []], $stats);
         $this->em()->clear();
         self::assertSame('4004', $this->user('petrova')->getTelegramChatId());
         self::assertNull($this->user('petrova')->getTelegramCode(), 'код гасится после привязки');
-        self::assertSame(11, (int) $this->settings()->get(PortalSettings::TELEGRAM_OFFSET), 'смещение сдвигается, сообщения не разбираются дважды');
+        self::assertSame('123:11', $this->settings()->get(PortalSettings::TELEGRAM_OFFSET), 'смещение сдвигается, сообщения не разбираются дважды');
 
         // Устаревший код не срабатывает.
         $this->http()->reset();
@@ -274,6 +277,35 @@ final class DiscussionTest extends PortalTestCase
         $this->em()->clear();
         self::assertFalse($this->user('petrova')->hasTelegram());
 
+        // Следующий разбор продолжает с сохранённого места.
+        $this->http()->reset();
+        $this->http()->setDefault(new HttpResponse(200, '{"ok":true,"result":[]}'));
+        $this->telegram()->poll();
+        self::assertSame(31, json_decode((string) $this->http()->last()['body'], true)['offset']);
+
+        // Токен заменили на другого бота: его номера сообщений свои, прежнее смещение не используется
+        // (иначе Telegram считал бы новые сообщения уже прочитанными).
+        $this->settings()->setTelegram(['enabled' => true, 'token' => '456:OTHER', 'bot_name' => 'docportal_bot', 'api_url' => 'http://telegram.test', 'admin_chat' => '']);
+        $this->http()->reset();
+        $this->http()->setDefault(new HttpResponse(200, '{"ok":true,"result":[]}'));
+        $this->telegram()->poll();
+        self::assertArrayNotHasKey('offset', json_decode((string) $this->http()->last()['body'], true), 'для нового бота разбор начинается с начала очереди');
+        $this->settings()->setTelegram(['enabled' => true, 'token' => '123:TEST', 'bot_name' => 'docportal_bot', 'api_url' => 'http://telegram.test', 'admin_chat' => '']);
+
+        // Пока разбор идёт в другом процессе (своё соединение с базой — например, контейнер cron), второй
+        // запуск ничего не делает.
+        $other = \Doctrine\DBAL\DriverManager::getConnection($this->em()->getConnection()->getParams());
+        self::assertSame(1, (int) $other->fetchOne('SELECT GET_LOCK(?, 0)', [$this->telegram()->lockName()]));
+        $this->http()->reset();
+        try {
+            $stats = $this->telegram()->poll();
+        } finally {
+            $other->fetchOne('SELECT RELEASE_LOCK(?)', [$this->telegram()->lockName()]);
+            $other->close();
+        }
+        self::assertSame('busy', $stats['skipped']);
+        self::assertSame([], $this->http()->requests, 'к Bot API не обращались');
+
         // Проверка связи из панели администратора подставляет имя бота.
         $this->http()->reset();
         $this->http()->setDefault(new HttpResponse(200, '{"ok":true,"result":{"username":"portal_bot"}}'));
@@ -282,6 +314,63 @@ final class DiscussionTest extends PortalTestCase
         self::assertSame('portal_bot', $this->settings()->telegram()['bot_name']);
 
         $this->settings()->setTelegram(['enabled' => false, 'token' => '', 'bot_name' => '', 'api_url' => '', 'admin_chat' => '']);
+    }
+
+    public function testTelegramMessagesSurviveLengthAndMarkup(): void
+    {
+        $this->settings()->setTelegram(['enabled' => true, 'token' => '123:TEST', 'bot_name' => 'docportal_bot', 'api_url' => 'http://telegram.test', 'admin_chat' => '']);
+
+        // Короткое сообщение уходит с разметкой HTML.
+        $this->http()->reset();
+        $this->http()->setDefault(new HttpResponse(200, '{"ok":true,"result":{"message_id":1}}'));
+        self::assertTrue($this->telegram()->send('1001', '<b>Заголовок</b> &amp; текст')['ok']);
+        $payload = json_decode((string) $this->http()->last()['body'], true);
+        self::assertSame('HTML', $payload['parse_mode']);
+        self::assertSame('<b>Заголовок</b> &amp; текст', $payload['text']);
+
+        // Длинное сообщение нельзя обрезать посередине разметки: оно уходит простым текстом, в пределах
+        // ограничения Telegram (длина в символах UTF-16 — эмодзи занимают по два).
+        $this->http()->reset();
+        $this->http()->setDefault(new HttpResponse(200, '{"ok":true,"result":{"message_id":2}}'));
+        $long = '<b>Документ</b> '.str_repeat('💬 текст &amp; ещё ', 400);
+        self::assertTrue($this->telegram()->send('1001', $long)['ok']);
+        $payload = json_decode((string) $this->http()->last()['body'], true);
+        self::assertArrayNotHasKey('parse_mode', $payload);
+        self::assertStringStartsWith('Документ 💬 текст & ещё', $payload['text']);
+        self::assertStringEndsWith('…', $payload['text']);
+        self::assertLessThanOrEqual(4000, \strlen(mb_convert_encoding($payload['text'], 'UTF-16LE', 'UTF-8')) / 2);
+
+        // Разметку, которую Bot API не разобрал, отправка повторяет простым текстом.
+        $this->http()->reset();
+        $this->http()->enqueue(
+            new HttpResponse(400, '{"ok":false,"error_code":400,"description":"Bad Request: can\'t parse entities: Unsupported start tag \"x\" at byte offset 0"}'),
+            new HttpResponse(200, '{"ok":true,"result":{"message_id":3}}'),
+        );
+        self::assertTrue($this->telegram()->send('1001', '<x>Раздел</x> «Охрана труда»')['ok']);
+        self::assertCount(2, $this->http()->requests);
+        $payload = json_decode((string) $this->http()->last()['body'], true);
+        self::assertArrayNotHasKey('parse_mode', $payload);
+        self::assertSame('Раздел «Охрана труда»', $payload['text']);
+
+        // Произвольный текст из консоли уходит без разметки: «<» — обычный символ.
+        $this->http()->reset();
+        $this->http()->setDefault(new HttpResponse(200, '{"ok":true,"result":{"message_id":4}}'));
+        $tester = new CommandTester((new Application(self::$kernel))->find('app:telegram:poll'));
+        self::assertSame(0, $tester->execute(['--send' => 'Давление < 6 бар & выше', '--chat' => '1001']));
+        $payload = json_decode((string) $this->http()->last()['body'], true);
+        self::assertArrayNotHasKey('parse_mode', $payload);
+        self::assertSame('Давление < 6 бар & выше', $payload['text']);
+
+        // Разбор по расписанию молчит, когда сообщений нет, — журнал cron не засоряется.
+        $this->http()->reset();
+        $this->http()->setDefault(new HttpResponse(200, '{"ok":true,"result":[]}'));
+        self::assertSame(0, $tester->execute([]));
+        self::assertSame('', trim($tester->getDisplay()));
+        $this->settings()->setTelegram(['enabled' => false, 'token' => '', 'bot_name' => '', 'api_url' => '', 'admin_chat' => '']);
+        self::assertSame(0, $tester->execute([]));
+        self::assertSame('', trim($tester->getDisplay()), 'выключенные уведомления — тоже без вывода');
+        self::assertSame(0, $tester->execute([], ['verbosity' => OutputInterface::VERBOSITY_VERBOSE]));
+        self::assertStringContainsString('выключены', $tester->getDisplay());
     }
 
     public function testCommentLengthAndCleanup(): void

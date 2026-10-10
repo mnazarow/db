@@ -8,6 +8,7 @@
     <a class="btn btn--ghost" href="#llm">Описания через LLM</a>
     <a class="btn btn--ghost" href="#discussion">Обсуждение</a>
     <a class="btn btn--ghost" href="#telegram">Telegram</a>
+    <a class="btn btn--ghost" href="#onlyoffice">Редактор документов</a>
 {% endblock %}
 
 {% block admin_body %}
@@ -275,6 +276,70 @@
         <h3 class="h-sub">Массовая обработка</h3>
         <p>Для всех документов без описания: <code>docportal console app:documents:describe --missing</code> (порциями по <code>--limit=50</code>; в cron добавлен ежечасный запуск). Переформировать сгенерированные ранее: <code>--regenerate</code>; переписать и ручные: <code>--force</code>. Предпросмотр без записи: <code>--dry-run</code>.</p>
         <p>При импорте из каталога есть флажок «Сформировать описания через LLM» (в консоли — <code>--describe</code>). В карточке документа модераторам доступна кнопка «Описать через ИИ».</p>
+    </div>
+</div>
+
+<div class="grid grid--two" id="onlyoffice">
+    <div class="card card--form">
+        <div class="card__head"><h2 class="h-section">Редактор документов (ONLYOFFICE / Р7-Офис)</h2>
+            {% if onlyoffice.enabled and onlyoffice.url and onlyoffice.secret %}<span class="badge badge--done"><span class="badge__dot"></span>Подключён</span>{% elseif onlyoffice.enabled %}<span class="badge badge--overdue"><span class="badge__dot"></span>Не настроен</span>{% else %}<span class="badge badge--none"><span class="badge__dot"></span>Выключен</span>{% endif %}</div>
+        {% if app.request.secure and onlyoffice.url starts with 'http://' %}
+            <div class="alert alert--warning">Портал открыт по HTTPS, а сервер документов указан с http:// — браузеры не загрузят редактор со страницы HTTPS. Нужен адрес сервера документов с https://.</div>
+        {% endif %}
+        <p>Правка файлов Word, Excel и PowerPoint прямо в браузере, в том числе вместе. Когда все закрыли редактор, портал сохраняет файл новой версией документа (при обязательном согласовании — редакцией, ждущей решения). Нужен установленный в компании ONLYOFFICE Docs или «Р7-Офис. Сервер документов».</p>
+        <form method="post" action="{{ path('admin_integrations_onlyoffice') }}" class="form">
+            <input type="hidden" name="_token" value="{{ csrf_token('integrations') }}">
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="enabled" value="1" {{ onlyoffice.enabled ? 'checked' }}><span>Включить редактирование онлайн</span></label>
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="oo-url">Адрес сервера документов</label>
+                <input class="form-control" id="oo-url" name="url" type="url" placeholder="https://office.example.local" value="{{ onlyoffice.url }}">
+                <div class="form-help">Адрес, по которому сервер документов открывается в браузерах сотрудников: с него загружается редактор.</div>
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="oo-secret">Секрет JWT (обязательно)</label>
+                <input class="form-control" id="oo-secret" name="secret" type="password" autocomplete="new-password" placeholder="{{ onlyoffice.secret ? 'сохранён (' ~ onlyoffice.secret_masked ~ ') — введите новый, чтобы заменить' : 'не задан' }}">
+                <div class="form-help">Тот же, что на сервере документов (<code>services.CoAuthoring.secret</code> в local.json; в Docker — переменная <code>JWT_SECRET</code>).{% if onlyoffice.secret %} <label class="form-check form-check--inline"><input type="checkbox" name="clear_secret" value="1"><span>удалить секрет</span></label>{% endif %}</div>
+            </div>
+            <details class="form-row">
+                <summary>Дополнительно: внутренние адреса, заголовок токена</summary>
+                <div class="form-row">
+                    <label class="form-label" for="oo-internal">Внутренний адрес сервера документов</label>
+                    <input class="form-control" id="oo-internal" name="internal_url" type="url" placeholder="http://onlyoffice:80" value="{{ onlyoffice.internal_url }}">
+                    <div class="form-help">Если сервер портала обращается к серверу документов не по внешнему адресу (другая сеть, Docker). Пусто — внешний адрес.</div>
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="oo-portal">Адрес портала для сервера документов</label>
+                    <input class="form-control" id="oo-portal" name="portal_url" type="url" placeholder="http://10.0.0.5" value="{{ onlyoffice.portal_url }}">
+                    <div class="form-help">По нему сервер документов скачивает файлы и присылает уведомления о сохранении (без пути, только схема, имя и порт). Пусто — обычный адрес портала.</div>
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="oo-header">Заголовок с токеном</label>
+                    <input class="form-control form-control--inline" id="oo-header" name="header" type="text" placeholder="Authorization" value="{{ onlyoffice.header != 'Authorization' ? onlyoffice.header : '' }}">
+                    <div class="form-help">Если на сервере документов изменён <code>services.CoAuthoring.token.inbox.header</code>. Обычно не меняется.</div>
+                </div>
+            </details>
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="view" value="1" {{ onlyoffice.view ? 'checked' }}><span>Открывать офисные файлы в редакторе и для просмотра <span class="hints">— кнопка «Открыть в редакторе» у всех, кто видит документ</span></span></label>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn--pill btn--small">Сохранить</button>
+            </div>
+        </form>
+        {% if onlyoffice.url %}
+        <form method="post" action="{{ path('admin_integrations_onlyoffice_test') }}" class="form-actions">
+            <input type="hidden" name="_token" value="{{ csrf_token('integrations') }}">
+            <button type="submit" class="btn btn--ghost btn--small">Проверить соединение</button>
+        </form>
+        {% endif %}
+    </div>
+    <div class="card card--info">
+        <h2 class="h-section">Как это работает</h2>
+        <p><b>Правка.</b> Модератор раздела нажимает в карточке документа «Редактировать онлайн». Открывается последняя редакция; несколько человек могут править её одновременно. Новая версия появляется в портале примерно через 10 секунд после того, как последний участник закрыл редактор, — с отметкой «Изменено в редакторе онлайн».</p>
+        <p><b>Форматы.</b> Правятся: {{ onlyoffice.editable|map(e => e|upper)|join(', ') }}. Только просмотр: {{ onlyoffice.view_only|map(e => e|upper)|join(', ') }}.</p>
+        <p><b>Сеть.</b> Браузеры сотрудников должны открывать адрес сервера документов, а сервер документов — адрес портала (для файлов и уведомлений, например <code>{{ onlyoffice.callback_example|split('/onlyoffice/')|first }}/onlyoffice/…</code>). Ссылки для сервера документов подписаны отдельным ключом портала (файл — сутки, уведомления — неделю); изменённый файл скачивается только с сервера документов.</p>
+        <p><b>Безопасность.</b> На сервере документов должен быть включён JWT (по умолчанию включён в ONLYOFFICE Docs 7.2+), здесь — тот же секрет: им подписывается редактор и проверяется каждое уведомление о сохранении. Без секрета редактирование не включается. Выключение интеграции, смена адреса или секрета сразу отзывают все выданные ссылки; редактор доступен только сотрудникам, вошедшим в портал.</p>
     </div>
 </div>
 {% endblock %}

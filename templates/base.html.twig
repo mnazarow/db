@@ -33,7 +33,7 @@
 
         {% set route = app.request.attributes.get('_route') ?? '' %}
         {% if route != 'app_login' %}
-            <nav class="site-nav" aria-label="Основная навигация">
+            <nav class="site-nav" id="site-nav" aria-label="Основная навигация">
                 <a class="site-nav__link {{ route in ['app_home', 'app_section_show'] or route starts with 'app_document' ? 'is-active' }}" href="{{ path('app_home') }}">Документы</a>
                 {% if app.user and is_granted('MODERATOR') %}
                     <a class="site-nav__link {{ route == 'app_document_new' ? 'is-active' }}" href="{{ path('app_document_new') }}">Добавить документ</a>
@@ -41,6 +41,8 @@
                 {% if app.user and is_granted('ROLE_ADMIN') %}
                     <a class="site-nav__link {{ route starts with 'admin_' ? 'is-active' }}" href="{{ path('admin_dashboard') }}">Панель администратора</a>
                 {% endif %}
+                {# На узких экранах поле поиска в шапке скрыто — поиск доступен ссылкой в меню. #}
+                <a class="site-nav__link site-nav__link--search {{ route == 'app_search' ? 'is-active' }}" href="{{ path('app_search') }}">Поиск</a>
             </nav>
 
             <form class="header-search" action="{{ path('app_search') }}" method="get" role="search">
@@ -89,7 +91,7 @@
             </div>
         {% endif %}
         {% if route != 'app_login' %}
-            <button class="nav-toggle" type="button" aria-label="Открыть меню" aria-expanded="false" data-nav-toggle>
+            <button class="nav-toggle" type="button" aria-label="Меню" aria-controls="site-nav" aria-expanded="false" data-nav-toggle>
                 <span></span><span></span><span></span>
             </button>
         {% endif %}

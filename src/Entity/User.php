@@ -11,6 +11,7 @@ use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\Mapping as ORM;
 use Symfony\Bridge\Doctrine\Validator\Constraints\UniqueEntity;
 use Symfony\Component\Security\Core\User\PasswordAuthenticatedUserInterface;
+use Symfony\Component\Security\Core\User\EquatableInterface;
 use Symfony\Component\Security\Core\User\UserInterface;
 use Symfony\Component\Validator\Constraints as Assert;
 
@@ -26,9 +27,10 @@ use Symfony\Component\Validator\Constraints as Assert;
 #[ORM\Entity(repositoryClass: UserRepository::class)]
 #[ORM\Table(name: '`user`')]
 #[ORM\UniqueConstraint(name: 'uniq_user_username', columns: ['username'])]
+#[ORM\UniqueConstraint(name: 'uniq_user_sso_subject', columns: ['sso_subject'])]
 #[ORM\Index(name: 'idx_user_source', columns: ['auth_source'])]
 #[UniqueEntity(fields: ['username'], message: 'Пользователь с таким логином уже существует.')]
-class User implements UserInterface, PasswordAuthenticatedUserInterface
+class User implements UserInterface, PasswordAuthenticatedUserInterface, EquatableInterface
 {
     public const ROLE_USER = 'ROLE_USER';
     public const ROLE_ADMIN = 'ROLE_ADMIN';
@@ -77,6 +79,13 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
 
     #[ORM\Column(length: 512, nullable: true)]
     private ?string $ldapDn = null;
+
+    /**
+     * Постоянный идентификатор у провайдера SSO («issuer|sub»): учётная запись привязывается к нему
+     * при первом входе через SSO, и дальше войти в неё может только тот же пользователь провайдера.
+     */
+    #[ORM\Column(name: 'sso_subject', length: 255, nullable: true)]
+    private ?string $ssoSubject = null;
 
     #[ORM\Column(options: ['default' => true])]
     private bool $active = true;
@@ -277,6 +286,18 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
     public function setLdapDn(?string $ldapDn): static
     {
         $this->ldapDn = null === $ldapDn ? null : mb_substr($ldapDn, 0, 512);
+
+        return $this;
+    }
+
+    public function getSsoSubject(): ?string
+    {
+        return $this->ssoSubject;
+    }
+
+    public function setSsoSubject(?string $ssoSubject): static
+    {
+        $this->ssoSubject = null === $ssoSubject || '' === $ssoSubject ? null : mb_substr($ssoSubject, 0, 255);
 
         return $this;
     }
@@ -497,6 +518,26 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
     #[\Deprecated] // метод пустой: временные учётные данные в объекте не хранятся (требование Symfony 7.3+)
     public function eraseCredentials(): void
     {
+    }
+
+    /**
+     * Сравнение пользователя из сессии с актуальной записью из базы при каждом запросе: если учётную запись
+     * заблокировали, сменили пароль, права или способ входа — сессия завершается сразу, а не по истечении срока.
+     */
+    public function isEqualTo(UserInterface $user): bool
+    {
+        if (!$user instanceof self || !$user->isActive()) {
+            return false;
+        }
+        $roles = $this->getRoles();
+        $other = $user->getRoles();
+        sort($roles);
+        sort($other);
+
+        return $this->getUserIdentifier() === $user->getUserIdentifier()
+            && $this->getPassword() === $user->getPassword()
+            && $this->getAuthSource() === $user->getAuthSource()
+            && $roles === $other;
     }
 
     public function __toString(): string

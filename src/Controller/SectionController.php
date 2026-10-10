@@ -150,7 +150,11 @@ final class SectionController extends AbstractController
 
         if ($form->isSubmitted() && $form->isValid()) {
             $newParent = $section->getParent();
-            if (null !== $newParent && !$this->access->canManageSection($user, $newParent)) {
+            if (null === $newParent && null !== $oldParent && !$user->isAdmin()) {
+                // Сделать раздел разделом верхнего уровня может только администратор.
+                $section->setParent($oldParent);
+                $form->get('parent')->addError(new \Symfony\Component\Form\FormError('Выберите родительский раздел: переносить раздел на верхний уровень может только администратор.'));
+            } elseif (null !== $newParent && !$this->access->canManageSection($user, $newParent)) {
                 $form->get('parent')->addError(new \Symfony\Component\Form\FormError('У вас нет прав на выбранный родительский раздел.'));
             } else {
                 try {

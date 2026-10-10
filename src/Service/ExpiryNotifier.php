@@ -15,7 +15,6 @@ use Psr\Log\LoggerInterface;
 use Symfony\Bridge\Twig\Mime\TemplatedEmail;
 use Symfony\Component\Mailer\MailerInterface;
 use Symfony\Component\Mime\Address;
-use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
 
 /**
  * Контроль сроков актуальности: находит документы, срок которых истекает или истёк,
@@ -32,29 +31,31 @@ final class ExpiryNotifier
         private readonly UserRepository $users,
         private readonly Validity $validity,
         private readonly MailerInterface $mailer,
-        private readonly UrlGeneratorInterface $urlGenerator,
         private readonly LoggerInterface $auditLogger,
         private readonly string $mailFrom,
         private readonly bool $notifyAdmins,
         private readonly string $appName,
+        private readonly PortalUrl $portalUrl,
     ) {
     }
 
     /**
      * Проверяет сроки и отправляет уведомления.
      *
-     * @return array{checked: int, soon: int, expired: int, notified: int, emails: int, skipped: int, recipients: list<string>}
+     * @return array{checked: int, soon: int, expired: int, notified: int, emails: int, skipped: int, failed: int, recipients: list<string>}
      */
     public function run(bool $force = false, bool $dryRun = false): array
     {
         $today = $this->validity->today();
         $candidates = $this->documents->findExpiring($today, $this->validity->getSoonDays());
-        $stats = ['checked' => \count($candidates), 'soon' => 0, 'expired' => 0, 'notified' => 0, 'emails' => 0, 'skipped' => 0, 'recipients' => []];
+        $stats = ['checked' => \count($candidates), 'soon' => 0, 'expired' => 0, 'notified' => 0, 'emails' => 0, 'skipped' => 0, 'failed' => 0, 'recipients' => []];
 
         /** @var array<string, array{user: User, soon: list<Document>, expired: list<Document>}> $byRecipient */
         $byRecipient = [];
         $admins = $this->notifyAdmins ? $this->users->findActiveAdmins() : [];
 
+        /** @var list<array{document: Document, stage: int, expired: bool, recipients: list<User>}> $notices */
+        $notices = [];
         foreach ($candidates as $document) {
             $expired = $document->isExpired($today);
             $stage = $expired ? 2 : 1;
@@ -65,22 +66,17 @@ final class ExpiryNotifier
             }
             $recipients = $this->recipientsFor($document, $admins);
             foreach ($recipients as $user) {
-                $key = $user->getEmail() ?? ('#'.$user->getId());
+                $key = self::recipientKey($user);
                 $byRecipient[$key] ??= ['user' => $user, 'soon' => [], 'expired' => []];
                 $byRecipient[$key][$expired ? 'expired' : 'soon'][] = $document;
             }
             ++$stats['notified'];
-            if (!$dryRun) {
-                $document->setExpiryNoticeStage($stage);
-                $this->em->persist(new DocumentEvent($document, DocumentEvent::EXPIRY_NOTICE, null, null, null, [
-                    'stage' => $expired ? 'expired' : 'soon',
-                    'valid_until' => $document->getValidUntil()?->format('Y-m-d'),
-                    'recipients' => array_map(static fn (User $u) => $u->getUsername(), $recipients),
-                ]));
-            }
+            $notices[] = ['document' => $document, 'stage' => $stage, 'expired' => $expired, 'recipients' => $recipients];
         }
 
-        foreach ($byRecipient as $entry) {
+        /** @var array<string, bool> $delivered письмо получателю отправлено */
+        $delivered = [];
+        foreach ($byRecipient as $key => $entry) {
             $user = $entry['user'];
             if (null === $user->getEmail()) {
                 $this->auditLogger->warning('Уведомление о сроке не отправлено: у пользователя нет e-mail', ['user' => $user->getUsername()]);
@@ -93,8 +89,32 @@ final class ExpiryNotifier
             try {
                 $this->mailer->send($this->buildEmail($user, $entry['soon'], $entry['expired']));
                 ++$stats['emails'];
+                $delivered[$key] = true;
             } catch (\Throwable $e) {
+                $delivered[$key] = false;
                 $this->auditLogger->error('Ошибка отправки уведомления о сроках', ['user' => $user->getUsername(), 'error' => $e->getMessage()]);
+            }
+        }
+
+        if (!$dryRun) {
+            // Отметка «уведомление отправлено» ставится, только если письмо ушло хотя бы одному получателю
+            // (или отправлять было некому): при сбое почты уведомление повторится при следующей проверке.
+            foreach ($notices as $notice) {
+                $withEmail = array_values(array_filter($notice['recipients'], static fn (User $u): bool => null !== $u->getEmail()));
+                $sent = [] === $withEmail;
+                foreach ($withEmail as $user) {
+                    $sent = $sent || ($delivered[self::recipientKey($user)] ?? false);
+                }
+                if (!$sent) {
+                    ++$stats['failed'];
+                    continue;
+                }
+                $notice['document']->setExpiryNoticeStage($notice['stage']);
+                $this->em->persist(new DocumentEvent($notice['document'], DocumentEvent::EXPIRY_NOTICE, null, null, null, [
+                    'stage' => $notice['expired'] ? 'expired' : 'soon',
+                    'valid_until' => $notice['document']->getValidUntil()?->format('Y-m-d'),
+                    'recipients' => array_map(static fn (User $u) => $u->getUsername(), $notice['recipients']),
+                ]));
             }
         }
 
@@ -104,6 +124,11 @@ final class ExpiryNotifier
         $this->auditLogger->info('Проверка сроков актуальности', $stats);
 
         return $stats;
+    }
+
+    private static function recipientKey(User $user): string
+    {
+        return $user->getEmail() ?? ('#'.$user->getId());
     }
 
     /**
@@ -138,7 +163,7 @@ final class ExpiryNotifier
         $link = static fn (Document $d): string => $d->getTitle();
         $urls = [];
         foreach (array_merge($soon, $expired) as $d) {
-            $urls[$d->getId()] = $this->urlGenerator->generate('app_document_show', ['id' => $d->getId()], UrlGeneratorInterface::ABSOLUTE_URL);
+            $urls[$d->getId()] = $this->portalUrl->absolute('app_document_show', ['id' => $d->getId()]);
         }
 
         return (new TemplatedEmail())

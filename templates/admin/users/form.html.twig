@@ -42,6 +42,16 @@
                 <a class="btn btn--ghost" href="{{ path('admin_users') }}">Отмена</a>
             </div>
         {{ form_end(form) }}
+        {% if not is_new and user.ssoSubject %}
+            <div class="sso-binding">
+                <h3 class="h-small">Вход через SSO</h3>
+                <p class="form-help">Учётная запись привязана к пользователю провайдера <code>{{ user.ssoSubject }}</code>. Если у провайдера сменился адрес (издатель) или идентификатор сотрудника, снимите привязку — при следующем входе через SSO запись привяжется заново.</p>
+                <form method="post" action="{{ path('admin_user_sso_unbind', {id: user.id}) }}" class="inline-form" data-confirm="Снять привязку учётной записи «{{ user.username }}» к SSO? Следующий вход через SSO с этим логином привяжет её к новому пользователю провайдера.">
+                    <input type="hidden" name="_token" value="{{ csrf_token('user_' ~ user.id) }}">
+                    <button type="submit" class="btn btn--ghost btn--small">Снять привязку к SSO</button>
+                </form>
+            </div>
+        {% endif %}
     </div>
     <div class="card card--info">
         <h2 class="h-section">Роли и права</h2>

@@ -151,4 +151,88 @@ final class AccessTest extends PortalTestCase
         $this->client->followRedirect();
         self::assertSelectorTextContains('.user-chip__name', 'Смирнов');
     }
+
+    public function testBlockedUserLosesSessionAndIsNotEnumerable(): void
+    {
+        $this->loginAs('smirnov');
+        $this->client->request('GET', '/profile/subscriptions');
+        self::assertResponseIsSuccessful();
+
+        // Администратор блокирует учётную запись — открытая сессия завершается со следующего запроса.
+        $this->user('smirnov')->setActive(false);
+        $this->em()->flush();
+        try {
+            $this->client->request('GET', '/profile/subscriptions');
+            self::assertResponseRedirects('/login', null, 'сессия заблокированного пользователя не действует');
+
+            // Неверный пароль заблокированного — обычное «неверный логин или пароль», без признака блокировки.
+            $this->client->getCookieJar()->clear();
+            $crawler = $this->client->request('GET', '/login');
+            $this->client->submit($crawler->selectButton('Войти')->form(['_username' => 'smirnov', '_password' => 'wrong']));
+            $crawler = $this->client->followRedirect();
+            self::assertSelectorTextContains('.alert--danger', 'Неверный логин или пароль');
+            // С верным паролем — сообщение о блокировке, но вход не выполняется.
+            $this->client->submit($crawler->selectButton('Войти')->form(['_username' => 'smirnov', '_password' => 'Demo12345']));
+            self::assertResponseRedirects('/login');
+            $this->client->followRedirect();
+            self::assertSelectorTextContains('.alert--danger', 'заблокирована');
+        } finally {
+            $this->em()->clear();
+            $this->user('smirnov')->setActive(true);
+            $this->em()->flush();
+            static::getContainer()->get('app.login_limiter_pool')->clear();
+        }
+    }
+
+    public function testModeratorCannotMoveSubsectionToTopLevel(): void
+    {
+        $this->loginAs('petrova'); // модератор «ИТ»
+        $workplace = $this->section('Рабочее место');
+        $parentId = $workplace->getParent()?->getId();
+        $crawler = $this->client->request('GET', '/sections/'.$workplace->getId().'/edit');
+        self::assertResponseIsSuccessful();
+        $form = $crawler->filter('form[name="section"]')->form();
+        $values = $form->getPhpValues();
+        $values['section']['parent'] = '';
+        $this->client->request('POST', '/sections/'.$workplace->getId().'/edit', $values);
+        self::assertResponseStatusCodeSame(422, 'форма показывается снова с ошибкой');
+        self::assertStringContainsString('только администратор', (string) $this->client->getResponse()->getContent());
+        $this->em()->clear();
+        self::assertSame($parentId, $this->section('Рабочее место')->getParent()?->getId());
+    }
+
+    public function testLinkedDocumentsHiddenFromThoseWhoCannotSeeThem(): void
+    {
+        // Связь с черновиком: гость и читатель его названия не видят, модератор раздела — видит.
+        $open = $this->document('ПОЛ-001');
+        $draft = $this->document('ИБ-003');
+        $link = new \App\Entity\DocumentLink($open, $draft, \App\Entity\DocumentLink::RELATED, $this->user('admin'));
+        $this->em()->persist($link);
+        $this->em()->flush();
+        $linkId = $link->getId();
+        try {
+            $this->client->request('GET', '/documents/'.$open->getId());
+            self::assertResponseIsSuccessful();
+            self::assertStringNotContainsString($draft->getTitle(), (string) $this->client->getResponse()->getContent());
+            $this->loginAs('admin');
+            $this->client->request('GET', '/documents/'.$open->getId());
+            self::assertStringContainsString($draft->getTitle(), (string) $this->client->getResponse()->getContent());
+
+            // Модератор не может связать свой документ с документом, которого не видит.
+            $this->loginAs('sidorov');
+            $own = $this->document('ТК-040');
+            $crawler = $this->client->request('GET', '/documents/'.$own->getId());
+            $token = (string) $crawler->filter('form.doc-links__form input[name="_token"]')->attr('value');
+            $this->client->request('POST', '/documents/'.$own->getId().'/links', ['_token' => $token, 'type' => 'related', 'target' => (string) $draft->getId()]);
+            $this->client->followRedirect();
+            self::assertStringContainsString('Документ не найден', (string) $this->client->getResponse()->getContent());
+        } finally {
+            $this->em()->clear();
+            $stale = $this->em()->find(\App\Entity\DocumentLink::class, $linkId);
+            if (null !== $stale) {
+                $this->em()->remove($stale);
+                $this->em()->flush();
+            }
+        }
+    }
 }

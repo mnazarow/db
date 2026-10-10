@@ -8,6 +8,7 @@ use App\Entity\User;
 use App\Repository\UserRepository;
 use App\Security\PortalAuthenticator;
 use App\Service\PortalSettings;
+use App\Service\UserManager;
 use App\Service\Sso\OidcClient;
 use App\Service\Sso\SsoException;
 use Doctrine\ORM\EntityManagerInterface;
@@ -35,6 +36,7 @@ final class SsoController extends AbstractController
         private readonly EntityManagerInterface $em,
         private readonly Security $security,
         private readonly LoggerInterface $auditLogger,
+        private readonly UserManager $userManager,
     ) {
     }
 
@@ -123,12 +125,28 @@ final class SsoController extends AbstractController
         }
         // Логин из UPN вида user@domain приводим к короткому виду — так его заводят в портале.
         $username = mb_strtolower(explode('@', $username)[0]);
-        $existing = $this->users->findOneByUsername($username);
+        // Учётная запись привязывается к постоянному идентификатору пользователя у провайдера (iss + sub),
+        // а не только к логину: логин из утверждений может совпасть с чужой учётной записью портала.
+        $sub = trim((string) ($claims['sub'] ?? ''));
+        if ('' === $sub) {
+            throw new SsoException('Провайдер не передал идентификатор пользователя (утверждение sub).');
+        }
+        $subject = rtrim(trim((string) ($claims['iss'] ?? $sso['issuer'])), '/').'|'.$sub;
+        $existing = $this->users->findOneBy(['ssoSubject' => $subject]) ?? $this->users->findOneByUsername($username);
+        if (null !== $existing) {
+            if (null !== $existing->getSsoSubject() && $existing->getSsoSubject() !== $subject) {
+                throw new SsoException('Логин «'.$username.'» уже связан с другой учётной записью провайдера. Обратитесь к администратору портала.');
+            }
+            if (null === $existing->getSsoSubject() && $existing->isLocal()) {
+                // Локальную учётную запись (например, администратора портала) нельзя «перехватить» через SSO.
+                throw new SsoException('Учётная запись «'.$username.'» — локальная учётная запись портала, вход в неё через SSO не разрешён. Войдите по паролю или обратитесь к администратору.');
+            }
+        }
         if (null === $existing && !$sso['create_users']) {
             throw new SsoException('Пользователь «'.$username.'» не заведён в портале, а автоматическое создание выключено.');
         }
         $user = $existing ?? (new User())->setUsername($username)->setActive(true);
-        $user->setAuthSource(User::SOURCE_SSO)->setPassword('')->setMustChangePassword(false);
+        $user->setAuthSource(User::SOURCE_SSO)->setPassword('')->setMustChangePassword(false)->setSsoSubject($subject);
         $name = trim((string) ($claims[$sso['name_claim']] ?? ''));
         $user->setDisplayName('' !== $name ? $name : $username);
         $email = trim((string) ($claims[$sso['email_claim']] ?? ''));
@@ -145,7 +163,7 @@ final class SsoController extends AbstractController
         if ('' !== $sso['admin_claim'] && '' !== $sso['admin_value']) {
             $value = $claims[$sso['admin_claim']] ?? null;
             $values = array_map('strval', \is_array($value) ? $value : [$value]);
-            $user->setAdmin(\in_array($sso['admin_value'], $values, true));
+            $this->userManager->syncAdminFromDirectory($user, \in_array($sso['admin_value'], $values, true), 'SSO');
         }
         if (null === $existing) {
             $this->em->persist($user);

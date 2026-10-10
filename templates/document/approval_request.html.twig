@@ -22,6 +22,9 @@
             <h2 class="h-section">Кому отправить</h2>
             <p>Согласующий получит письмо и увидит документ в разделе «Мне на согласование». Решение относится
                 к <b>редакции {{ version }}</b>: после загрузки новой версии согласование запрашивается заново.</p>
+            {% if new_edition %}
+                <p class="alert alert--info">Документ опубликован: на согласование уходит новая редакция {{ version }}. До решения сотрудники видят редакцию {{ current_number }}{{ approval_auto_publish|default(false) ? ', после согласования новая редакция вступит в силу автоматически' : '' }}.</p>
+            {% endif %}
             <form method="post" class="form">
                 <input type="hidden" name="_token" value="{{ csrf_token('approval_' ~ document.id) }}">
                 <div class="form-row">

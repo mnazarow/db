@@ -15,6 +15,7 @@
             </div>
             <div class="hero__actions">
                 {% if enabled %}<a class="btn btn--ghost" href="{{ path('app_section_materials_export', {id: section.id}) }}">Выгрузить в Excel</a>{% endif %}
+                {% if enabled %}<a class="btn btn--ghost" href="{{ path('app_section_materials_history', {id: section.id}) }}">Журнал изменений</a>{% endif %}
                 {% if is_granted('ROLE_ADMIN') %}<a class="btn btn--ghost" href="{{ path('admin_materials') }}">Сводная по категориям</a>{% endif %}
                 <a class="btn btn--ghost" href="{{ path('app_section_show', {id: section.id}) }}">Документы раздела</a>
             </div>
@@ -25,7 +26,18 @@
 <section class="container section">
     {% include '_flashes.html.twig' %}
 
-    {% if not enabled %}
+    {% if orphaned|default(0) > 0 %}
+        <div class="card card--info">
+            <h2 class="h-section">Раздел больше не верхнего уровня</h2>
+            <p>Таблица материалов ведётся только для разделов верхнего уровня, а этот раздел перенесён в другой раздел. Строки таблицы ({{ orphaned }}) сохранены: перенесите раздел обратно на верхний уровень, чтобы снова с ними работать{% if is_granted('ROLE_ADMIN') %}, или удалите таблицу — документы, загруженные из строк, останутся в разделе{% endif %}.</p>
+            {% if is_granted('ROLE_ADMIN') %}
+                <form method="post" action="{{ path('app_section_materials_purge', {id: section.id}) }}" class="inline-form" data-confirm="Удалить таблицу материалов раздела «{{ section.name }}» ({{ orphaned }} строк)? Документы останутся в разделе, строки и столбцы таблицы будут удалены.">
+                    <input type="hidden" name="_token" value="{{ csrf_token('materials_' ~ section.id) }}">
+                    <button type="submit" class="btn btn--ghost btn--small btn--danger">Удалить таблицу материалов</button>
+                </form>
+            {% endif %}
+        </div>
+    {% elseif not enabled %}
         <div class="card card--info">
             <h2 class="h-section">Таблица материалов не включена</h2>
             <p>Таблица — как лист Excel «Продуктовые материалы»: каждая строка — материал (каталог, паспорт, опросный лист…) с типом, состоянием, версией, датой обновления, проверками «Требования PM» и «Дизайн-требования», ссылкой и комментарием. К строке можно сразу загрузить файл — он появится среди документов раздела.</p>
@@ -34,6 +46,15 @@
                 <button type="submit" class="btn btn--pill">Включить таблицу</button>
             </form>
             {% if is_granted('ROLE_ADMIN') %}<p class="hints">Или загрузите книгу Excel целиком: <a href="{{ path('admin_materials_import') }}">Панель администратора → Материалы → Импорт из Excel</a>.</p>{% endif %}
+            {% if hidden_rows|default(0) > 0 %}
+                <p class="hints">Таблица скрыта, её строки ({{ hidden_rows }}) сохранены и вернутся при включении.</p>
+                {% if is_granted('ROLE_ADMIN') %}
+                    <form method="post" action="{{ path('app_section_materials_purge', {id: section.id}) }}" class="inline-form" data-confirm="Удалить скрытую таблицу материалов раздела «{{ section.name }}» ({{ hidden_rows }} строк)? Документы останутся в разделе, строки и столбцы таблицы будут удалены.">
+                        <input type="hidden" name="_token" value="{{ csrf_token('materials_' ~ section.id) }}">
+                        <button type="submit" class="btn btn--ghost btn--small btn--danger">Удалить таблицу материалов</button>
+                    </form>
+                {% endif %}
+            {% endif %}
         </div>
     {% else %}
         <div class="mt-summary" data-mt-summary>
@@ -91,10 +112,16 @@
         </div>
 
         {% if is_granted('ROLE_ADMIN') %}
-            <form method="post" action="{{ path('app_section_materials_disable', {id: section.id}) }}" class="inline-form mt-disable" data-confirm="Скрыть таблицу материалов раздела? Данные сохранятся и вернутся при повторном включении.">
-                <input type="hidden" name="_token" value="{{ csrf_token('materials_' ~ section.id) }}">
-                <button type="submit" class="btn btn--ghost btn--small">Скрыть таблицу материалов</button>
-            </form>
+            <div class="mt-disable">
+                <form method="post" action="{{ path('app_section_materials_disable', {id: section.id}) }}" class="inline-form" data-confirm="Скрыть таблицу материалов раздела? Данные сохранятся и вернутся при повторном включении.">
+                    <input type="hidden" name="_token" value="{{ csrf_token('materials_' ~ section.id) }}">
+                    <button type="submit" class="btn btn--ghost btn--small">Скрыть таблицу материалов</button>
+                </form>
+                <form method="post" action="{{ path('app_section_materials_purge', {id: section.id}) }}" class="inline-form" data-confirm="Удалить таблицу материалов раздела «{{ section.name }}» целиком — все строки и столбцы? Документы, загруженные из строк, останутся в разделе. Отменить удаление нельзя — при необходимости сначала выгрузите таблицу в Excel.">
+                    <input type="hidden" name="_token" value="{{ csrf_token('materials_' ~ section.id) }}">
+                    <button type="submit" class="btn btn--ghost btn--small btn--danger">Удалить таблицу…</button>
+                </form>
+            </div>
         {% endif %}
 
         <input type="file" hidden data-mt-file accept="{{ accept }}">
@@ -132,6 +159,16 @@
                     <button type="button" class="btn btn--ghost btn--small btn--danger" data-mt-column-delete>Удалить столбец</button>
                 </div>
             </form>
+        </dialog>
+
+        <dialog class="mt-dialog mt-dialog--history" data-mt-history aria-labelledby="mt-history-title">
+            <h2 class="h-section" id="mt-history-title" data-mt-history-title>История изменений</h2>
+            <div class="mt-history-dialog__body" data-mt-history-body></div>
+            <div class="form-actions mt-dialog__actions">
+                <a class="btn btn--ghost btn--small" href="{{ path('app_section_materials_history', {id: section.id}) }}">Журнал всей таблицы</a>
+                <span class="mt-toolbar__spacer"></span>
+                <button type="button" class="btn btn--pill btn--small" data-mt-history-close>Закрыть</button>
+            </div>
         </dialog>
 
         <div class="mt-toast" data-mt-toast role="status" aria-live="polite" hidden></div>

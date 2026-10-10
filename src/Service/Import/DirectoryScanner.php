@@ -42,7 +42,7 @@ final class DirectoryScanner
         if (!is_readable($real)) {
             throw new \InvalidArgumentException('Нет прав на чтение каталога: '.$dir);
         }
-        $plan = new ImportPlan($real, basename($real));
+        $plan = new ImportPlan($real, self::displayName(basename($real)));
         $maxDepth = Section::MAX_DEPTH - 1; // максимальная допустимая глубина раздела
 
         // Глубина раздела, соответствующего корню импорта.
@@ -50,24 +50,26 @@ final class DirectoryScanner
         $rootHasSection = $options->rootAsSection || null !== $options->targetSectionId;
 
         if ($options->rootAsSection) {
-            $entry = ['type' => 'dir', 'path' => '', 'name' => self::sectionName(basename($real)), 'dir' => null, 'depth' => 0, 'skip' => null, 'descFile' => null];
+            $entry = ['type' => 'dir', 'path' => '', 'name' => self::sectionName(self::displayName(basename($real))), 'dir' => null, 'depth' => 0, 'skip' => null, 'descFile' => null];
             if ($rootDepth > $maxDepth) {
                 throw new \InvalidArgumentException(\sprintf('Целевой раздел уже находится на максимальной глубине (%d уровней) — создать в нём раздел нельзя.', Section::MAX_DEPTH));
             }
             $plan->entries[] = $entry;
-            $this->walk($plan, $options, $real, '', \count($plan->entries) - 1, 0, $rootDepth, $maxDepth, $rootHasSection, '');
+            $this->walk($plan, $options, $real, '', '', \count($plan->entries) - 1, 0, $rootDepth, $maxDepth, $rootHasSection, '');
         } else {
-            $this->walk($plan, $options, $real, '', null, 0, $rootDepth, $maxDepth, $rootHasSection, '');
+            $this->walk($plan, $options, $real, '', '', null, 0, $rootDepth, $maxDepth, $rootHasSection, '');
         }
 
         return $plan;
     }
 
     /**
+     * @param string   $rel        путь папки относительно корня импорта для показа (в UTF-8)
+     * @param string   $relRaw     тот же путь в байтах файловой системы (имена в CP866/CP1251 из архивов Windows)
      * @param int|null $dirIndex   индекс элемента плана для этой папки (null — папка не становится разделом)
      * @param string   $sectionKey ключ папки, в раздел которой попадут файлы этой папки (с учётом «сплющивания» глубоких папок)
      */
-    private function walk(ImportPlan $plan, ImportOptions $options, string $abs, string $rel, ?int $dirIndex, int $relDepth, int $sectionDepth, int $maxDepth, bool $hasSection, string $sectionKey): void
+    private function walk(ImportPlan $plan, ImportOptions $options, string $abs, string $rel, string $relRaw, ?int $dirIndex, int $relDepth, int $sectionDepth, int $maxDepth, bool $hasSection, string $sectionKey): void
     {
         $names = @scandir($abs, \SCANDIR_SORT_NONE);
         if (false === $names) {
@@ -81,7 +83,7 @@ final class DirectoryScanner
             }
             $path = $abs.'/'.$name;
             if (is_link($path)) {
-                $plan->entries[] = ['type' => 'file', 'path' => ltrim($rel.'/'.$name, '/'), 'name' => $name, 'dir' => $sectionKey, 'size' => 0, 'skip' => ImportPlan::SKIP_LINK];
+                $plan->entries[] = self::withRaw(['type' => 'file', 'path' => ltrim($rel.'/'.self::displayName($name), '/'), 'name' => self::displayName($name), 'dir' => $sectionKey, 'size' => 0, 'skip' => ImportPlan::SKIP_LINK], $relRaw, $name);
                 continue;
             }
             if (is_dir($path)) {
@@ -97,20 +99,22 @@ final class DirectoryScanner
         $descFile = null;
         if (null !== $dirIndex) {
             foreach ($files as $name) {
-                if (self::isDescriptionFile($name)) {
+                if (self::isDescriptionFile(self::displayName($name))) {
                     $descFile = $name;
                     break;
                 }
             }
-            $plan->entries[$dirIndex]['descFile'] = $descFile;
+            // Имя файла описания в JSON плана — только в UTF-8 (иначе описание просто не берётся).
+            $plan->entries[$dirIndex]['descFile'] = null !== $descFile && mb_check_encoding($descFile, 'UTF-8') ? $descFile : null;
         }
 
         foreach ($files as $name) {
             $path = $abs.'/'.$name;
-            $entry = ['type' => 'file', 'path' => ltrim($rel.'/'.$name, '/'), 'name' => $name, 'dir' => $sectionKey, 'size' => (int) @filesize($path), 'skip' => null];
+            $display = self::displayName($name);
+            $entry = self::withRaw(['type' => 'file', 'path' => ltrim($rel.'/'.$display, '/'), 'name' => $display, 'dir' => $sectionKey, 'size' => (int) @filesize($path), 'skip' => null], $relRaw, $name);
             if ($name === $descFile) {
                 $entry['skip'] = ImportPlan::SKIP_DESC;
-            } elseif (self::isSystemName($name)) {
+            } elseif (self::isSystemName($display)) {
                 $entry['skip'] = ImportPlan::SKIP_SYSTEM;
             } elseif (!$hasSection) {
                 $entry['skip'] = ImportPlan::SKIP_NO_SECTION;
@@ -120,20 +124,22 @@ final class DirectoryScanner
                 $entry['skip'] = ImportPlan::SKIP_EMPTY;
             } elseif ($entry['size'] > $this->storage->getUploadMaxBytes()) {
                 $entry['skip'] = ImportPlan::SKIP_BIG;
-            } elseif (!$options->anyExtension && !$this->storage->isExtensionAllowed(pathinfo($name, \PATHINFO_EXTENSION))) {
+            } elseif (!$options->anyExtension && !$this->storage->isExtensionAllowed(pathinfo($display, \PATHINFO_EXTENSION))) {
                 $entry['skip'] = ImportPlan::SKIP_EXT;
             }
             $plan->entries[] = $entry;
         }
 
         foreach ($dirs as $name) {
-            if (self::isSystemName($name)) {
-                $plan->entries[] = ['type' => 'dir', 'path' => ltrim($rel.'/'.$name, '/'), 'name' => $name, 'dir' => $sectionKey, 'depth' => $relDepth + 1, 'skip' => ImportPlan::SKIP_SYSTEM, 'descFile' => null];
+            $display = self::displayName($name);
+            if (self::isSystemName($display)) {
+                $plan->entries[] = self::withRaw(['type' => 'dir', 'path' => ltrim($rel.'/'.$display, '/'), 'name' => $display, 'dir' => $sectionKey, 'depth' => $relDepth + 1, 'skip' => ImportPlan::SKIP_SYSTEM, 'descFile' => null], $relRaw, $name);
                 continue;
             }
-            $childRel = ltrim($rel.'/'.$name, '/');
+            $childRel = ltrim($rel.'/'.$display, '/');
+            $childRaw = ltrim($relRaw.'/'.$name, '/');
             $childDepth = $sectionDepth + 1;
-            $entry = ['type' => 'dir', 'path' => $childRel, 'name' => self::sectionName($name), 'dir' => $sectionKey, 'depth' => $relDepth + 1, 'skip' => null, 'descFile' => null];
+            $entry = self::withRaw(['type' => 'dir', 'path' => $childRel, 'name' => self::sectionName($display), 'dir' => $sectionKey, 'depth' => $relDepth + 1, 'skip' => null, 'descFile' => null], $relRaw, $name);
             $tooDeep = $childDepth > $maxDepth;
             if ($tooDeep) {
                 $entry['skip'] = ImportPlan::SKIP_DEPTH;
@@ -141,8 +147,63 @@ final class DirectoryScanner
             $plan->entries[] = $entry;
             $index = \count($plan->entries) - 1;
             // Файлы слишком глубокой папки попадают в ближайший допустимый раздел (ключ родителя).
-            $this->walk($plan, $options, $abs.'/'.$name, $childRel, $tooDeep ? null : $index, $relDepth + 1, $tooDeep ? $sectionDepth : $childDepth, $maxDepth, true, $tooDeep ? $sectionKey : $childRel);
+            $this->walk($plan, $options, $abs.'/'.$name, $childRel, $childRaw, $tooDeep ? null : $index, $relDepth + 1, $tooDeep ? $sectionDepth : $childDepth, $maxDepth, true, $tooDeep ? $sectionKey : $childRel);
         }
+    }
+
+    /**
+     * Имя файла или папки для показа и названия документа — в UTF-8. Имена из архивов Windows бывают
+     * в CP866 (zip «Проводника») или CP1251: перекодируются в ту кодировку, где получается больше русских
+     * букв; неузнанные байты заменяются «?». Иначе план импорта (JSON) и база данных их не примут.
+     */
+    public static function displayName(string $raw): string
+    {
+        $utf8 = mb_check_encoding($raw, 'UTF-8');
+        // Корректный UTF-8 берётся как есть. Исключение — символы дальних плоскостей Юникода (редкие
+        // иероглифы и неназначенные области): так «выглядят» имена в CP866, байты которых случайно
+        // образуют допустимые последовательности UTF-8 (например, «Ёлка»).
+        if ($utf8 && 1 !== preg_match('/[\x{20000}-\x{10FFFF}]/u', $raw)) {
+            return $raw;
+        }
+        $best = null;
+        $bestScore = \PHP_INT_MIN;
+        // Только кодировки Windows: KOI8-R зеркально меняет регистр букв CP1251 и «выигрывала» у имён,
+        // набранных прописными («ГОСТ», «ПРИКАЗ»). При равном счёте выбирается CP1251 (она первая).
+        foreach (['Windows-1251', 'CP866'] as $encoding) {
+            $converted = @iconv($encoding, 'UTF-8//IGNORE', $raw);
+            if (false === $converted || '' === $converted) {
+                continue;
+            }
+            // Буквы любого регистра — в плюс; псевдографика и управляющие символы — в минус.
+            $score = preg_match_all('/[а-яёА-ЯЁ]/u', $converted)
+                - preg_match_all('/[\x{2500}-\x{25FF}\x{0080}-\x{00BF}]/u', $converted) * 3;
+            if ($score > $bestScore) {
+                $best = $converted;
+                $bestScore = $score;
+            }
+        }
+        if ($utf8 && $bestScore <= 0) {
+            return $raw; // русских букв в других кодировках не нашлось — это действительно UTF-8
+        }
+
+        return $best ?? mb_scrub($raw, 'UTF-8');
+    }
+
+    /**
+     * Добавляет к элементу плана исходный путь в байтах (base64), если имя пришлось перекодировать.
+     *
+     * @param array<string, mixed> $entry
+     *
+     * @return array<string, mixed>
+     */
+    private static function withRaw(array $entry, string $relRaw, string $name): array
+    {
+        $raw = ltrim($relRaw.'/'.$name, '/');
+        if ($raw !== $entry['path']) {
+            $entry['raw'] = base64_encode($raw);
+        }
+
+        return $entry;
     }
 
     public static function isSystemName(string $name): bool
@@ -199,7 +260,7 @@ final class DirectoryScanner
     /**
      * Подкаталоги каталога импорта с числом папок, файлов и общим размером (для выбора в панели администратора).
      *
-     * @return list<array{name: string, dirs: int, files: int, bytes: int, mtime: int}>
+     * @return list<array{name: string, value: string, dirs: int, files: int, bytes: int, mtime: int}>
      */
     public function listSubdirectories(string $importDir): array
     {
@@ -212,7 +273,9 @@ final class DirectoryScanner
                 continue;
             }
             $stat = $this->countTree($path);
-            $out[] = ['name' => $name, 'dirs' => $stat['dirs'], 'files' => $stat['files'], 'bytes' => $stat['bytes'], 'mtime' => (int) @filemtime($path)];
+            // value — то, что вернётся из формы: имя не в UTF-8 передаётся в base64 (см. ImportAdminController::resolve()).
+            $display = self::displayName($name);
+            $out[] = ['name' => $display, 'value' => $display === $name ? $name : 'b64:'.base64_encode($name), 'dirs' => $stat['dirs'], 'files' => $stat['files'], 'bytes' => $stat['bytes'], 'mtime' => (int) @filemtime($path)];
         }
 
         return $out;

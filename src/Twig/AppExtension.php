@@ -49,7 +49,7 @@ final class AppExtension extends AbstractExtension
     {
         $user = $this->security->getUser();
 
-        return $user instanceof User ? $this->acknowledgements->countPendingForUser($user) : 0;
+        return $user instanceof User ? $this->acknowledgements->countPendingForUser($user, $this->access->viewer($user)) : 0;
     }
 
     /** Сколько документов ждут согласования текущего пользователя (значок в шапке). */

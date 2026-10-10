@@ -38,6 +38,13 @@ framework:
             limit: '%env(int:LOGIN_MAX_ATTEMPTS_GLOBAL)%'
             interval: '%env(LOGIN_ATTEMPT_INTERVAL)%'
             cache_pool: app.login_limiter_pool
+        # Неверные коды второго фактора — по пользователю, независимо от сессии и IP: без этого
+        # знающий пароль мог перебирать коды, входя заново после каждых пяти попыток.
+        two_factor:
+            policy: fixed_window
+            limit: 10
+            interval: '15 minutes'
+            cache_pool: app.login_limiter_pool
 
     cache:
         app: cache.adapter.filesystem
@@ -60,7 +67,8 @@ framework:
                 allowed_link_schemes: ['http', 'https', 'mailto', 'tel']
                 allowed_media_schemes: ['http', 'https', 'data']
                 force_https_urls: false
-                max_input_length: 4000000
+                # = DocumentManager::MAX_PAGE_BYTES (12 МБ): длинный текст отклоняется с сообщением, а не обрезается.
+                max_input_length: 12582912
                 allow_elements:
                     img: ['src', 'alt', 'width', 'height', 'title']
                     a: ['href', 'title', 'target', 'rel']

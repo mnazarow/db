@@ -29,7 +29,6 @@ use Symfony\Component\Validator\Constraints as Assert;
 #[ORM\Index(name: 'idx_document_updated', columns: ['updated_at'])]
 #[ORM\Index(name: 'idx_document_code', columns: ['code'])]
 #[ORM\Index(name: 'idx_document_public', columns: ['status', 'is_public'])]
-#[ORM\HasLifecycleCallbacks]
 class Document
 {
     public const TYPE_FILE = 'file';
@@ -129,8 +128,13 @@ class Document
     #[ORM\OrderBy(['number' => 'DESC'])]
     private Collection $versions;
 
-    /** @var Collection<int, DocumentEvent> */
-    #[ORM\OneToMany(targetEntity: DocumentEvent::class, mappedBy: 'document', cascade: ['persist', 'remove'])]
+    /**
+     * События удаляются вместе с документом внешним ключом (ON DELETE CASCADE): без cascade remove
+     * Doctrine не загружает при удалении документа тысячи записей о просмотрах.
+     *
+     * @var Collection<int, DocumentEvent>
+     */
+    #[ORM\OneToMany(targetEntity: DocumentEvent::class, mappedBy: 'document', cascade: ['persist'])]
     private Collection $events;
 
     #[ORM\Column(type: Types::DATE_IMMUTABLE, nullable: true)]
@@ -218,9 +222,12 @@ class Document
     public function setAllowedDepartments(array $departments): static
     {
         $clean = [];
+        $seen = [];
         foreach ($departments as $department) {
-            $department = trim(str_replace('|', ' ', (string) $department));
-            if ('' !== $department && !\in_array($department, $clean, true)) {
+            $department = self::cleanDepartment((string) $department);
+            $key = self::departmentKey($department);
+            if ('' !== $department && !isset($seen[$key])) {
+                $seen[$key] = true;
                 $clean[] = mb_substr($department, 0, 128);
             }
         }
@@ -233,7 +240,23 @@ class Document
     /** Условие поиска по подразделению: «|Отдел кадров|» ищется в строке разрешений. */
     public static function departmentNeedle(string $department): string
     {
-        return '|'.trim(str_replace('|', ' ', $department)).'|';
+        return '|'.self::cleanDepartment($department).'|';
+    }
+
+    /** Название подразделения без служебного «|» и лишних пробелов. */
+    private static function cleanDepartment(string $department): string
+    {
+        return trim((string) preg_replace('/\s+/u', ' ', str_replace('|', ' ', $department)));
+    }
+
+    /**
+     * Ключ сравнения подразделений: без учёта регистра и различия «е/ё» — так же, как сравнивает база
+     * (utf8mb4_unicode_ci). Иначе документ был бы в списке, но не открывался («Отдел кадров» и «отдел кадров» из AD).
+     * Тот же ключ объединяет подразделения в сводке ознакомлений.
+     */
+    public static function departmentKey(string $department): string
+    {
+        return str_replace('ё', 'е', mb_strtolower(self::cleanDepartment($department)));
     }
 
     /** Открыт ли документ с ограниченным доступом этому сотруднику (без учёта прав модератора). */
@@ -250,15 +273,29 @@ class Document
                 return true;
             }
         }
-        $department = trim((string) $user->getDepartment());
+        $department = self::departmentKey((string) $user->getDepartment());
+        if ('' === $department) {
+            return false;
+        }
+        foreach ($this->getAllowedDepartments() as $allowed) {
+            if (self::departmentKey($allowed) === $department) {
+                return true;
+            }
+        }
 
-        return '' !== $department && str_contains($this->allowedDepartments, self::departmentNeedle($department));
+        return false;
     }
 
-    #[ORM\PreUpdate]
-    public function touch(): void
+    /**
+     * Отмечает содержательное изменение документа. Вызывается явно (DocumentManager и т. п.): служебные
+     * изменения — счётчики, отметки об отправленных уведомлениях — дату изменения не меняют, иначе документ
+     * «менялся» при каждом просмотре и попадал в ленту изменений API.
+     */
+    public function touch(): static
     {
         $this->updatedAt = new \DateTimeImmutable();
+
+        return $this;
     }
 
     public function getId(): ?int
@@ -532,6 +569,39 @@ class Document
         }
 
         return $max + 1;
+    }
+
+    /** Последняя по номеру версия (она может быть новее текущей — см. getPendingVersion()). */
+    public function getLatestVersion(): ?DocumentVersion
+    {
+        $latest = null;
+        foreach ($this->versions as $v) {
+            if (null === $latest || $v->getNumber() > $latest->getNumber()) {
+                $latest = $v;
+            }
+        }
+
+        return $latest;
+    }
+
+    /**
+     * Новая редакция, загруженная после текущей, но ещё не ставшая текущей: при обязательном согласовании
+     * новые редакции опубликованного документа ждут согласования, а сотрудники видят прежнюю.
+     */
+    public function getPendingVersion(): ?DocumentVersion
+    {
+        $latest = $this->getLatestVersion();
+        if (null === $latest || null === $this->currentVersion) {
+            return null;
+        }
+
+        return $latest->getNumber() > $this->currentVersion->getNumber() ? $latest : null;
+    }
+
+    /** Версия уже действовала или действует (не новее текущей) — её видят все, кому виден документ. */
+    public function isVersionReleased(DocumentVersion $version): bool
+    {
+        return null !== $this->currentVersion && $version->getNumber() <= $this->currentVersion->getNumber();
     }
 
     public function findVersion(int $number): ?DocumentVersion

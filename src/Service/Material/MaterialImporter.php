@@ -6,12 +6,14 @@ namespace App\Service\Material;
 
 use App\Entity\MaterialParameter;
 use App\Entity\MaterialRow;
+use App\Entity\MaterialRowChange;
 use App\Entity\Section;
 use App\Entity\User;
 use App\Repository\MaterialRowRepository;
 use App\Repository\SectionRepository;
 use App\Service\DocumentKindService;
 use App\Service\SectionManager;
+use App\Service\Xlsx\XlsxWriter;
 use Doctrine\ORM\EntityManagerInterface;
 use Psr\Log\LoggerInterface;
 
@@ -22,7 +24,9 @@ use Psr\Log\LoggerInterface;
  *
  * Повторный импорт обновляет таблицы: строки сопоставляются по названию материала (одинаковые
  * названия — по порядку), значения перезаписываются, новые строки добавляются. Загруженные к строкам
- * файлы сохраняются.
+ * файлы сохраняются. Лист сопоставляется с разделом по служебному листу выгрузки портала (id раздела),
+ * затем по названию: Excel ограничивает название листа 31 символом и запрещает в нём []:*?/\, поэтому
+ * учитывается и такое «укороченное» название.
  */
 final class MaterialImporter
 {
@@ -44,6 +48,7 @@ final class MaterialImporter
         private readonly MaterialRowRepository $rows,
         private readonly DocumentKindService $kinds,
         private readonly LoggerInterface $auditLogger,
+        private readonly ?MaterialHistory $history = null,
     ) {
     }
 
@@ -68,7 +73,26 @@ final class MaterialImporter
      */
     public function apply(array $sheets, bool $deleteMissing, ?User $by): array
     {
-        $report = $this->em->wrapInTransaction(fn (): array => $this->process($sheets, $deleteMissing, $by, false));
+        // Одна транзакция на весь импорт: при ошибке не остаётся «половины» книги. Транзакция ведётся
+        // вручную — wrapInTransaction() закрыл бы EntityManager, и остаток запроса не смог бы работать с базой.
+        $connection = $this->em->getConnection();
+        $connection->beginTransaction();
+        try {
+            $report = $this->process($sheets, $deleteMissing, $by, false);
+            $this->em->flush();
+            $connection->commit();
+        } catch (\Throwable $e) {
+            if ($connection->isTransactionActive()) {
+                $connection->rollBack();
+            }
+            // Сущности, созданные в отменённой транзакции, не должны остаться в памяти.
+            if ($this->em->isOpen()) {
+                $this->em->clear();
+            }
+            $this->materials->forgetParameters();
+            $this->kinds->reset();
+            throw $e;
+        }
         $this->auditLogger->info('Импорт таблиц материалов из Excel', [
             'sections' => \count($report['sheets']),
             'created_sections' => $report['totals']['sectionsCreated'],
@@ -96,8 +120,12 @@ final class MaterialImporter
             'totals' => ['sectionsCreated' => 0, 'parametersCreated' => 0, 'created' => 0, 'updated' => 0, 'unchanged' => 0, 'deleted' => 0, 'rows' => 0],
         ];
         $plannedKinds = [];
+        $mapping = self::sectionMapping($sheets);
 
         foreach ($sheets as $sheet) {
+            if (self::isMappingSheet($sheet)) {
+                continue; // служебный лист выгрузки портала: названия листов → id разделов
+            }
             if ($sheet['hidden']) {
                 $report['skipped'][] = ['name' => $sheet['name'], 'reason' => 'скрытый лист'];
                 continue;
@@ -108,7 +136,7 @@ final class MaterialImporter
                 continue;
             }
             $name = trim(preg_replace('/\s+/u', ' ', $sheet['name']) ?? '');
-            $section = $this->topLevelSection($name);
+            $section = $this->topLevelSection($name, $mapping[mb_strtolower($name)] ?? null);
             $entry = ['name' => $name, 'section' => $section, 'sectionCreated' => null === $section, 'parametersCreated' => [], 'created' => 0, 'updated' => 0, 'unchanged' => 0, 'deleted' => 0, 'rows' => 0];
 
             if (!$dryRun) {
@@ -125,23 +153,31 @@ final class MaterialImporter
                 ++$report['totals']['sectionsCreated'];
             }
 
-            // Столбцы листа → параметры таблицы (существующие, по умолчанию или новые).
+            // Столбцы листа → параметры таблицы (существующие, по умолчанию или новые). Параметр достаётся
+            // не больше чем одному столбцу: иначе «Комментарий» и «Примечание» (оба — роль «комментарий»)
+            // писали бы в один столбец, и одно из значений молча терялось.
             $existing = null !== $section ? $this->materials->parameters($section) : [];
             $virtual = [] === $existing ? self::defaultSpecs() : array_map(static fn (MaterialParameter $p): array => ['name' => $p->getName(), 'role' => $p->getRole(), 'kind' => $p->getKind(), 'entity' => $p], $existing);
+            $assigned = self::assignSpecs($virtual, $layout['params']);
             $columns = [];
             foreach ($layout['params'] as $col => $header) {
-                $spec = self::matchSpec($virtual, $header);
-                if (null === $spec) {
-                    $kind = self::guessKind($col, $header, $sheet);
-                    $spec = ['name' => $header, 'role' => null, 'kind' => $kind, 'entity' => null, 'options' => $sheet['lists'][$col] ?? []];
-                    $entry['parametersCreated'][] = $header;
-                    ++$report['totals']['parametersCreated'];
-                    if (!$dryRun && null !== $section) {
-                        $options = MaterialParameter::KIND_LIST === $kind ? ($spec['options'] ?: self::distinct($sheet['rows'], $col, $layout['header'])) : [];
-                        $spec['entity'] = $this->materials->addParameter($section, $header, $kind, $options, $by);
-                    }
-                    $virtual[] = $spec;
+                if (null !== $assigned[$col]) {
+                    $columns[$col] = $virtual[$assigned[$col]];
+                    continue;
                 }
+                $kind = self::guessKind($col, $header, $sheet);
+                $options = MaterialParameter::KIND_LIST === $kind ? (($sheet['lists'][$col] ?? []) ?: self::distinct($sheet['rows'], $col, $layout['header'])) : [];
+                if (MaterialParameter::KIND_LIST === $kind && [] === array_filter(array_map(MaterialParameter::cleanOption(...), $options))) {
+                    $kind = MaterialParameter::KIND_TEXT; // список без значений — обычный текстовый столбец
+                }
+                $header = self::uniqueHeader($virtual, $header);
+                $spec = ['name' => $header, 'role' => null, 'kind' => $kind, 'entity' => null];
+                $entry['parametersCreated'][] = $header;
+                ++$report['totals']['parametersCreated'];
+                if (!$dryRun && null !== $section) {
+                    $spec['entity'] = $this->materials->addParameter($section, $header, $kind, $options, $by);
+                }
+                $virtual[] = $spec;
                 $columns[$col] = $spec;
             }
 
@@ -176,7 +212,7 @@ final class MaterialImporter
                 if ($dryRun) {
                     if (null === $row) {
                         ++$entry['created'];
-                    } elseif ($this->differs($row, $kindLabel, $columns, $cells)) {
+                    } elseif ($this->differs($row, null !== $layout['kind'] ? $kindLabel : null, $columns, $cells)) {
                         ++$entry['updated'];
                     } else {
                         ++$entry['unchanged'];
@@ -190,6 +226,8 @@ final class MaterialImporter
                     $this->em->persist($row);
                 }
                 $before = $isNew ? null : json_encode([$row->getKind()?->getName(), $row->getValues()], \JSON_UNESCAPED_UNICODE);
+                $oldKind = $row->getKind()?->getName() ?? '';
+                $oldValues = $row->getValues();
                 $row->setPosition($position);
                 if (null !== $layout['kind']) {
                     $row->setKind('' !== $kindName ? $this->kinds->resolve($kindName, true, $by) : null);
@@ -200,9 +238,11 @@ final class MaterialImporter
                 $after = json_encode([$row->getKind()?->getName(), $row->getValues()], \JSON_UNESCAPED_UNICODE);
                 if ($isNew) {
                     $row->touch($by);
+                    $this->history?->record($row, MaterialRowChange::IMPORT, $by, null, 'Строка добавлена', null, $title);
                     ++$entry['created'];
                 } elseif ($before !== $after) {
                     $row->touch($by);
+                    $this->recordImportChanges($row, $by, $oldKind, $oldValues, $columns);
                     ++$entry['updated'];
                 } else {
                     ++$entry['unchanged'];
@@ -217,6 +257,8 @@ final class MaterialImporter
                 if ($deleteMissing) {
                     ++$entry['deleted'];
                     if (!$dryRun) {
+                        $this->history?->record($row, MaterialRowChange::DELETE, $by, null, 'Нет в файле Excel', $row->getDocument()?->getTitle(), null);
+                        $this->history?->forgetRow($row);
                         $this->em->remove($row);
                     }
                 } elseif (!$dryRun) {
@@ -237,6 +279,34 @@ final class MaterialImporter
         }
 
         return $report;
+    }
+
+    /**
+     * Журнал: по одной записи на изменённое импортом значение строки.
+     *
+     * @param array<string, string>                $oldValues значения строки до импорта (ключ — p<id>)
+     * @param array<int, array<string, mixed>> $columns   столбцы листа (параметры)
+     */
+    private function recordImportChanges(MaterialRow $row, ?User $by, string $oldKind, array $oldValues, array $columns): void
+    {
+        if (null === $this->history) {
+            return;
+        }
+        $newKind = $row->getKind()?->getName() ?? '';
+        if ($oldKind !== $newKind) {
+            $this->history->record($row, MaterialRowChange::IMPORT, $by, 'kind', 'Тип', $oldKind, $newKind);
+        }
+        foreach ($columns as $spec) {
+            $parameter = $spec['entity'] ?? null;
+            if (!$parameter instanceof MaterialParameter) {
+                continue;
+            }
+            $old = (string) ($oldValues[$parameter->key()] ?? '');
+            $new = $row->getValue($parameter);
+            if ($old !== $new) {
+                $this->history->record($row, MaterialRowChange::IMPORT, $by, $parameter->key(), $parameter->getName(), $parameter->display($old), $parameter->display($new));
+            }
+        }
     }
 
     /**
@@ -281,15 +351,62 @@ final class MaterialImporter
         return null;
     }
 
-    private function topLevelSection(string $name): ?Section
+    /**
+     * Раздел верхнего уровня для листа: по id из служебного листа выгрузки, по точному названию, затем
+     * по названию в том виде, в каком его пишет Excel (не длиннее 31 символа, без []:*?/\).
+     */
+    private function topLevelSection(string $name, ?int $id = null): ?Section
     {
-        foreach ($this->sections->findBy(['parent' => null]) as $section) {
-            if (mb_strtolower($section->getName()) === mb_strtolower($name)) {
+        $roots = $this->sections->findBy(['parent' => null]);
+        if (null !== $id) {
+            foreach ($roots as $section) {
+                if ($section->getId() === $id) {
+                    return $section;
+                }
+            }
+        }
+        $key = mb_strtolower($name);
+        foreach ($roots as $section) {
+            if (mb_strtolower($section->getName()) === $key) {
                 return $section;
             }
         }
+        $candidates = array_values(array_filter($roots, static fn (Section $s): bool => mb_strtolower(XlsxWriter::sheetName($s->getName())) === $key));
 
-        return null;
+        // Несколько разделов с одинаковым началом названия — не угадываем.
+        return 1 === \count($candidates) ? $candidates[0] : null;
+    }
+
+    /**
+     * Служебный лист выгрузки портала (скрытый): «название листа → id раздела».
+     *
+     * @param list<array{name: string, hidden: bool, rows: array<int, array<int, string>>}> $sheets
+     *
+     * @return array<string, int> название листа в нижнем регистре → id раздела
+     */
+    private static function sectionMapping(array $sheets): array
+    {
+        $mapping = [];
+        foreach ($sheets as $sheet) {
+            if (!self::isMappingSheet($sheet)) {
+                continue;
+            }
+            foreach ($sheet['rows'] as $index => $cells) {
+                $sheetName = trim((string) ($cells[1] ?? ''));
+                $id = trim((string) ($cells[2] ?? ''));
+                if ($index > 1 && '' !== $sheetName && ctype_digit($id)) {
+                    $mapping[mb_strtolower($sheetName)] = (int) $id;
+                }
+            }
+        }
+
+        return $mapping;
+    }
+
+    /** @param array{rows: array<int, array<int, string>>} $sheet */
+    private static function isMappingSheet(array $sheet): bool
+    {
+        return MaterialExporter::MAPPING_MARK === trim((string) ($sheet['rows'][1][1] ?? ''));
     }
 
     /** @return list<array{name: string, role: string, kind: string, entity: null}> */
@@ -299,29 +416,60 @@ final class MaterialImporter
     }
 
     /**
-     * Существующий параметр для заголовка: по названию, затем по роли («Дата обновления» → «Дата обнов.»).
+     * Сопоставляет столбцы листа с параметрами таблицы, каждый параметр — не больше чем одному столбцу:
+     * сначала по точному названию, затем по роли («Дата обновления» → «Дата обнов.»).
      *
      * @param list<array<string, mixed>> $specs
+     * @param array<int, string>         $headers столбец → заголовок
      *
-     * @return array<string, mixed>|null
+     * @return array<int, int|null> столбец → индекс параметра в $specs (null — нужен новый параметр)
      */
-    private static function matchSpec(array $specs, string $header): ?array
+    private static function assignSpecs(array $specs, array $headers): array
     {
-        foreach ($specs as $spec) {
-            if (mb_strtolower($spec['name']) === mb_strtolower($header)) {
-                return $spec;
+        $result = array_fill_keys(array_keys($headers), null);
+        $used = [];
+        foreach ($headers as $col => $header) {
+            foreach ($specs as $i => $spec) {
+                if (!isset($used[$i]) && mb_strtolower((string) $spec['name']) === mb_strtolower($header)) {
+                    $result[$col] = $i;
+                    $used[$i] = true;
+                    break;
+                }
             }
         }
-        $role = MaterialParameter::roleForName($header);
-        if (null !== $role) {
-            foreach ($specs as $spec) {
-                if ($spec['role'] === $role) {
-                    return $spec;
+        foreach ($headers as $col => $header) {
+            $role = null === $result[$col] ? MaterialParameter::roleForName($header) : null;
+            if (null === $role) {
+                continue;
+            }
+            foreach ($specs as $i => $spec) {
+                if (!isset($used[$i]) && $spec['role'] === $role) {
+                    $result[$col] = $i;
+                    $used[$i] = true;
+                    break;
                 }
             }
         }
 
-        return null;
+        return $result;
+    }
+
+    /**
+     * Название нового параметра, не совпадающее с уже имеющимися («Комментарий (2)»): два столбца листа
+     * с одинаковым заголовком не должны падать на проверке уникальности.
+     *
+     * @param list<array<string, mixed>> $specs
+     */
+    private static function uniqueHeader(array $specs, string $header): string
+    {
+        $taken = array_map(static fn (array $spec): string => mb_strtolower((string) $spec['name']), $specs);
+        $candidate = $header;
+        for ($i = 2; \in_array(mb_strtolower($candidate), $taken, true); ++$i) {
+            $suffix = ' ('.$i.')';
+            $candidate = mb_substr($header, 0, MaterialParameter::MAX_NAME - mb_strlen($suffix)).$suffix;
+        }
+
+        return $candidate;
     }
 
     /** Вид нового параметра по данным листа: список, дата, ссылка или текст. */
@@ -371,9 +519,10 @@ final class MaterialImporter
         return $normalized;
     }
 
-    private function differs(MaterialRow $row, string $kindLabel, array $columns, array $cells): bool
+    /** @param string|null $kindLabel тип из листа; null — столбца «Тип» на листе нет, тип строки не меняется */
+    private function differs(MaterialRow $row, ?string $kindLabel, array $columns, array $cells): bool
     {
-        if (($row->getKind()?->getName() ?? '') !== $kindLabel) {
+        if (null !== $kindLabel && ($row->getKind()?->getName() ?? '') !== $kindLabel) {
             return true;
         }
         foreach ($columns as $col => $spec) {
@@ -402,18 +551,31 @@ final class MaterialImporter
     {
         try {
             $row->setValue($parameter, $this->prepare($parameter, $raw));
+
+            return;
         } catch (\DomainException) {
-            // Значение не из списка: добавляем его в список, чтобы ничего не потерять.
-            if ($parameter->isList()) {
-                $parameter->addOption(trim($raw));
-                $row->setValue($parameter, $parameter->normalize($raw));
-                $report['warnings'][] = \sprintf('«%s», «%s»: значение «%s» добавлено в список столбца «%s».', $sheet, $title, trim($raw), $parameter->getName());
+            // Значение не подошло столбцу — ниже решаем, как его сохранить, ничего не потеряв.
+        }
+        if ($parameter->isList()) {
+            $value = MaterialParameter::cleanOption($raw);
+            if (!$parameter->hasLockedOptions() && \count($parameter->getOptions()) < MaterialParameter::MAX_OPTIONS) {
+                // Значение не из списка: добавляем его в список.
+                $parameter->addOption($value);
+                $row->setValue($parameter, $value);
+                $report['warnings'][] = \sprintf('«%s», «%s»: значение «%s» добавлено в список столбца «%s».', $sheet, $title, $value, $parameter->getName());
 
                 return;
             }
-            $row->setValue($parameter, mb_substr(trim($raw), 0, MaterialParameter::MAX_TEXT));
-            $report['warnings'][] = \sprintf('«%s», «%s»: значение «%s» в столбце «%s» перенесено как есть — проверьте его.', $sheet, $title, trim($raw), $parameter->getName());
+            // Список фиксирован (по «Требованиям PM» и «Дизайн-требованиям» считается состояние) или уже
+            // полон: значение сохраняется в строке как есть, список не меняется.
+            $row->setValue($parameter, $value);
+            $report['warnings'][] = \sprintf('«%s», «%s»: значения «%s» нет в списке столбца «%s» — оно перенесено как есть, проверьте его.', $sheet, $title, $value, $parameter->getName());
+
+            return;
         }
+        $value = mb_substr(trim($raw), 0, MaterialParameter::MAX_TEXT);
+        $row->setValue($parameter, $value);
+        $report['warnings'][] = \sprintf('«%s», «%s»: значение «%s» в столбце «%s» перенесено как есть — проверьте его.', $sheet, $title, $value, $parameter->getName());
     }
 
     /** @throws \DomainException */

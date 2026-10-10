@@ -26,6 +26,10 @@ if [[ "${INSTALL_MODE}" == "docker" ]]; then
         check "Контейнер ${s} работает" bash -c "docker compose ps --status running ${s} | grep ${s} >/dev/null"
     done
     info "Состояние контейнеров:"; docker compose ps 2>/dev/null | sed 's/^/   /'
+    # Задания приложения выполняет контейнер cron; в /etc/cron.d на сервере — только резервная копия.
+    if [[ -f "/etc/cron.d/${APP_ID}" ]] && grep -qE '^[[:space:]]*[^#[:space:]].*console app:(documents:expiry|documents:describe|search:reindex|documents:acknowledge-remind|telegram:poll|materials:remind)( |$)' "/etc/cron.d/${APP_ID}"; then
+        warn "В /etc/cron.d/${APP_ID} есть задания приложения — в Docker они дублируют контейнер cron. Выполните: sudo ${APP_DIR}/deploy/refresh.sh"; PROBLEMS=$((PROBLEMS + 1))
+    fi
 else
     check "Служба ${PHP_FPM_SERVICE} работает" svc status "${PHP_FPM_SERVICE}"
     check "Служба nginx работает" svc status nginx
@@ -40,11 +44,26 @@ else
     fi
     check "Подключение к базе данных" mysql_exec "${DB_HOST}" "${DB_PORT}" "${DB_USER}" "${DB_PASSWORD}" "SELECT 1"
     info "Проверка приложения (app:check):"
-    runuser -u "${SERVICE_USER}" -- php "${APP_DIR}/current/bin/console" app:check --env=prod --no-interaction 2>&1 | sed 's/^/   /' || PROBLEMS=$((PROBLEMS + 1))
+    if check_out=$(runuser -u "${SERVICE_USER}" -- php "${APP_DIR}/current/bin/console" app:check --env=prod --no-interaction 2>&1); then
+        printf '%s\n' "${check_out}" | sed 's/^/   /'
+    else
+        printf '%s\n' "${check_out}" | sed 's/^/   /'
+        error "app:check сообщил о проблемах"; PROBLEMS=$((PROBLEMS + 1))
+    fi
 fi
 
 url=$(health_url)
 if body=$(health_probe); then ok "Ответ ${url}: ${body}"; else error "Ответ ${url}: ${body:-нет ответа}"; PROBLEMS=$((PROBLEMS + 1)); fi
+
+# Режим обслуживания: забытый включённым, он закрывает портал для всех посетителей (/health при этом в порядке).
+if maintenance_is_on; then
+    warn "$(maintenance_describe | head -n1) Посетители видят страницу «Идёт обновление портала». Выключить: ${APP_ID} maintenance off"
+    PROBLEMS=$((PROBLEMS + 1))
+elif maintenance_wired; then
+    ok "Режим обслуживания выключен (включить на время работ: ${APP_ID} maintenance on)"
+elif [[ "${INSTALL_MODE}" == "native" ]]; then
+    info "Режим обслуживания не подключён к nginx — обновления идут без страницы «Идёт обновление портала». Подключить: sudo ${APP_DIR}/current/deploy/refresh.sh"
+fi
 
 if [[ "${SSL_ENABLED:-0}" == "1" && -n "${DOMAIN:-}" ]]; then
     # Сертификат проверяется по-настоящему (без -k): доверие, срок действия, соответствие домену.
@@ -80,8 +99,40 @@ if [[ "${INSTALL_MODE}" == "native" ]]; then
     else info "LibreOffice не установлен — docx/xlsx/pptx открываются только скачиванием (включить: ${APP_DIR}/current/deploy/refresh.sh --with-preview)"; fi
     if command -v tesseract >/dev/null 2>&1; then ok "Распознавание сканов (tesseract): доступно"
     else info "tesseract не установлен — сканы не попадают в поиск (включить: ${APP_DIR}/current/deploy/refresh.sh --with-ocr)"; fi
-    if [[ -f "/etc/cron.d/${APP_ID}" ]] && grep -q 'app:search:reindex' "/etc/cron.d/${APP_ID}" && grep -q 'acknowledge-remind' "/etc/cron.d/${APP_ID}" && grep -q 'app:telegram:poll' "/etc/cron.d/${APP_ID}"; then ok "Задания cron: проверка сроков, индексация содержимого, описания через LLM, напоминания об ознакомлении, разбор сообщений Telegram$(grep -q 'backup' "/etc/cron.d/${APP_ID}" && echo ', резервные копии')"
-    else warn "В /etc/cron.d/${APP_ID} не хватает заданий (app:search:reindex / app:documents:describe / app:documents:acknowledge-remind / app:telegram:poll) — выполните: sudo ${APP_DIR}/current/deploy/refresh.sh"; PROBLEMS=$((PROBLEMS + 1)); fi
+    cron_file="/etc/cron.d/${APP_ID}"
+    if [[ -f "${cron_file}" ]]; then
+        # Задание может быть включено, отключено администратором (закомментировано) или отсутствовать.
+        cron_active=(); cron_disabled=(); cron_missing=()
+        while IFS='|' read -r cmd label; do
+            if grep -qE "^[[:space:]]*[^#[:space:]].*console ${cmd}( |$)" "${cron_file}"; then cron_active+=("${label}")
+            elif grep -qE "^[[:space:]]*#.*console ${cmd}( |$)" "${cron_file}"; then cron_disabled+=("${label} (${cmd})")
+            else cron_missing+=("${cmd}"); fi
+        done <<'JOBS'
+app:documents:expiry|проверка сроков
+app:search:reindex|индексация содержимого
+app:documents:describe|описания через LLM
+app:documents:acknowledge-remind|напоминания об ознакомлении
+app:telegram:poll|разбор сообщений Telegram
+app:materials:remind|напоминания по таблицам материалов
+JOBS
+        grep -qE '^[[:space:]]*[^#[:space:]].* backup( |$)' "${cron_file}" && cron_active+=("резервные копии")
+        grep -qE '^[[:space:]]*[^#[:space:]].* verify-backup( |$)' "${cron_file}" && cron_active+=("проверка копий")
+        [[ ${#cron_active[@]} -gt 0 ]] && ok "Задания cron: $(printf '%s, ' "${cron_active[@]}" | sed 's/, $//')"
+        [[ ${#cron_disabled[@]} -gt 0 ]] && info "Задания cron, отключённые в ${cron_file} (закомментированы): $(printf '%s, ' "${cron_disabled[@]}" | sed 's/, $//')"
+        if [[ ${#cron_missing[@]} -gt 0 ]]; then
+            warn "В ${cron_file} нет заданий: $(printf '%s, ' "${cron_missing[@]}" | sed 's/, $//') — выполните: sudo ${APP_DIR}/current/deploy/refresh.sh"; PROBLEMS=$((PROBLEMS + 1))
+        fi
+    else
+        warn "Нет файла заданий ${cron_file} — проверка сроков, индексация и напоминания не выполняются. Выполните: sudo ${APP_DIR}/current/deploy/refresh.sh"; PROBLEMS=$((PROBLEMS + 1))
+    fi
+    # До 1.6.1 в файле не было PATH, и задания не находили runuser — фактически не выполнялись.
+    if [[ -f "/etc/cron.d/${APP_ID}" ]] && ! grep -q '^PATH=' "/etc/cron.d/${APP_ID}"; then
+        warn "В /etc/cron.d/${APP_ID} нет строки PATH — задания cron не запускаются. Выполните: sudo ${APP_DIR}/current/deploy/refresh.sh"; PROBLEMS=$((PROBLEMS + 1))
+    fi
+    last_cron=$( (ls -t "${LOG_DIR}"/*-cron.log 2>/dev/null || true) | head -n1)
+    if [[ -n "${last_cron}" ]] && grep -q 'command not found' "${last_cron}" 2>/dev/null; then
+        warn "В журнале ${last_cron} есть ошибки «command not found» — проверьте задания cron."
+    fi
     # Команда управления могла остаться от предыдущей версии (обновление скриптами старой версии).
     if [[ -f "/usr/local/bin/${APP_ID}" ]] && ! grep -q 'acknowledge-remind' "/usr/local/bin/${APP_ID}"; then
         warn "Команда ${APP_ID} осталась от предыдущей версии (нет команд reindex и acknowledge-remind) — выполните: sudo ${APP_DIR}/current/deploy/refresh.sh"
@@ -92,11 +143,17 @@ if [[ -d "${BACKUP_DIR}" ]]; then
     last=$(ls -1t "${BACKUP_DIR}"/${APP_ID}-backup-*.tar.gz 2>/dev/null | head -n1)
     if [[ -n "${last}" ]]; then ok "Последняя резервная копия: $(basename "${last}") ($(date -r "${last}" '+%d.%m.%Y %H:%M'))"; else warn "Резервных копий пока нет (${BACKUP_DIR})"; fi
 fi
+if [[ -n "${BACKUP_REMOTE:-}" ]]; then
+    ok "Копии во внешнем хранилище: ${BACKUP_REMOTE} (хранится ${BACKUP_REMOTE_KEEP:-14}; итог последней отправки — панель администратора → Мониторинг)"
+else
+    info "Копии во внешнее хранилище не отправляются — при потере сервера копии пропадут вместе с ним. Включить: ${APP_ID} remote-backup set НАЗНАЧЕНИЕ"
+fi
 
 if [[ "${INSTALL_MODE}" == "native" ]]; then
     logf=$(ls -t "${APP_DIR}"/shared/log/prod*.log 2>/dev/null | head -n1)
     if [[ -n "${logf}" && -f "${logf}" ]]; then
-        errs=$(grep -c 'CRITICAL\|ERROR' "${logf}" 2>/dev/null || echo 0)
+        errs=$(grep -c 'CRITICAL\|ERROR' "${logf}" 2>/dev/null) || true
+        errs=${errs:-0}
         info "Ошибок в ${logf}: ${errs}. Последние записи:"
         tail -n 5 "${logf}" | cut -c1-200 | sed 's/^/   /'
     fi

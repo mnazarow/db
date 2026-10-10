@@ -27,6 +27,12 @@ final class DocumentRepository extends ServiceEntityRepository
         parent::__construct($registry, Document::class);
     }
 
+    /** Строка в том виде, в каком она записана внутри JSON (кириллица — \u04xx), без кавычек. */
+    private static function jsonFragment(string $value): string
+    {
+        return substr((string) json_encode($value), 1, -1);
+    }
+
     private function baseQb(string $alias = 'd'): QueryBuilder
     {
         return $this->createQueryBuilder($alias)
@@ -94,7 +100,7 @@ final class DocumentRepository extends ServiceEntityRepository
             $department = trim((string) $viewer->user->getDepartment());
             if ('' !== $department) {
                 $conditions[] = $alias.'.allowedDepartments LIKE :viewer_dept';
-                $qb->setParameter('viewer_dept', '%'.addcslashes(Document::departmentNeedle($department), '%_').'%');
+                $qb->setParameter('viewer_dept', '%'.addcslashes(Document::departmentNeedle($department), '%_\\').'%');
             }
             if ([] !== $viewer->managedSectionIds) {
                 $conditions[] = $alias.'.section IN (:viewer_sections)';
@@ -180,17 +186,28 @@ final class DocumentRepository extends ServiceEntityRepository
      */
     public function search(string $query, array $statuses, ?Section $section = null, int $limit = 100, bool $publicOnly = false, ?Viewer $viewer = null): array
     {
-        $terms = array_values(array_filter(preg_split('/\s+/u', mb_strtolower(trim($query))) ?: [], static fn ($t) => mb_strlen($t) >= 2));
-        if ([] === $terms) {
+        // Слова вне кавычек ищутся по отдельности (как набраны: с дефисами и точками — «ПР-2026-01», «1.5»),
+        // фраза в кавычках — целиком, дословно.
+        $terms = array_values(array_filter(preg_split('/\s+/u', SearchQuery::withoutPhrases($query)) ?: [], static fn ($t) => mb_strlen($t) >= 2));
+        $phrases = SearchQuery::parse($query)->phrases;
+        if ([] === $terms && [] === $phrases) {
             return [];
         }
-        $qb = $this->baseQb()->andWhere('d.status IN (:st)')->setParameter('st', $statuses);
+        $qb = $this->baseQb()->andWhere('d.status IN (:st)')->setParameter('st', $statuses)
+            ->leftJoin('cv.bodies', 'cvb');
         if ($publicOnly) {
             $qb->andWhere('d.isPublic = true');
         }
         foreach (\array_slice($terms, 0, 6) as $i => $term) {
-            $qb->andWhere(\sprintf('(LOWER(d.title) LIKE :t%1$d OR LOWER(d.code) LIKE :t%1$d OR LOWER(d.description) LIKE :t%1$d OR LOWER(d.tags) LIKE :t%1$d OR LOWER(cv.content) LIKE :t%1$d OR LOWER(cv.originalName) LIKE :t%1$d)', $i))
-                ->setParameter('t'.$i, '%'.addcslashes($term, '%_').'%');
+            // Теги хранятся в JSON, где кириллица записана как \u04xx: ищем и в таком виде.
+            $qb->andWhere(\sprintf('(LOWER(d.title) LIKE :t%1$d OR LOWER(d.code) LIKE :t%1$d OR LOWER(d.description) LIKE :t%1$d OR LOWER(d.tags) LIKE :t%1$d OR d.tags LIKE :tj%1$d OR LOWER(cvb.html) LIKE :t%1$d OR LOWER(cv.originalName) LIKE :t%1$d)', $i))
+                ->setParameter('t'.$i, '%'.addcslashes($term, '%_\\').'%')
+                ->setParameter('tj'.$i, '%'.addcslashes(self::jsonFragment($term), '%_\\').'%');
+        }
+        foreach ($phrases as $i => $phrase) {
+            $qb->andWhere(\sprintf('(LOWER(d.title) LIKE :ph%1$d OR LOWER(d.code) LIKE :ph%1$d OR LOWER(d.description) LIKE :ph%1$d OR LOWER(d.tags) LIKE :ph%1$d OR d.tags LIKE :phj%1$d OR LOWER(cvb.html) LIKE :ph%1$d OR LOWER(cv.originalName) LIKE :ph%1$d)', $i))
+                ->setParameter('ph'.$i, '%'.addcslashes($phrase, '%_\\').'%')
+                ->setParameter('phj'.$i, '%'.addcslashes(self::jsonFragment($phrase), '%_\\').'%');
         }
         if (null !== $section) {
             $qb->andWhere('s.path LIKE :path')->setParameter('path', $section->getPath().'%');
@@ -402,7 +419,7 @@ final class DocumentRepository extends ServiceEntityRepository
                 $department = trim((string) $viewer->user->getDepartment());
                 if ('' !== $department) {
                     $conditions[] = 'd.allowed_departments LIKE :viewer_dept';
-                    $params['viewer_dept'] = '%'.addcslashes(Document::departmentNeedle($department), '%_').'%';
+                    $params['viewer_dept'] = '%'.addcslashes(Document::departmentNeedle($department), '%_\\').'%';
                 }
                 if ([] !== $viewer->managedSectionIds) {
                     $conditions[] = 'd.section_id IN (:viewer_sections)';
@@ -412,7 +429,8 @@ final class DocumentRepository extends ServiceEntityRepository
             }
             $sql .= ' AND ('.implode(' OR ', $conditions).')';
         }
-        $sql .= ' ORDER BY score DESC LIMIT '.max(1, $limit);
+        // С фразой часть найденного индексом отсеется при дословной проверке — берём с запасом.
+        $sql .= ' ORDER BY score DESC LIMIT '.max(1, $query->hasPhrases() ? $limit * 4 : $limit);
         try {
             $rows = $this->getEntityManager()->getConnection()->executeQuery($sql, $params, $types)->fetchAllAssociative();
         } catch (DbalException $e) {
@@ -433,12 +451,13 @@ final class DocumentRepository extends ServiceEntityRepository
         $out = [];
         foreach ($rows as $row) {
             $document = $byId[(int) $row['id']] ?? null;
-            if (null !== $document) {
+            // Индекс находит фразу по словам длиннее MIN_TERM — дословное совпадение проверяется здесь.
+            if (null !== $document && $query->matchesPhrases((string) $row['content'])) {
                 $out[] = ['document' => $document, 'score' => (float) $row['score'], 'text' => (string) $row['content']];
             }
         }
 
-        return $out;
+        return \array_slice($out, 0, max(1, $limit));
     }
 
     /**
@@ -458,6 +477,44 @@ final class DocumentRepository extends ServiceEntityRepository
             ->getQuery()->getResult();
 
         return ['items' => $items, 'total' => $total];
+    }
+
+    /**
+     * Лента изменений для API с курсором: документы после точки (время, id) по возрастанию.
+     * Возвращает до $limit + 1 записей — лишняя показывает, что продолжение есть.
+     *
+     * @param array{statuses: list<string>, public_only: bool, section?: ?Section, subtree?: bool, type?: ?string, tag?: ?string, q?: ?string} $filters
+     *
+     * @return list<Document>
+     */
+    public function findChangedForApiAfter(array $filters, \DateTimeImmutable $at, int $afterId, int $limit): array
+    {
+        $filters['updated_since'] = null;
+        $qb = $this->apiQb($filters)
+            ->andWhere('d.updatedAt > :at OR (d.updatedAt = :at AND d.id > :after)')
+            ->setParameter('at', $at)->setParameter('after', $afterId);
+
+        return $qb->orderBy('d.updatedAt', 'ASC')->addOrderBy('d.id', 'ASC')->setMaxResults($limit + 1)->getQuery()->getResult();
+    }
+
+    /**
+     * Документы, ставшие невидимыми для ключа, после точки (время, id) — продолжение ленты по курсору.
+     *
+     * @return list<Document>
+     */
+    public function findHiddenForApiAfter(\DateTimeImmutable $at, int $afterId, bool $publicOnly, bool $includeArchived, int $limit): array
+    {
+        $visibleStatuses = $includeArchived ? [Document::STATUS_PUBLISHED, Document::STATUS_ARCHIVED] : [Document::STATUS_PUBLISHED];
+        $qb = $this->createQueryBuilder('d')
+            ->andWhere('d.updatedAt > :at OR (d.updatedAt = :at AND d.id > :after)')
+            ->setParameter('at', $at)->setParameter('after', $afterId);
+        $hidden = '(d.status NOT IN (:visible) OR d.restricted = true)';
+        $qb->setParameter('visible', $visibleStatuses);
+        if ($publicOnly) {
+            $hidden = '('.$hidden.' OR d.isPublic = false)';
+        }
+
+        return $qb->andWhere($hidden)->orderBy('d.updatedAt', 'ASC')->addOrderBy('d.id', 'ASC')->setMaxResults($limit + 1)->getQuery()->getResult();
     }
 
     /**
@@ -509,10 +566,14 @@ final class DocumentRepository extends ServiceEntityRepository
             $qb->andWhere('d.tags LIKE :tag')->setParameter('tag', '%'.addcslashes($encoded, '%_\\').'%');
         }
         if (!empty($filters['q'])) {
-            $terms = array_values(array_filter(preg_split('/\s+/u', mb_strtolower(trim($filters['q']))) ?: [], static fn ($t) => mb_strlen($t) >= 2));
-            foreach (\array_slice($terms, 0, 6) as $i => $term) {
-                $qb->andWhere(\sprintf('(LOWER(d.title) LIKE :t%1$d OR LOWER(d.code) LIKE :t%1$d OR LOWER(d.description) LIKE :t%1$d OR LOWER(d.tags) LIKE :t%1$d OR LOWER(cv.content) LIKE :t%1$d OR LOWER(cv.originalName) LIKE :t%1$d)', $i))
-                    ->setParameter('t'.$i, '%'.addcslashes($term, '%_').'%');
+            $qb->leftJoin('cv.bodies', 'cvb');
+            // Как в поиске портала: слова — по отдельности, фраза в кавычках — целиком.
+            $terms = array_values(array_filter(preg_split('/\s+/u', SearchQuery::withoutPhrases((string) $filters['q'])) ?: [], static fn ($t) => mb_strlen($t) >= 2));
+            $needles = array_merge(\array_slice($terms, 0, 6), SearchQuery::parse((string) $filters['q'])->phrases);
+            foreach ($needles as $i => $term) {
+                $qb->andWhere(\sprintf('(LOWER(d.title) LIKE :t%1$d OR LOWER(d.code) LIKE :t%1$d OR LOWER(d.description) LIKE :t%1$d OR LOWER(d.tags) LIKE :t%1$d OR d.tags LIKE :tj%1$d OR LOWER(cvb.html) LIKE :t%1$d OR LOWER(cv.originalName) LIKE :t%1$d)', $i))
+                    ->setParameter('t'.$i, '%'.addcslashes($term, '%_\\').'%')
+                    ->setParameter('tj'.$i, '%'.addcslashes(self::jsonFragment($term), '%_\\').'%');
             }
         }
 

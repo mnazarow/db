@@ -20,6 +20,8 @@ final class LdapUserInfo
         public readonly ?string $department,
         public readonly array $groups,
         public readonly bool $isAdmin,
+        /** Задана ли группа администраторов: только тогда права синхронизируются (в том числе снимаются). */
+        public readonly bool $adminGroupConfigured = false,
     ) {
     }
 }

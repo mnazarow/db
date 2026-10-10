@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Service\Notification;
 
+use App\Service\PortalUrl;
 use App\Entity\Document;
 use App\Entity\DocumentComment;
 use App\Entity\DocumentEvent;
@@ -22,7 +23,6 @@ use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 use Symfony\Component\HttpKernel\KernelEvents;
 use Symfony\Component\Mailer\MailerInterface;
 use Symfony\Component\Mime\Address;
-use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
 
 /**
  * Уведомления подписчикам: что изменилось в документе и что написали в обсуждении.
@@ -53,17 +53,31 @@ final class SubscriptionNotifier implements EventSubscriberInterface
 
     private bool $sending = false;
 
+    /** Счётчик «тишины»: пока он больше нуля, изменения документов не собираются (массовый импорт). */
+    private int $muted = 0;
+
+    /** Приостановить уведомления об изменениях документов (вызовы mute()/unmute() парные). */
+    public function mute(): void
+    {
+        ++$this->muted;
+    }
+
+    public function unmute(): void
+    {
+        $this->muted = max(0, $this->muted - 1);
+    }
+
     public function __construct(
         private readonly DocumentSubscriptionRepository $subscriptions,
         private readonly DocumentCommentRepository $comments,
         private readonly TelegramNotifier $telegram,
         private readonly MailerInterface $mailer,
-        private readonly UrlGeneratorInterface $urls,
         private readonly Access $access,
         private readonly PortalSettings $settings,
         private readonly LoggerInterface $auditLogger,
         private readonly string $mailFrom,
         private readonly string $appName,
+        private readonly PortalUrl $portalUrl,
     ) {
     }
 
@@ -79,6 +93,9 @@ final class SubscriptionNotifier implements EventSubscriberInterface
     {
         $entity = $args->getObject();
         if ($entity instanceof DocumentEvent && isset(self::NOTIFY_TYPES[$entity->getType()])) {
+            if ($this->muted > 0) {
+                return;
+            }
             $entry = &$this->bucket($entity->getDocument());
             $entry['changes'][$entity->getType()] = self::NOTIFY_TYPES[$entity->getType()];
             if (null !== $entity->getUser()) {
@@ -204,7 +221,7 @@ final class SubscriptionNotifier implements EventSubscriberInterface
                     'changes' => $changes,
                     'comments' => $comments,
                     'url' => $this->url($document),
-                    'settings_url' => $this->urls->generate('app_profile_subscriptions', [], UrlGeneratorInterface::ABSOLUTE_URL),
+                    'settings_url' => $this->portalUrl->absolute('app_profile_subscriptions', []),
                     'app_name' => $this->appName,
                 ]));
 
@@ -242,7 +259,7 @@ final class SubscriptionNotifier implements EventSubscriberInterface
 
     private function url(Document $document): string
     {
-        return $this->urls->generate('app_document_show', ['id' => $document->getId()], UrlGeneratorInterface::ABSOLUTE_URL);
+        return $this->portalUrl->absolute('app_document_show', ['id' => $document->getId()]);
     }
 
     /**

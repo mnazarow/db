@@ -23,13 +23,15 @@ use Symfony\Component\HttpFoundation\RequestStack;
  * складывает такие записи ещё и в таблицу audit_event — чтобы их можно было смотреть в панели
  * администратора, выгружать в CSV и передавать в SIEM.
  *
- * Записи копятся в памяти и сохраняются один раз в конце запроса: ошибка записи в журнал
- * не должна ломать сам запрос, а сохранение по одной записи замедляло бы работу.
+ * Записи копятся в памяти и сохраняются в конце запроса (в долгих консольных командах — пачками
+ * по MAX_PENDING). Сохранение идёт прямым INSERT, а не через EntityManager: flush() EntityManager'а
+ * записал бы в базу и чужие несохранённые изменения (например, сущность из формы, не прошедшей проверку).
+ * Ошибка записи в журнал не должна ломать сам запрос.
  */
 final class DatabaseAuditHandler extends AbstractProcessingHandler implements EventSubscriberInterface
 {
-    /** Защита от разрастания: больше записей за один запрос не сохраняем. */
-    private const MAX_PER_REQUEST = 200;
+    /** Сколько записей держать в памяти: дальше они сохраняются сразу (долгий импорт, переиндексация). */
+    private const MAX_PENDING = 200;
 
     /** @var list<AuditEvent> */
     private array $pending = [];
@@ -58,18 +60,23 @@ final class DatabaseAuditHandler extends AbstractProcessingHandler implements Ev
             return;
         }
         $this->flushing = true;
+        $pending = $this->pending;
+        $this->pending = [];
         try {
-            if (!$this->em->isOpen()) {
-                return;
+            $connection = $this->em->getConnection();
+            foreach ($pending as $entry) {
+                $connection->insert('audit_event', [
+                    'occurred_at' => $entry->getOccurredAt()->format('Y-m-d H:i:s'),
+                    'level' => $entry->getLevel(),
+                    'action' => $entry->getAction(),
+                    'actor_name' => $entry->getActorName(),
+                    'ip' => $entry->getIp(),
+                    'details' => json_encode($entry->getDetails(), \JSON_UNESCAPED_UNICODE | \JSON_INVALID_UTF8_SUBSTITUTE | \JSON_PRESERVE_ZERO_FRACTION) ?: '{}',
+                ]);
             }
-            foreach ($this->pending as $entry) {
-                $this->em->persist($entry);
-            }
-            $this->em->flush();
         } catch (\Throwable) {
             // Журнал аудита не должен мешать работе портала: запись в файл уже сделана.
         } finally {
-            $this->pending = [];
             $this->flushing = false;
         }
     }
@@ -81,8 +88,8 @@ final class DatabaseAuditHandler extends AbstractProcessingHandler implements Ev
 
     protected function write(LogRecord $record): void
     {
-        if (\count($this->pending) >= self::MAX_PER_REQUEST) {
-            return;
+        if (\count($this->pending) >= self::MAX_PENDING) {
+            $this->flush();
         }
         $context = $record->context;
         $level = match (true) {

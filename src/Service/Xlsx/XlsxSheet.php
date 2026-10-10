@@ -35,6 +35,9 @@ final class XlsxSheet
     /** @var list<array{row: int, col: int, title: string, categories: string, values: string, labels: list<string>, numbers: list<int|float>, colors: list<string>, width: int, height: int}> */
     private array $charts = [];
 
+    /** visible, hidden или veryHidden (скрыт так, что показать его можно только из редактора VBA). */
+    private string $state = 'visible';
+
     public function __construct(private readonly string $name)
     {
     }
@@ -42,6 +45,19 @@ final class XlsxSheet
     public function getName(): string
     {
         return $this->name;
+    }
+
+    /** Скрывает лист (служебные данные, которые не нужно показывать в Excel). */
+    public function hide(bool $veryHidden = false): self
+    {
+        $this->state = $veryHidden ? 'veryHidden' : 'hidden';
+
+        return $this;
+    }
+
+    public function getState(): string
+    {
+        return $this->state;
     }
 
     /**
@@ -225,10 +241,18 @@ final class XlsxSheet
         $value = $cell['value'];
         $formula = null !== $cell['formula'] ? '<f>'.XlsxWriter::escape($cell['formula']).'</f>' : '';
         if ($value instanceof \DateTimeInterface) {
-            return \sprintf('<c r="%s"%s>%s<v>%s</v></c>', $ref, $style, $formula, XlsxWriter::serial($value));
+            $serial = XlsxWriter::serial($value);
+            if (null !== $serial) {
+                return \sprintf('<c r="%s"%s>%s<v>%s</v></c>', $ref, $style, $formula, $serial);
+            }
+            // Excel не хранит даты раньше 1 марта 1900 года как даты — пишем текстом.
+            $value = $value->format('d.m.Y');
         }
-        if (\is_int($value) || \is_float($value)) {
+        if (\is_int($value) || (\is_float($value) && is_finite($value))) {
             return \sprintf('<c r="%s"%s>%s<v>%s</v></c>', $ref, $style, $formula, (string) $value);
+        }
+        if (\is_float($value)) {
+            $value = (string) $value; // INF и NAN числом в Excel не записать
         }
         if (null === $value || '' === $value) {
             return '' !== $formula

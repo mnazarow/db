@@ -31,6 +31,7 @@
         </div>
     {% endif %}
     {{ form_start(form, {attr: {novalidate: 'novalidate', class: 'form doc-form', enctype: 'multipart/form-data', 'data-doc-form': '1', 'data-type': document.type}}) }}
+    {% if not form.vars.valid and form.vars.errors|length > 0 %}<div class="alert alert--danger" role="alert">{{ form_errors(form) }}</div>{% endif %}
     <div class="grid grid--doc-form">
         <div class="doc-form__main">
             <div class="card">
@@ -60,6 +61,7 @@
                 <div data-type-panel="file" {{ document.page ? 'hidden' }}>
                     {% if not is_new and document.currentVersion %}
                         <p class="text-muted">Текущий файл: <b>{{ document.currentVersion.originalName }}</b> ({{ document.currentVersion.size|filesize }}, версия {{ document.currentVersion.number }}). Загрузите новый файл, чтобы создать версию {{ document.nextVersionNumber }}; если файл не выбран, изменится только карточка.</p>
+                        {% if document.pendingVersion %}<p class="alert alert--warning">Редакция {{ document.pendingVersion.number }} ({{ document.pendingVersion.originalName }}) ещё не вступила в силу — она ждёт согласования.</p>{% endif %}
                     {% endif %}
                     <div class="dropzone" data-dropzone>
                         <svg class="dropzone__icon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M24 30V12m0 0-7 7m7-7 7 7"/><path d="M10 30v6a2 2 0 0 0 2 2h24a2 2 0 0 0 2-2v-6"/></svg>
@@ -75,7 +77,9 @@
                     <div class="editor-wrap">
                         <div id="page-editor" class="page-editor" data-quill></div>
                     </div>
-                    {{ form_widget(form.content, {value: (not is_new and document.currentVersion) ? document.currentVersion.content : (form.content.vars.value ?? '')}) }}
+                    {# После неудачной отправки — присланный текст (иначе правки терялись бы); иначе — последняя редакция
+                       (в том числе ждущая согласования), чтобы правки не начинались со старого текста. #}
+                    {{ form_widget(form.content, {value: form.vars.submitted ? (form.content.vars.value ?? '') : ((not is_new and document.latestVersion) ? document.latestVersion.content : (form.content.vars.value ?? ''))}) }}
                     {{ form_errors(form.content) }}
                     <p class="form-help">Форматирование: заголовки, списки, таблицы через вставку, ссылки, изображения. Каждое сохранение с изменённым текстом создаёт новую версию.</p>
                 </div>

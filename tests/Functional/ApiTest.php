@@ -265,6 +265,89 @@ final class ApiTest extends PortalTestCase
         self::assertResponseStatusCodeSame(404);
     }
 
+    public function testDocumentByIdHidesReviewAndRestricted(): void
+    {
+        $this->tokens();
+        $em = $this->em();
+        // Документ на согласовании и документ с ограниченным доступом по прямому id не отдаются
+        // даже ключу с доступом к внутренним документам — так же, как в списках.
+        $review = $this->document('ПОЛ-001');
+        $reviewId = (int) $review->getId();
+        $review->setStatus(Document::STATUS_REVIEW);
+        $restricted = $this->document('ИБ-001');
+        $restrictedId = (int) $restricted->getId();
+        $restricted->setRestricted(true)->setAllowedUsers([$this->user('petrova')]);
+        $em->flush();
+        try {
+            foreach ([$reviewId, $restrictedId] as $id) {
+                foreach (['', '/text', '/content'] as $suffix) {
+                    $this->client->request('GET', '/api/v1/documents/'.$id.$suffix, [], [], ['HTTP_AUTHORIZATION' => 'Bearer '.self::$internalToken]);
+                    self::assertResponseStatusCodeSame(404, 'документ '.$id.$suffix);
+                }
+            }
+        } finally {
+            $em->clear();
+            $this->document('ПОЛ-001')->setStatus(Document::STATUS_PUBLISHED);
+            $this->document('ИБ-001')->setRestricted(false);
+            $this->em()->flush();
+        }
+    }
+
+    public function testChangesFeedCursorWalksEverythingOnce(): void
+    {
+        $this->tokens();
+        // Все документы «изменились» в одну секунду (как при массовой операции): маленький limit
+        // не должен ни терять, ни зацикливать выдачу — курсор продолжает с точного места.
+        $this->em()->createQuery('UPDATE App\Entity\Document d SET d.updatedAt = :t')->setParameter('t', new \DateTimeImmutable('-10 minutes'))->execute();
+        $since = (new \DateTimeImmutable('-1 hour'))->format(\DATE_ATOM);
+        $full = $this->api('/changes?limit=1000&since='.rawurlencode($since), self::$internalToken);
+        self::assertFalse($full['truncated']);
+        self::assertNull($full['next_cursor']);
+        $expected = array_merge(array_column($full['changed'], 'id'), array_column($full['removed'], 'id'));
+        sort($expected);
+
+        $seen = [];
+        $data = $this->api('/changes?limit=3&since='.rawurlencode($since), self::$internalToken);
+        for ($page = 0; $page < 100; ++$page) {
+            foreach (array_merge($data['changed'], $data['removed']) as $item) {
+                $seen[] = $item['id'];
+            }
+            if (!$data['truncated']) {
+                break;
+            }
+            self::assertNotNull($data['next_cursor']);
+            self::assertLessThanOrEqual(3, \count($data['changed']) + \count($data['removed']) + \count($data['deleted']));
+            $data = $this->api('/changes?limit=3&cursor='.rawurlencode((string) $data['next_cursor']), self::$internalToken);
+            self::assertResponseIsSuccessful();
+        }
+        sort($seen);
+        self::assertSame($expected, $seen, 'по курсору пройдены все изменения ровно по одному разу');
+
+        // Клиент без курсора (только next_since) не зацикливается на одной странице: следующий since —
+        // всегда дальше предыдущего, даже когда все изменения пришлись на одну секунду.
+        $data = $this->api('/changes?limit=3&since='.rawurlencode($since), self::$internalToken);
+        self::assertTrue($data['truncated']);
+        self::assertGreaterThan(new \DateTimeImmutable($since), new \DateTimeImmutable($data['next_since']));
+
+        // Время в UTC («Z») переводится в часовой пояс портала: «5 минут назад» по UTC — это 5 минут назад,
+        // а не на три часа раньше (документы изменены 10 минут назад и в выдачу попасть не должны).
+        $zone = date_default_timezone_get();
+        date_default_timezone_set('Europe/Moscow');
+        try {
+            $this->em()->createQuery('UPDATE App\Entity\Document d SET d.updatedAt = :t')->setParameter('t', new \DateTimeImmutable('-10 minutes'))->execute();
+            $utc = (new \DateTimeImmutable('-5 minutes'))->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d\\TH:i:s\\Z');
+            self::assertSame([], $this->api('/changes?limit=1000&since='.rawurlencode($utc), self::$internalToken)['changed']);
+        } finally {
+            date_default_timezone_set($zone);
+        }
+        $this->api('/changes?cursor=мусор', self::$internalToken);
+        self::assertResponseStatusCodeSame(400);
+        // Курсор с несуществующей датой — тоже ошибка запроса, а не 500.
+        $bad = rtrim(strtr(base64_encode('2026-13-40 25:61:61|0|5'), '+/', '-_'), '=');
+        $this->api('/changes?cursor='.$bad, self::$internalToken);
+        self::assertResponseStatusCodeSame(400);
+    }
+
     public function testChangesFeed(): void
     {
         $this->tokens();

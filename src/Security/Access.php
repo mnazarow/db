@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Security;
 
 use App\Entity\Document;
+use App\Entity\DocumentVersion;
 use App\Entity\Section;
 use App\Entity\User;
 use App\Repository\DocumentApprovalRepository;
@@ -89,7 +90,8 @@ final class Access
             return $document->isPublished() && $document->isPublic() && !$document->isRestricted();
         }
         if ($document->isRestricted() && !$document->isAllowedFor($user) && !$this->canManageSection($user, $document->getSection())) {
-            return false;
+            // Согласующий прочитает документ, который ждёт его решения, даже если в списке допуска его нет.
+            return $this->isPendingApprover($user, $document);
         }
         if ($document->isPublished()) {
             return true;
@@ -99,7 +101,26 @@ final class Access
         }
 
         // Согласующий должен прочитать документ, который ждёт его решения, даже вне своих разделов.
-        return $document->isOnReview() && null !== $this->approvals && $this->approvals->isPendingApprover($user, $document);
+        return $this->isPendingApprover($user, $document);
+    }
+
+    /** Ждёт ли документ (или его новая редакция) решения этого сотрудника. */
+    public function isPendingApprover(?User $user, Document $document): bool
+    {
+        return null !== $user && null !== $this->approvals && !$document->isArchived() && $this->approvals->isPendingApprover($user, $document);
+    }
+
+    /**
+     * Видна ли пользователю версия документа: текущая и прежние — всем, кто видит документ; новая редакция,
+     * ждущая согласования, — только модераторам раздела и согласующему.
+     */
+    public function canViewVersion(?User $user, Document $document, DocumentVersion $version): bool
+    {
+        if ($document->isVersionReleased($version)) {
+            return true;
+        }
+
+        return $this->canEditDocument($user, $document) || $this->isPendingApprover($user, $document);
     }
 
     /** Контекст просмотра списков: по нему из выборок убираются документы с ограниченным доступом. */

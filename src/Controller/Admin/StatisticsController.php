@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Controller\Admin;
 
+use App\Service\Csv;
 use App\Repository\SectionRepository;
 use App\Service\StatsService;
 use App\Service\Validity;
@@ -140,7 +141,7 @@ final class StatisticsController extends AbstractController
             fwrite($out, "\xEF\xBB\xBF");
             fputcsv($out, $header, ';');
             foreach ($rows as $row) {
-                fputcsv($out, $row, ';');
+                Csv::put($out, $row);
             }
             fclose($out);
         });

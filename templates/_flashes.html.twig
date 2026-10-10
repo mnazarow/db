@@ -1,10 +1,12 @@
-{# Сообщения (flash) — выводятся под заголовком страницы. #}
+{# Сообщения (flash) — выводятся под заголовком страницы. Тип «error» оформляется как «danger»;
+   ошибки и предупреждения объявляются программам чтения с экрана сразу (role="alert"). #}
 {% set flashes = app.flashes %}
 {% if flashes|length > 0 %}
-    <div class="flashes" role="status">
+    <div class="flashes">
         {% for type, messages in flashes %}
+            {% set kind = {error: 'danger', notice: 'info'}[type] ?? type %}
             {% for message in messages %}
-                <div class="alert alert--{{ type }}">{{ message }}</div>
+                <div class="alert alert--{{ kind }}" role="{{ kind in ['danger', 'warning'] ? 'alert' : 'status' }}">{{ message }}</div>
             {% endfor %}
         {% endfor %}
     </div>

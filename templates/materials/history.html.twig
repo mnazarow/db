@@ -1,0 +1,65 @@
+{% extends 'base.html.twig' %}
+{% import '_macros.html.twig' as m %}
+
+{% block title %}Журнал изменений — материалы {{ section.name }}{% endblock %}
+{% block body_class %}page-materials-history{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        {{ m.breadcrumbs(section, 'Журнал изменений таблицы материалов') }}
+        <div class="hero__row">
+            <div>
+                <div class="eyebrow">Таблица материалов</div>
+                <h1 class="h-display">Журнал изменений</h1>
+            </div>
+            <div class="hero__actions">
+                <a class="btn btn--ghost" href="{{ path('app_section_materials', {id: section.id}) }}">К таблице</a>
+                {% if total > 0 %}<a class="btn btn--ghost" href="{{ path('app_section_materials_history_csv', {id: section.id}) }}">Выгрузить CSV</a>{% endif %}
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="container section">
+    <div class="card toolbar">
+        <form method="get" class="filters">
+            <select class="form-control form-control--inline" name="action" aria-label="Действие" data-autosubmit>
+                <option value="">Все действия</option>
+                {% for value, label in actions %}<option value="{{ value }}" {{ action == value ? 'selected' }}>{{ label }}</option>{% endfor %}
+            </select>
+            <noscript><button class="btn btn--ghost btn--small" type="submit">Показать</button></noscript>
+        </form>
+    </div>
+
+    <div class="card table-card">
+        <div class="card__head card__head--padded"><h2 class="h-section">Записей: {{ total }}</h2></div>
+        {% if changes|length == 0 %}
+            <div class="table-card__empty">{{ action ? 'Таких изменений пока не было.' : 'Изменений пока нет: журнал ведётся с версии 1.7.0 — правки, загрузки файлов и импорт из Excel появятся здесь.' }}</div>
+        {% else %}
+        <div class="table-scroll"><table class="admin-table mt-history">
+            <thead><tr><th>Когда</th><th>Кто</th><th>Материал</th><th>Действие</th><th>Было</th><th>Стало</th></tr></thead>
+            <tbody>
+            {% for change in changes %}
+                <tr>
+                    <td class="col-nowrap">{{ change.createdAt|date('d.m.Y H:i') }}</td>
+                    <td>{{ change.userName ?: 'система' }}</td>
+                    <td>{{ change.rowTitle }}{% if change.row is null %} <span class="text-muted">(строка удалена)</span>{% endif %}</td>
+                    <td><span class="mt-history__action mt-history__action--{{ change.action }}">{{ change.actionLabel }}</span>{% if change.fieldLabel %}<div class="hints">{{ change.fieldLabel }}</div>{% endif %}</td>
+                    <td class="col-comment mt-history__old">{{ change.oldValue ?? '' }}</td>
+                    <td class="col-comment">{{ change.newValue ?? '' }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table></div>
+        {% if pages > 1 %}
+            <div class="pager card__padded">
+                {% if page > 1 %}<a class="btn btn--ghost btn--small" href="{{ path('app_section_materials_history', {id: section.id, action: action ?: null, page: page - 1}) }}">← Новее</a>{% endif %}
+                <span class="text-muted">Страница {{ page }} из {{ pages }}</span>
+                {% if page < pages %}<a class="btn btn--ghost btn--small" href="{{ path('app_section_materials_history', {id: section.id, action: action ?: null, page: page + 1}) }}">Старее →</a>{% endif %}
+            </div>
+        {% endif %}
+        {% endif %}
+    </div>
+</section>
+{% endblock %}

@@ -151,12 +151,19 @@ final class SettingsController extends AbstractController
         return $this->redirectToRoute('admin_settings');
     }
 
-    /** Переиндексация содержимого документов для полнотекстового поиска (порция за один запрос). */
+    /**
+     * Переиндексация содержимого документов для полнотекстового поиска (порция за один запрос).
+     * «Переиндексировать всё» помечает весь индекс устаревшим и обрабатывает первую порцию; остальное —
+     * повторными нажатиями или заданием cron (в одном веб-запросе тысячи файлов не успели бы обработаться).
+     */
     #[Route('/reindex', name: 'admin_settings_reindex', methods: ['POST'])]
     public function reindex(Request $request): Response
     {
         $this->checkToken($request);
-        $stats = $this->indexer->reindex(self::REINDEX_LIMIT, (bool) $request->request->get('all', false));
+        if ($request->request->getBoolean('all')) {
+            $this->indexer->invalidateAll();
+        }
+        $stats = $this->indexer->reindex(self::REINDEX_LIMIT);
         $left = \count($this->texts->findOutdatedDocumentIds(100000));
         $this->addFlash('success', \sprintf('Проиндексировано документов: %d (с текстом %d, без текста %d). Осталось: %d%s.',
             $stats['processed'], $stats['indexed'], $stats['empty'], $left,

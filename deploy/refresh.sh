@@ -2,7 +2,9 @@
 # =============================================================================
 #  Обновление служебных файлов установки из текущего релиза:
 #   - команда управления /usr/local/bin/docportal;
-#   - задания cron (проверка сроков, резервные копии, описания через LLM);
+#   - задания cron (проверка сроков, резервные копии, описания через LLM) и ротация журналов;
+#   - настройки PHP (время жизни сессий, пул PHP-FPM);
+#   - правило режима обслуживания в nginx (страница «Идёт обновление портала»);
 #   - недостающие системные пакеты (poppler-utils для извлечения текста из PDF);
 #   - по запросу — LibreOffice (--with-preview) и tesseract (--with-ocr).
 #
@@ -32,9 +34,15 @@ banner "обновление служебных файлов"
 
 step "Команда управления и задания cron"
 install_cli_wrapper && ok "Команда ${APP_ID} обновлена: /usr/local/bin/${APP_ID}"
+# Native: PATH и задания приложения; Docker: на сервере только резервная копия (задания — в контейнере cron).
+ensure_cron_entries
+install_logrotate
+ok "Задания cron проверены: /etc/cron.d/${APP_ID}"
 if [[ "${INSTALL_MODE}" == "native" ]]; then
-    ensure_cron_entries
-    ok "Задания cron проверены: /etc/cron.d/${APP_ID}"
+    upgrade_native_system_config "${APP_DIR}/current"
+    # Режим обслуживания (1.7.0): правило nginx и его подключение в сайт портала.
+    if ensure_nginx_maintenance && maintenance_wired; then ok "Режим обслуживания подключён к nginx (${APP_ID} maintenance on|off)."
+    else warn "Режим обслуживания не подключён к nginx — см. сообщение выше."; fi
     if ! command -v pdftotext >/dev/null 2>&1; then
         if pkg_install_optional poppler-utils && command -v pdftotext >/dev/null 2>&1; then
             ok "Установлен пакет poppler-utils (pdftotext) — извлечение текста из PDF для API и LLM."

@@ -61,7 +61,9 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "5" }
 
-  # Планировщик: ежедневная проверка сроков актуальности (app:documents:expiry) и ежечасные описания через LLM (app:documents:describe).
+  # Планировщик: проверка сроков актуальности, описания через LLM, индексация содержимого, напоминания
+  # об ознакомлении и по таблицам материалов, разбор сообщений бота Telegram (см. docker/entrypoint.sh).
+  # На сервере эти задания не нужны.
   cron:
     image: ${APP_IMAGE:-docportal:latest}
     env_file:
@@ -74,6 +76,8 @@ services:
       DESCRIBE_CRON: ${DESCRIBE_CRON:-20 * * * *}
       REINDEX_CRON: ${REINDEX_CRON:-40 * * * *}
       ACKNOWLEDGE_CRON: ${ACKNOWLEDGE_CRON:-30 8 * * *}
+      TELEGRAM_CRON: ${TELEGRAM_CRON:-* * * * *}
+      MATERIALS_REMIND_CRON: ${MATERIALS_REMIND_CRON:-10 9 * * 1}
     command: ["cron"]
     volumes:
       - storage:/var/www/html/var/storage
@@ -92,8 +96,11 @@ services:
     ports:
       - "${HTTP_PORT:-80}:80"
     volumes:
-      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      # Каталог целиком (а не файл): изменённая обновлением конфигурация видна контейнеру после nginx -s reload.
+      - ./nginx:/etc/nginx/conf.d:ro
       - ../public:/var/www/html/public:ro
+      # Режим обслуживания: флаг, страница и список разрешённых адресов (docportal maintenance on|off).
+      - ../maintenance:/var/www/maintenance:ro
     depends_on:
       - app
     restart: unless-stopped

@@ -107,11 +107,35 @@ final class PortalSettings
 
     public const TELEGRAM_DEFAULT_API_URL = 'https://api.telegram.org';
 
+    // Мониторинг (1.7.0): токен для /health/details и /metrics.
+    public const MONITORING_TOKEN = 'monitoring.token';
+
+    // Редактирование в ONLYOFFICE / Р7-Офис (1.7.0).
+    public const ONLYOFFICE_ENABLED = 'onlyoffice.enabled';
+    public const ONLYOFFICE_URL = 'onlyoffice.url';
+    public const ONLYOFFICE_INTERNAL_URL = 'onlyoffice.internal_url';
+    public const ONLYOFFICE_SECRET = 'onlyoffice.secret';
+    public const ONLYOFFICE_PORTAL_URL = 'onlyoffice.portal_url';
+    public const ONLYOFFICE_HEADER = 'onlyoffice.header';
+    public const ONLYOFFICE_VIEW = 'onlyoffice.view';
+    public const ONLYOFFICE_DEFAULT_HEADER = 'Authorization';
+    /** Ключ подписи ссылок для сервера документов (свой, не секрет приложения); меняется при выключении. */
+    public const ONLYOFFICE_LINK_KEY = 'onlyoffice.link_key';
+
+    // Напоминания по таблицам материалов (1.7.0).
+    public const MATERIALS_REMIND_ENABLED = 'materials.remind.enabled';
+    public const MATERIALS_REMIND_STATES = 'materials.remind.states';
+    public const MATERIALS_REMIND_LAST_RUN = 'materials.remind.last_run';
+    public const MATERIALS_REMIND_DEFAULT_STATES = ['Не соответствует', 'Отсутствует'];
+
     public const OCR_DEFAULT_MAX_PAGES = 20;
     public const OCR_DEFAULT_DPI = 200;
 
     /** Настройки, значения которых не должны попадать в журнал. */
-    private const SECRET_NAMES = [self::WEBHOOK_SECRET, self::LLM_API_KEY, self::SSO_CLIENT_SECRET, self::TELEGRAM_TOKEN];
+    private const SECRET_NAMES = [self::WEBHOOK_SECRET, self::LLM_API_KEY, self::SSO_CLIENT_SECRET, self::TELEGRAM_TOKEN, self::MONITORING_TOKEN, self::ONLYOFFICE_SECRET];
+
+    /** Служебные значения, которые портал меняет сам (в журнал аудита не пишутся). */
+    private const INTERNAL_NAMES = [self::TELEGRAM_OFFSET, self::MATERIALS_REMIND_LAST_RUN, self::ONLYOFFICE_LINK_KEY];
 
     private const CACHE_KEY = 'portal_settings';
 
@@ -157,10 +181,27 @@ final class PortalSettings
         $this->em->flush();
         $this->cache->delete(self::CACHE_KEY);
         $this->values = null;
-        $this->auditLogger->info('Изменена настройка портала', ['name' => $name, 'value' => \in_array($name, self::SECRET_NAMES, true) ? self::mask((string) $value) : $value, 'by' => $by?->getUsername()]);
+        if (!\in_array($name, self::INTERNAL_NAMES, true)) {
+            $this->auditLogger->info('Изменена настройка портала', ['name' => $name, 'value' => \in_array($name, self::SECRET_NAMES, true) ? self::mask((string) $value) : $value, 'by' => $by?->getUsername()]);
+        }
     }
 
-    /** Сохраняет несколько настроек, сбрасывая кэш один раз. */
+    /**
+     * Значение прямо из базы, минуя кэш настроек: для служебных значений, которые меняют параллельные
+     * процессы (позиция разбора сообщений бота Telegram).
+     */
+    public function fresh(string $name, mixed $default = null): mixed
+    {
+        $setting = $this->settings->find($name);
+        if (null === $setting) {
+            return $default;
+        }
+        $this->em->refresh($setting);
+
+        return $setting->getValue();
+    }
+
+    /** Сохраняет несколько настроек. */
     public function setMany(array $values, ?User $by = null): void
     {
         foreach ($values as $name => $value) {
@@ -562,5 +603,135 @@ final class PortalSettings
             $update[self::TELEGRAM_TOKEN] = trim((string) $values['token']);
         }
         $this->setMany($update, $by);
+    }
+
+    // ---- Мониторинг ---------------------------------------------------------------------------------------
+
+    public function monitoringToken(): string
+    {
+        return trim((string) $this->get(self::MONITORING_TOKEN, ''));
+    }
+
+    /** Создаёт новый токен мониторинга (прежний перестаёт действовать) и возвращает его. */
+    public function regenerateMonitoringToken(?User $by = null): string
+    {
+        $token = 'dpm_'.bin2hex(random_bytes(20));
+        $this->set(self::MONITORING_TOKEN, $token, $by);
+
+        return $token;
+    }
+
+    // ---- ONLYOFFICE / Р7-Офис -------------------------------------------------------------------------------
+
+    /**
+     * @return array{enabled: bool, url: string, internal_url: string, secret: string, portal_url: string, header: string, view: bool}
+     */
+    public function onlyoffice(): array
+    {
+        $header = trim((string) $this->get(self::ONLYOFFICE_HEADER, ''));
+
+        return [
+            'enabled' => (bool) $this->get(self::ONLYOFFICE_ENABLED, false),
+            'url' => rtrim(trim((string) $this->get(self::ONLYOFFICE_URL, '')), '/'),
+            'internal_url' => rtrim(trim((string) $this->get(self::ONLYOFFICE_INTERNAL_URL, '')), '/'),
+            'secret' => trim((string) $this->get(self::ONLYOFFICE_SECRET, '')),
+            'portal_url' => rtrim(trim((string) $this->get(self::ONLYOFFICE_PORTAL_URL, '')), '/'),
+            'header' => '' !== $header ? $header : self::ONLYOFFICE_DEFAULT_HEADER,
+            'view' => (bool) $this->get(self::ONLYOFFICE_VIEW, false),
+        ];
+    }
+
+    /** Редактор подключён: включён, указан адрес и секрет JWT (без секрета уведомления не проверить). */
+    public function isOnlyofficeEnabled(): bool
+    {
+        $config = $this->onlyoffice();
+
+        return $config['enabled'] && '' !== $config['url'] && '' !== $config['secret'];
+    }
+
+    /** Ключ подписи ссылок для сервера документов; создаётся при первом обращении. */
+    public function onlyofficeLinkKey(): string
+    {
+        $key = (string) $this->get(self::ONLYOFFICE_LINK_KEY, '');
+        if (64 !== \strlen($key)) {
+            $key = bin2hex(random_bytes(32));
+            $this->set(self::ONLYOFFICE_LINK_KEY, $key);
+        }
+
+        return $key;
+    }
+
+    /**
+     * @param array{enabled?: bool, url?: ?string, internal_url?: ?string, secret?: ?string, portal_url?: ?string, header?: ?string, view?: bool} $values
+     *
+     * @throws \InvalidArgumentException
+     */
+    public function setOnlyoffice(array $values, ?User $by = null): void
+    {
+        $urls = [];
+        foreach (['url' => 'Адрес сервера документов', 'internal_url' => 'Внутренний адрес сервера документов', 'portal_url' => 'Адрес портала для сервера документов'] as $key => $label) {
+            $url = rtrim(trim((string) ($values[$key] ?? '')), '/');
+            if ('' !== $url && (false === filter_var($url, \FILTER_VALIDATE_URL) || !preg_match('#^https?://#i', $url))) {
+                throw new \InvalidArgumentException($label.' должен начинаться с http:// или https://.');
+            }
+            $urls[$key] = $url;
+        }
+        $enabled = (bool) ($values['enabled'] ?? false);
+        if ($enabled && '' === $urls['url']) {
+            throw new \InvalidArgumentException('Укажите адрес сервера документов, например https://office.example.local.');
+        }
+        $header = trim((string) ($values['header'] ?? ''));
+        if ('' !== $header && 1 !== preg_match('/^[A-Za-z0-9-]{1,64}$/', $header)) {
+            throw new \InvalidArgumentException('Имя заголовка с токеном — латинские буквы, цифры и дефис.');
+        }
+        $previous = $this->onlyoffice();
+        $secret = null !== ($values['secret'] ?? null) ? trim((string) $values['secret']) : $previous['secret'];
+        if ($enabled && '' === $secret) {
+            throw new \InvalidArgumentException('Укажите секрет JWT — тот же, что на сервере документов: без него портал не может проверить, что уведомление о сохранении прислал именно сервер документов.');
+        }
+        if ('' !== $secret && mb_strlen($secret) < 8) {
+            throw new \InvalidArgumentException('Секрет JWT слишком короткий (нужно не меньше 8 символов).');
+        }
+        $update = [
+            self::ONLYOFFICE_ENABLED => $enabled,
+            self::ONLYOFFICE_URL => $urls['url'],
+            self::ONLYOFFICE_INTERNAL_URL => $urls['internal_url'],
+            self::ONLYOFFICE_PORTAL_URL => $urls['portal_url'],
+            self::ONLYOFFICE_HEADER => $header,
+            self::ONLYOFFICE_VIEW => (bool) ($values['view'] ?? false),
+        ];
+        // Пустое поле секрета означает «оставить прежний».
+        if (null !== ($values['secret'] ?? null)) {
+            $update[self::ONLYOFFICE_SECRET] = trim((string) $values['secret']);
+        }
+        // Выключение, смена сервера или секрета отзывают выданные ссылки для сервера документов.
+        if (!$enabled || $urls['url'] !== $previous['url'] || $secret !== $previous['secret']) {
+            $update[self::ONLYOFFICE_LINK_KEY] = bin2hex(random_bytes(32));
+        }
+        $this->setMany($update, $by);
+    }
+
+    // ---- Напоминания по таблицам материалов -----------------------------------------------------------------
+
+    /** @return array{enabled: bool, states: list<string>, last_run: ?string} */
+    public function materialsRemind(): array
+    {
+        $states = $this->get(self::MATERIALS_REMIND_STATES, self::MATERIALS_REMIND_DEFAULT_STATES);
+        $states = \is_array($states) ? array_values(array_filter(array_map('strval', $states), static fn (string $s): bool => '' !== $s)) : self::MATERIALS_REMIND_DEFAULT_STATES;
+
+        return [
+            'enabled' => (bool) $this->get(self::MATERIALS_REMIND_ENABLED, false),
+            'states' => [] !== $states ? $states : self::MATERIALS_REMIND_DEFAULT_STATES,
+            'last_run' => ($last = $this->get(self::MATERIALS_REMIND_LAST_RUN)) ? (string) $last : null,
+        ];
+    }
+
+    /** @param list<string> $states */
+    public function setMaterialsRemind(bool $enabled, array $states, ?User $by = null): void
+    {
+        $this->setMany([
+            self::MATERIALS_REMIND_ENABLED => $enabled,
+            self::MATERIALS_REMIND_STATES => array_values(array_unique(array_filter(array_map(static fn ($s): string => trim((string) $s), $states)))),
+        ], $by);
     }
 }

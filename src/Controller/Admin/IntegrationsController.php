@@ -15,6 +15,7 @@ use App\Repository\DocumentSubscriptionRepository;
 use App\Service\Llm\DocumentDescriber;
 use App\Service\Llm\LlmClient;
 use App\Service\Llm\LlmException;
+use App\Service\Onlyoffice\OnlyofficeService;
 use App\Service\PortalSettings;
 use App\Service\Text\TextExtractor;
 use Doctrine\ORM\EntityManagerInterface;
@@ -51,6 +52,7 @@ final class IntegrationsController extends AbstractController
         private readonly UserRepository $users,
         private readonly DocumentSubscriptionRepository $subscriptions,
         private readonly LoggerInterface $auditLogger,
+        private readonly OnlyofficeService $onlyoffice,
     ) {
     }
 
@@ -74,6 +76,12 @@ final class IntegrationsController extends AbstractController
             'subscriptions_enabled' => $this->settings->subscriptionsEnabled(),
             'subscription_summary' => $this->subscriptions->summary(),
             'telegram' => $this->settings->telegram() + ['token_masked' => PortalSettings::mask($this->settings->telegram()['token']), 'linked' => \count($this->users->findWithTelegram()), 'default_api' => PortalSettings::TELEGRAM_DEFAULT_API_URL],
+            'onlyoffice' => $this->settings->onlyoffice() + [
+                'secret_masked' => PortalSettings::mask($this->settings->onlyoffice()['secret']),
+                'editable' => OnlyofficeService::EDITABLE,
+                'view_only' => OnlyofficeService::VIEW_ONLY,
+                'callback_example' => $this->generateUrl('onlyoffice_callback', ['token' => 'x.y.z'], UrlGeneratorInterface::ABSOLUTE_URL),
+            ],
         ]);
     }
 
@@ -173,7 +181,13 @@ final class IntegrationsController extends AbstractController
     {
         $this->checkToken($request);
         $stats = $this->telegram->poll();
-        $this->addFlash([] === $stats['messages'] ? 'success' : 'danger', [] !== $stats['messages']
+        $type = match (true) {
+            'busy' === $stats['skipped'] => 'info',
+            null !== $stats['skipped'] => 'warning',
+            [] !== $stats['messages'] => 'danger',
+            default => 'success',
+        };
+        $this->addFlash($type, [] !== $stats['messages']
             ? implode(' ', $stats['messages'])
             : \sprintf('Разобрано сообщений: %d, привязано чатов: %d.', $stats['updates'], $stats['linked']));
 
@@ -293,6 +307,45 @@ final class IntegrationsController extends AbstractController
         }
 
         return $this->redirectToRoute('admin_integrations', ['_fragment' => 'llm']);
+    }
+
+    // ---- ONLYOFFICE / Р7-Офис --------------------------------------------------------------------------
+
+    #[Route('/onlyoffice', name: 'admin_integrations_onlyoffice', methods: ['POST'])]
+    public function saveOnlyoffice(Request $request, #[CurrentUser] User $user): Response
+    {
+        $this->checkToken($request);
+        $secret = (string) $request->request->get('secret', '');
+        try {
+            $this->settings->setOnlyoffice([
+                'enabled' => (bool) $request->request->get('enabled', false),
+                'url' => (string) $request->request->get('url', ''),
+                'internal_url' => (string) $request->request->get('internal_url', ''),
+                'portal_url' => (string) $request->request->get('portal_url', ''),
+                'header' => (string) $request->request->get('header', ''),
+                'view' => (bool) $request->request->get('view', false),
+                'secret' => '' !== $secret ? $secret : null, // пустое поле — оставить прежний секрет
+            ], $user);
+            if ((bool) $request->request->get('clear_secret', false)) {
+                $this->settings->set(PortalSettings::ONLYOFFICE_SECRET, '', $user);
+            }
+            $this->auditLogger->info('Изменены настройки редактора документов', ['by' => $user->getUsername(), 'enabled' => (bool) $request->request->get('enabled', false)]);
+            $this->addFlash('success', 'Настройки редактора документов сохранены.');
+        } catch (\InvalidArgumentException $e) {
+            $this->addFlash('danger', $e->getMessage());
+        }
+
+        return $this->redirectToRoute('admin_integrations', ['_fragment' => 'onlyoffice']);
+    }
+
+    #[Route('/onlyoffice/test', name: 'admin_integrations_onlyoffice_test', methods: ['POST'])]
+    public function testOnlyoffice(Request $request): Response
+    {
+        $this->checkToken($request);
+        $result = $this->onlyoffice->test();
+        $this->addFlash($result['ok'] ? 'success' : 'danger', $result['message']);
+
+        return $this->redirectToRoute('admin_integrations', ['_fragment' => 'onlyoffice']);
     }
 
     private function checkToken(Request $request): void

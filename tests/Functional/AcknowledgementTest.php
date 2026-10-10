@@ -9,6 +9,8 @@ use App\Entity\DocumentEvent;
 use App\Repository\DocumentAcknowledgementRepository;
 use App\Repository\DocumentEventRepository;
 use App\Service\AcknowledgementService;
+use App\Entity\User;
+use App\Security\Access;
 use App\Service\DocumentManager;
 use App\Tests\PortalTestCase;
 use Symfony\Bundle\FrameworkBundle\Console\Application;
@@ -83,8 +85,10 @@ final class AcknowledgementTest extends PortalTestCase
         self::assertSame($wasPetrova + 1, $this->acknowledgements()->countPendingForUser($this->user('petrova')));
         self::assertSame($wasSmirnov, $this->acknowledgements()->countPendingForUser($this->user('smirnov')), 'подтверждённое из счётчика уходит');
 
-        // Назначение и подтверждение попадают в историю документа.
-        $events = static::getContainer()->get(DocumentEventRepository::class)->findBy(['document' => $document, 'type' => DocumentEvent::UPDATE], ['id' => 'DESC']);
+        // Назначение и подтверждение попадают в историю документа — отдельным типом события: подписчикам
+        // и в webhook «изменение карточки» из-за ознакомлений не уходит.
+        $events = static::getContainer()->get(DocumentEventRepository::class)->findBy(['document' => $document, 'type' => DocumentEvent::ACKNOWLEDGE], ['id' => 'DESC']);
+        self::assertSame([], static::getContainer()->get(DocumentEventRepository::class)->findBy(['document' => $document, 'type' => DocumentEvent::UPDATE]));
         $details = array_map(static fn (DocumentEvent $e): array => $e->getDetails() ?? [], $events);
         self::assertContains('confirmed', array_column($details, 'acknowledgement'));
         self::assertContains('assigned', array_column($details, 'acknowledgement'));
@@ -172,6 +176,41 @@ final class AcknowledgementTest extends PortalTestCase
         $output = new BufferedOutput();
         self::assertSame(0, $application->run(new ArrayInput(['command' => 'app:documents:acknowledge-remind', '--dry-run' => true, '--verbose' => true]), $output));
         self::assertStringContainsString('Ожидают ознакомления', $output->fetch());
+    }
+
+    public function testPendingListsFollowDocumentAccess(): void
+    {
+        $connection = $this->em()->getConnection();
+        $connection->beginTransaction();
+        try {
+            $document = $this->freshDocument('ОЗН-008', 'Закрытое положение');
+            $ivanov = $this->user('ivanov'); // модератор «Общих документов», в список допуска не входит
+            $smirnov = $this->user('smirnov');
+            $petrova = $this->user('petrova');
+            $this->service()->assign($document, [$ivanov, $smirnov, $petrova], new \DateTimeImmutable('-1 day'), $this->user('admin'), false);
+            $open = $this->service()->remind(3, true)['items'];
+
+            $document->setRestricted(true)->setAllowedDepartments(['Отдел  продаж']);
+            $smirnov->setDepartment(' отдел   ПРОДАЖ ');
+            $petrova->setDepartment('%');
+            $this->em()->flush();
+
+            $access = static::getContainer()->get(Access::class);
+            $pending = fn (User $user): array => array_map(static fn ($a): ?int => $a->getDocument()->getId(), $this->acknowledgements()->findPendingForUser($user, 100, $access->viewer($user)));
+            foreach ([$ivanov, $smirnov, $petrova] as $user) {
+                self::assertSame($access->canViewDocument($user, $document), \in_array($document->getId(), $pending($user), true), 'список «Ознакомиться» совпадает с правом открыть документ: '.$user->getUsername());
+                self::assertSame(\count($pending($user)), $this->acknowledgements()->countPendingForUser($user, $access->viewer($user)));
+            }
+            self::assertContains($document->getId(), $pending($ivanov), 'модератор раздела открывает документ — назначение остаётся в его списке');
+            self::assertContains($document->getId(), $pending($smirnov), 'подразделение совпадает без учёта регистра и лишних пробелов');
+            self::assertNotContains($document->getId(), $pending($petrova), '«%» в названии подразделения — не шаблон LIKE');
+            self::assertSame($open - 1, $this->service()->remind(3, true)['items'], 'напоминание не получает только тот, кому документ закрыт');
+        } finally {
+            while ($connection->isTransactionActive()) {
+                $connection->rollBack();
+            }
+            $this->em()->clear();
+        }
     }
 
     public function testWebFlowForEmployeeAndModerator(): void

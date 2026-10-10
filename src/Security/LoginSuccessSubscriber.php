@@ -48,9 +48,11 @@ final class LoginSuccessSubscriber implements EventSubscriberInterface
             }
         }
 
-        // Второй фактор: до ввода кода пользователь видит только форму подтверждения.
-        if ($user instanceof User && $user->isTotpEnabled() && $event->getRequest()->hasSession()) {
-            $event->getRequest()->getSession()->set(TwoFactorSubscriber::SESSION_PENDING, true);
+        // Второй фактор: каждый новый вход подтверждается заново — до ввода кода пользователь видит
+        // только форму подтверждения (TwoFactorSubscriber).
+        if ($event->getRequest()->hasSession()) {
+            $event->getRequest()->getSession()->remove(TwoFactorSubscriber::SESSION_VERIFIED);
+            $event->getRequest()->getSession()->remove(TwoFactorSubscriber::SESSION_ATTEMPTS);
         }
 
         $this->auditLogger->info('Вход в систему', [

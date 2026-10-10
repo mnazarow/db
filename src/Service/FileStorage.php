@@ -214,6 +214,40 @@ final class FileStorage
         return null !== $path && is_file($path);
     }
 
+    /**
+     * Возвращает перенесённый в хранилище файл на прежнее место (откат импорта с переносом исходников).
+     * Без этого ошибка записи в базу стёрла бы единственную копию файла. true — исходный файл снова на
+     * месте (или его и не забирали), и копию в хранилище можно удалить; false — вернуть не удалось,
+     * копию в хранилище удалять нельзя.
+     */
+    public function returnToSource(DocumentVersion $version, string $sourcePath): bool
+    {
+        $stored = $this->absolutePath($version);
+        if (null === $stored || !is_file($stored)) {
+            return true;
+        }
+        if (file_exists($sourcePath)) {
+            // На месте исходника уже есть файл: копию можно удалять, только если это тот же файл.
+            $checksum = $version->getChecksum();
+
+            return is_file($sourcePath) && (null !== $checksum
+                ? hash_equals($checksum, (string) hash_file('sha256', $sourcePath))
+                : filesize($sourcePath) === filesize($stored));
+        }
+        $dir = \dirname($sourcePath);
+        if (!is_dir($dir) && !@mkdir($dir, 0775, true) && !is_dir($dir)) {
+            return false;
+        }
+        if (@rename($stored, $sourcePath) || @copy($stored, $sourcePath)) {
+            return true;
+        }
+        // Копирование на другой диск оборвалось (например, кончилось место): обрезанный файл под прежним
+        // именем следующий импорт принял бы за документ.
+        @unlink($sourcePath);
+
+        return false;
+    }
+
     public function delete(DocumentVersion $version): void
     {
         $path = $this->absolutePath($version);
@@ -237,11 +271,41 @@ final class FileStorage
         @rmdir($dir);
     }
 
-    /** Файлы, которые можно показать в браузере (предпросмотр). */
+    /**
+     * Файлы, которые можно показать прямо в браузере, и тип, с которым они отдаются. Тип берётся
+     * по расширению из этого списка, а не из содержимого: иначе HTML-файл с расширением .txt
+     * (его содержимое определяется как text/html) выполнился бы на странице портала.
+     */
+    private const INLINE_TYPES = [
+        'pdf' => 'application/pdf',
+        'png' => 'image/png',
+        'jpg' => 'image/jpeg',
+        'jpeg' => 'image/jpeg',
+        'gif' => 'image/gif',
+        'webp' => 'image/webp',
+        'svg' => 'image/svg+xml',
+        'txt' => 'text/plain; charset=UTF-8',
+        'md' => 'text/plain; charset=UTF-8',
+        'csv' => 'text/plain; charset=UTF-8',
+    ];
+
+    /**
+     * Политика безопасности содержимого для файлов, открываемых в браузере: без скриптов, форм
+     * и доступа к порталу (sandbox — отдельное «пустое» происхождение). PDF её не получает: встроенный
+     * просмотрщик Chrome не открывает PDF в песочнице, а скрипты PDF и так изолированы от страницы.
+     */
+    public const SANDBOX_CSP = "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox";
+
+    /** Файлы, которые можно показать в браузере (предпросмотр); $mime не учитывается — только расширение. */
     public static function isInlineViewable(?string $mime, string $ext): bool
     {
-        return 'pdf' === $ext || \in_array($ext, ['png', 'jpg', 'jpeg', 'gif', 'svg', 'txt', 'md', 'csv'], true)
-            || (null !== $mime && (str_starts_with($mime, 'image/') || 'application/pdf' === $mime || 'text/plain' === $mime));
+        return isset(self::INLINE_TYPES[mb_strtolower($ext)]);
+    }
+
+    /** Тип содержимого для показа файла в браузере (null — показывать нельзя, только скачивать). */
+    public static function inlineContentType(string $ext): ?string
+    {
+        return self::INLINE_TYPES[mb_strtolower($ext)] ?? null;
     }
 
     public static function humanSize(int $bytes): string

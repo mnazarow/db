@@ -13,6 +13,7 @@ use App\Repository\UserRepository;
 use App\Service\DocumentManager;
 use App\Service\Llm\DocumentDescriber;
 use App\Service\Llm\LlmException;
+use App\Service\Notification\SubscriptionNotifier;
 use App\Service\SectionManager;
 use App\Service\Validity;
 use Doctrine\ORM\EntityManagerInterface;
@@ -45,6 +46,7 @@ final class DirectoryImporter
         private readonly Validity $validity,
         private readonly LoggerInterface $auditLogger,
         private readonly DocumentDescriber $describer,
+        private readonly ?SubscriptionNotifier $subscriptions = null,
     ) {
     }
 
@@ -87,7 +89,9 @@ final class DirectoryImporter
                 continue;
             }
             if ('dir' === $entry['type']) {
-                $parent = null === $entry['dir'] ? $target : ($map[$entry['dir']] ?? false);
+                // Раздел папки может быть null (верхний уровень портала), поэтому «??» здесь не годится:
+                // он принял бы null за отсутствующую папку и отметил бы всё содержимое как новое.
+                $parent = null === $entry['dir'] ? $target : self::mapped($map, $entry['dir']);
                 if (false === $parent) {
                     $map[$entry['path']] = false; // родитель новый — значит и эта папка новая
                     $plan->entries[$i]['result'] = ImportPlan::RESULT_SECTION_NEW;
@@ -101,7 +105,7 @@ final class DirectoryImporter
                 }
                 continue;
             }
-            $section = $map[$entry['dir']] ?? false;
+            $section = self::mapped($map, (string) $entry['dir']);
             if (null === $section) {
                 $plan->entries[$i]['result'] = ImportPlan::RESULT_SKIPPED;
                 $plan->entries[$i]['message'] = ImportPlan::SKIP_LABELS[ImportPlan::SKIP_NO_SECTION];
@@ -125,6 +129,17 @@ final class DirectoryImporter
         }
 
         return $plan;
+    }
+
+    /**
+     * Раздел, в который попадёт папка при предпросмотре: Section — существующий, null — верхний уровень
+     * портала, false — раздел будет создан (или папка плану неизвестна).
+     *
+     * @param array<string, Section|null|false> $map
+     */
+    private static function mapped(array $map, string $key): Section|false|null
+    {
+        return \array_key_exists($key, $map) ? $map[$key] : false;
     }
 
     /**
@@ -160,6 +175,8 @@ final class DirectoryImporter
             return false;
         }
         $entry = $plan->entries[$state->position];
+        // Импорт сотен файлов не должен превращаться в сотни писем подписчикам раздела.
+        $this->subscriptions?->mute();
         try {
             [$result, $message] = 'dir' === $entry['type']
                 ? $this->importDir($plan, $entry, $options, $state, $actorId)
@@ -169,8 +186,10 @@ final class DirectoryImporter
                 throw new \RuntimeException('Импорт прерван: ошибка базы данных при обработке «'.$entry['path'].'»: '.$e->getMessage(), 0, $e);
             }
             $result = ImportPlan::RESULT_ERROR;
-            $message = $e->getMessage();
-            $this->auditLogger->error('Ошибка импорта элемента', ['path' => $plan->absolutePath($entry), 'error' => $e->getMessage()]);
+            $message = mb_scrub($e->getMessage(), 'UTF-8');
+            $this->auditLogger->error('Ошибка импорта элемента', ['path' => DirectoryScanner::displayName($plan->absolutePath($entry)), 'error' => $message]);
+        } finally {
+            $this->subscriptions?->unmute();
         }
         $state->record($entry, $result, $message);
         ++$state->position;
@@ -269,7 +288,7 @@ final class DirectoryImporter
             }
             $version = $this->documentManager->addFileVersionFromPath($existing, $abs, $entry['name'], 'Импорт из каталога: '.$source, $actor, $options->deleteSource, $options->anyExtension);
 
-            return [ImportPlan::RESULT_VERSION_NEW, \sprintf('%s — версия %d', $existing->getTitle(), $version->getNumber())];
+            return [ImportPlan::RESULT_VERSION_NEW, \sprintf('%s — версия %d%s', $existing->getTitle(), $version->getNumber(), $existing->isVersionReleased($version) ? '' : ' (ждёт согласования)')];
         }
 
         $document = (new Document($section))
@@ -277,7 +296,9 @@ final class DirectoryImporter
             ->setType(Document::TYPE_FILE)
             ->setPublic($options->publicAccess)
             ->setValidUntil($options->validityMonths > 0 ? $this->validity->today()->modify('+'.$options->validityMonths.' months') : null);
-        $this->documentManager->createFromPath($document, $abs, $entry['name'], 'Импорт из каталога: '.$source, $actor, $options->publish, $options->deleteSource, $options->anyExtension, ['import' => $abs]);
+        // При обязательном согласовании импортированные документы остаются черновиками — как и загруженные вручную.
+        $publish = $options->publish && !$this->documentManager->approvalRequired();
+        $this->documentManager->createFromPath($document, $abs, $entry['name'], 'Импорт из каталога: '.$source, $actor, $publish, $options->deleteSource, $options->anyExtension, ['import' => DirectoryScanner::displayName($abs)]);
         if ($options->describe && $this->describer->isEnabled()) {
             try {
                 $this->describer->describe($document, $actor);
@@ -294,7 +315,8 @@ final class DirectoryImporter
     /** Совпадает ли файл на диске с текущей версией документа (по размеру и контрольной сумме). */
     private function isSameFile(Document $document, string $path, int $size): bool
     {
-        $current = $document->getCurrentVersion();
+        // Сравнение с последней редакцией (в том числе ждущей согласования): повторный импорт того же файла — не новая версия.
+        $current = $document->getLatestVersion() ?? $document->getCurrentVersion();
         if (null === $current || (int) $current->getSize() !== $size) {
             return false;
         }

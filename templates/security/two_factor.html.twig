@@ -27,8 +27,12 @@
                 </div>
                 <div class="form-actions form-actions--stack">
                     <button class="btn btn--pill btn--block" type="submit">Войти</button>
-                    <a class="link-action" href="{{ path('app_logout') }}">Выйти и войти под другой учётной записью</a>
                 </div>
+            </form>
+            {# Выход — POST с токеном: GET-запрос к /logout отклоняется (защита от CSRF). #}
+            <form method="post" action="{{ path('app_logout') }}" class="login__switch">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token('logout') }}">
+                <button type="submit" class="link-action link-action--button">Выйти и войти под другой учётной записью</button>
             </form>
         </div>
     </div>

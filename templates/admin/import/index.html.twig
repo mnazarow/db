@@ -20,7 +20,7 @@
                 <select class="form-control" id="import-folder" name="folder">
                     <option value="" {{ values.folder == '' ? 'selected' }}>Весь каталог импорта{% if root_files.files > 0 %} (в корне {{ root_files.files }} файл(ов), {{ root_files.bytes|filesize }}){% endif %}</option>
                     {% for f in folders %}
-                        <option value="{{ f.name }}" {{ values.folder == f.name ? 'selected' }}>{{ f.name }} — папок: {{ f.dirs }}, файлов: {{ f.files }}, {{ f.bytes|filesize }}</option>
+                        <option value="{{ f.value }}" {{ values.folder == f.value ? 'selected' }}>{{ f.name }} — папок: {{ f.dirs }}, файлов: {{ f.files }}, {{ f.bytes|filesize }}</option>
                     {% endfor %}
                 </select>
                 <div class="form-help">Каталог импорта на сервере: <code>{{ import_dir }}</code>. Скопируйте в него папку с документами (SFTP, SMB, scp), затем выберите её здесь.{% if folders|length == 0 %} <b>Сейчас в каталоге нет подпапок.</b>{% endif %}</div>

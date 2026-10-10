@@ -206,6 +206,7 @@ final class LdapClient
             $first($entry, 'department'),
             $groups,
             $isAdmin,
+            '' !== trim($this->settings->adminGroup),
         );
     }
 

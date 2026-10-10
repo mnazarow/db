@@ -18,12 +18,24 @@ KEEP_RELEASES=3
 ASSUME_YES="0"
 NO_BACKUP="0"
 NO_DB_ROLLBACK="0"
+NO_MAINT="0"
+# Восстановлена ли база при откате (0 — миграции изменили базу, а восстановить её не удалось).
+DB_RESTORED="1"
+# Включил ли этот запуск режим обслуживания (выключается только такой — включённый администратором остаётся).
+MAINT_SET="0"
 CREATED_TMP=""
 NEW_RELEASE=""
 PREV_RELEASE=""
 BACKUP_FILE=""
 SWITCHED="0"
 MIGRATED="0"
+# Docker: создал ли этот запуск тег :previous и копию кода .prev (откатываться можно только на них —
+# тег и копия, оставшиеся от прошлых обновлений, вернули бы позапрошлую версию поверх новой схемы базы).
+TAGGED_PREVIOUS="0"
+SAVED_PREV="0"
+APP_IMAGE_NAME=""
+# Что не переносится между версиями кода в Docker-режиме (данные и настройки этой установки).
+PREV_EXCLUDES=(--exclude '/docker/.env' --exclude '/import/' --exclude '/backups/' --exclude '/var/' --exclude '/.env.local' --exclude '/.git/' --exclude '/docker/mysql-data/' --exclude '/maintenance/')
 
 usage() {
     cat <<EOF
@@ -35,6 +47,7 @@ usage() {
   --keep N           Сколько предыдущих релизов хранить (по умолчанию ${KEEP_RELEASES}).
   --no-backup        Не делать резервную копию перед обновлением (не рекомендуется).
   --no-db-rollback   При откате не восстанавливать базу данных из резервной копии.
+  --no-maintenance   Не включать режим обслуживания (страницу «Идёт обновление портала») на время миграций.
   --yes, -y          Не спрашивать подтверждения.
   --help             Справка.
 EOF
@@ -47,6 +60,7 @@ while [[ $# -gt 0 ]]; do
         --keep) KEEP_RELEASES="${2:-}"; shift 2 ;;
         --no-backup) NO_BACKUP="1"; shift ;;
         --no-db-rollback) NO_DB_ROLLBACK="1"; shift ;;
+        --no-maintenance) NO_MAINT="1"; shift ;;
         --yes|-y) ASSUME_YES="1"; shift ;;
         --help|-h) usage; exit 0 ;;
         *) usage; die "Неизвестный параметр: $1" ;;
@@ -57,6 +71,7 @@ require_root "$@"
 log_init update "$@"
 load_conf || die "Портал не установлен: не найден ${CONF_FILE}. Для первой установки используйте install.sh."
 [[ "${KEEP_RELEASES}" =~ ^[0-9]+$ ]] || die "--keep: укажите число."
+acquire_lock 0
 banner "обновление"
 
 # --- Источник новой версии --------------------------------------------------------
@@ -91,6 +106,8 @@ if [[ -z "${DOCPORTAL_UPDATE_REEXEC:-}" && -f "${SOURCE_DIR}/deploy/update.sh" &
     [[ "${ASSUME_YES}" == "1" ]] && REEXEC_ARGS+=(--yes)
     [[ "${NO_BACKUP}" == "1" ]] && REEXEC_ARGS+=(--no-backup)
     [[ "${NO_DB_ROLLBACK}" == "1" ]] && REEXEC_ARGS+=(--no-db-rollback)
+    # Параметр появился в 1.7.0: новой версии передаётся, только если она его знает.
+    [[ "${NO_MAINT}" == "1" ]] && grep -q -- '--no-maintenance' "${SOURCE_DIR}/deploy/update.sh" && REEXEC_ARGS+=(--no-maintenance)
     export DOCPORTAL_UPDATE_REEXEC=1 DOCPORTAL_UPDATE_TMP="${CREATED_TMP}"
     info "Обновление продолжится скриптами новой версии: ${SOURCE_DIR}/deploy/update.sh"
     exec bash "${SOURCE_DIR}/deploy/update.sh" "${REEXEC_ARGS[@]}"
@@ -119,29 +136,104 @@ rollback() {
             svc reload nginx || true
             ok "Возвращён предыдущий релиз: ${PREV_RELEASE}"
         fi
-        if [[ "${MIGRATED}" == "1" && "${NO_DB_ROLLBACK}" != "1" && -n "${BACKUP_FILE}" && -f "${BACKUP_FILE}" ]]; then
-            warn "Восстановление базы данных из ${BACKUP_FILE}…"
-            "${SCRIPT_DIR}/restore.sh" "${BACKUP_FILE}" --db-only --yes || warn "Не удалось восстановить базу данных автоматически. Восстановите вручную: ${APP_ID} restore ${BACKUP_FILE} --db-only"
+        if [[ "${MIGRATED}" == "1" ]]; then
+            DB_RESTORED="0"
+            if [[ "${NO_DB_ROLLBACK}" != "1" && -n "${BACKUP_FILE}" && -f "${BACKUP_FILE}" ]]; then
+                warn "Восстановление базы данных из ${BACKUP_FILE}…"
+                if "${SCRIPT_DIR}/restore.sh" "${BACKUP_FILE}" --db-only --yes --no-safety-backup; then
+                    DB_RESTORED="1"
+                else
+                    warn "Не удалось восстановить базу данных автоматически. Восстановите вручную: ${APP_ID} restore ${BACKUP_FILE} --db-only"
+                fi
+            fi
         fi
         [[ -n "${NEW_RELEASE}" && -d "${NEW_RELEASE}" ]] && rm -rf "${NEW_RELEASE}"
     else
-        if docker image inspect "${APP_ID}:previous" >/dev/null 2>&1; then
+        # Сначала прежний код (в том числе docker-compose.yml), затем прежний образ: контейнеры пересоздаются
+        # по прежнему описанию, а не по новому с прежним образом.
+        if [[ "${SAVED_PREV}" == "1" && -d "${APP_DIR}.prev" ]]; then
+            rsync -a --delete "${PREV_EXCLUDES[@]}" "${APP_DIR}.prev/" "${APP_DIR}/" >>"${LOG_FILE}" 2>&1 || true
+            rm -rf "${APP_DIR}.prev"
+        fi
+        if [[ "${TAGGED_PREVIOUS}" == "1" ]] && docker image inspect "${APP_ID}:previous" >/dev/null 2>&1; then
             warn "Возврат предыдущего образа контейнера…"
-            (cd "${APP_DIR}/docker" && docker tag "${APP_ID}:previous" "${APP_ID}:latest" && docker compose up -d >>"${LOG_FILE}" 2>&1) || warn "Не удалось вернуть предыдущий образ."
+            (cd "${APP_DIR}/docker" && docker tag "${APP_ID}:previous" "${APP_IMAGE_NAME}" && docker compose up -d >>"${LOG_FILE}" 2>&1) || warn "Не удалось вернуть предыдущий образ."
         fi
-        if [[ -n "${BACKUP_FILE}" && -f "${BACKUP_FILE}" && -d "${APP_DIR}.prev" ]]; then
-            rsync -a --delete --exclude '/docker/.env' "${APP_DIR}.prev/" "${APP_DIR}/" >>"${LOG_FILE}" 2>&1 || true
-        fi
-        if [[ "${MIGRATED}" == "1" && "${NO_DB_ROLLBACK}" != "1" && -n "${BACKUP_FILE}" && -f "${BACKUP_FILE}" ]]; then
-            "${SCRIPT_DIR}/restore.sh" "${BACKUP_FILE}" --db-only --yes || warn "Не удалось восстановить базу данных автоматически."
+        if [[ "${MIGRATED}" == "1" ]]; then
+            DB_RESTORED="0"
+            if [[ "${NO_DB_ROLLBACK}" != "1" && -n "${BACKUP_FILE}" && -f "${BACKUP_FILE}" ]]; then
+                if "${SCRIPT_DIR}/restore.sh" "${BACKUP_FILE}" --db-only --yes --no-safety-backup; then
+                    DB_RESTORED="1"
+                else
+                    warn "Не удалось восстановить базу данных автоматически."
+                fi
+            fi
         fi
     fi
     [[ -n "${CREATED_TMP}" ]] && rm -rf "${CREATED_TMP}" || true
+    if [[ "${DB_RESTORED}" == "0" ]]; then
+        # Миграции новой версии уже изменили базу, а прежняя версия с ней может работать неправильно:
+        # портал остаётся закрытым, пока администратор не восстановит базу или не повторит обновление.
+        if [[ "${MAINT_SET}" == "1" ]]; then
+            printf 'admin\n' > "$(maintenance_dir)/owner" 2>/dev/null || true
+            MAINT_SET="0"
+            warn "Режим обслуживания оставлен включённым: база данных изменена миграциями новой версии и не восстановлена."
+        fi
+        warn "Восстановите базу (${APP_ID} restore ${BACKUP_FILE:-АРХИВ} --db-only) или повторите обновление; затем: ${APP_ID} maintenance off"
+        warn "Откат кода завершён (версия ${APP_VERSION}), база данных НЕ восстановлена."
+        return 0
+    fi
+    maintenance_end
     warn "Откат завершён. Портал работает на версии ${APP_VERSION}."
+}
+
+# Режим обслуживания на время миграций и переключения версии: посетители видят страницу «Идёт обновление
+# портала», а не ошибки прежнего кода на новой схеме базы. Режим, включённый администратором до обновления,
+# после обновления остаётся включённым.
+maintenance_begin() {
+    [[ "${NO_MAINT}" == "1" ]] && return 0
+    if ! maintenance_wired; then
+        warn "Режим обслуживания не подключён к веб-серверу — во время миграций портал будет открыт посетителям."
+        return 0
+    fi
+    if maintenance_is_on; then
+        if [[ "$(maintenance_owner)" == "update" ]]; then
+            # Режим остался от прерванного обновления — после успешного обновления он выключится.
+            MAINT_SET="1"
+            info "Режим обслуживания остался включённым после прерванного обновления — выключится после этого обновления."
+        else
+            info "Режим обслуживания уже включён администратором — после обновления он останется включённым."
+        fi
+        return 0
+    fi
+    if maintenance_on "Обновление до версии ${NEW_VERSION}." "" update; then
+        MAINT_SET="1"
+        info "Включён режим обслуживания: посетители видят страницу «Идёт обновление портала»."
+    else
+        warn "Не удалось включить режим обслуживания — обновление продолжается без него."
+    fi
+}
+maintenance_end() {
+    if [[ "${MAINT_SET}" == "1" ]]; then
+        maintenance_off
+        MAINT_SET="0"
+        ok "Режим обслуживания выключен — портал снова открыт посетителям."
+    fi
+    return 0
 }
 
 setup_traps
 ROLLBACK_ENABLED="1"
+
+# Режим обслуживания включается до резервной копии: всё, что сотрудники успели бы изменить между копией и
+# миграциями, пропало бы при откате (а загруженные файлы остались бы без записей в базе). Портал закрыт на
+# время копии, установки новой версии и миграций; --no-maintenance — оставить его открытым.
+if [[ "${NO_MAINT}" != "1" ]]; then
+    if [[ "${INSTALL_MODE}" == "native" ]]; then
+        ensure_nginx_maintenance || warn "Обновление продолжится без страницы обслуживания."
+    fi
+    maintenance_begin
+fi
 
 # --- Резервная копия --------------------------------------------------------------
 if [[ "${NO_BACKUP}" != "1" ]]; then
@@ -201,11 +293,17 @@ if [[ "${INSTALL_MODE}" == "native" ]]; then
 
     console() { runuser -u "${SERVICE_USER}" -- "${PHP_BIN}" -d memory_limit=512M "${NEW_RELEASE}/bin/console" "$@" --no-interaction --env=prod >>"${LOG_FILE}" 2>&1; }
 
+
     step "Прогрев кэша и миграции"
     console cache:clear || die "Ошибка очистки кэша новой версии."
     console cache:warmup || die "Ошибка прогрева кэша новой версии."
-    MIGRATED="1"
-    console doctrine:migrations:migrate --allow-no-migration || die "Ошибка применения миграций."
+    # База меняется, только если у новой версии есть миграции: иначе при откате её восстанавливать не нужно.
+    if console doctrine:migrations:up-to-date; then
+        info "Новых миграций базы данных нет."
+    else
+        MIGRATED="1"
+        console doctrine:migrations:migrate --allow-no-migration || die "Ошибка применения миграций."
+    fi
     console app:check || die "Проверка новой версии (app:check) не пройдена."
 
     step "Переключение на новый релиз"
@@ -213,8 +311,11 @@ if [[ "${INSTALL_MODE}" == "native" ]]; then
     svc reload "${PHP_FPM_SERVICE}" || svc restart "${PHP_FPM_SERVICE}" || die "Не удалось перезапустить ${PHP_FPM_SERVICE}."
     nginx -t >>"${LOG_FILE}" 2>&1 && svc reload nginx || true
     health || die "Новая версия не отвечает."
+    maintenance_end
     install_cli_wrapper && info "Команда управления ${APP_ID} обновлена."
     ensure_cron_entries
+    install_logrotate
+    upgrade_native_system_config "${NEW_RELEASE}"
     # Извлечение текста из PDF (API, LLM) появилось в 1.3.0 — пакет poppler-utils ставим при обновлении, если его нет.
     # Обновление к этому моменту уже выполнено и проверено, поэтому любая неудача здесь — только предупреждение.
     if ! command -v pdftotext >/dev/null 2>&1; then
@@ -234,10 +335,23 @@ if [[ "${INSTALL_MODE}" == "native" ]]; then
 else
     step "Обновление Docker-развёртывания"
     cd "${APP_DIR}/docker" || die "Каталог ${APP_DIR}/docker не найден."
-    docker image inspect "${APP_ID}:latest" >/dev/null 2>&1 && docker tag "${APP_ID}:latest" "${APP_ID}:previous" >>"${LOG_FILE}" 2>&1 || true
-    rm -rf "${APP_DIR}.prev"; rsync -a --exclude '/docker/.env' "${APP_DIR}/" "${APP_DIR}.prev/" >>"${LOG_FILE}" 2>&1 || warn "Не удалось сохранить копию текущего кода."
-    rsync -a --delete --exclude '/var/' --exclude '/.env.local' --exclude '/.git/' --exclude '/docker/.env' --exclude '/docker/mysql-data/' --exclude '/backups/' \
-        "${SOURCE_DIR}/" "${APP_DIR}/" >>"${LOG_FILE}" 2>&1 || die "Не удалось скопировать файлы новой версии."
+    # Образ приложения — как в docker-compose.yml (APP_IMAGE в docker/.env, по умолчанию docportal:latest).
+    APP_IMAGE_NAME=$(docker compose config --format json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["services"]["app"]["image"])' 2>/dev/null || true)
+    [[ -n "${APP_IMAGE_NAME}" ]] || APP_IMAGE_NAME=$( (sed -n 's/^APP_IMAGE=//p' .env 2>/dev/null || true) | tail -n1 | tr -d "\"'")
+    APP_IMAGE_NAME=${APP_IMAGE_NAME:-${APP_ID}:latest}
+    if docker image inspect "${APP_IMAGE_NAME}" >/dev/null 2>&1 && docker tag "${APP_IMAGE_NAME}" "${APP_ID}:previous" >>"${LOG_FILE}" 2>&1; then
+        TAGGED_PREVIOUS="1"
+    fi
+    rm -rf "${APP_DIR}.prev"
+    if rsync -a "${PREV_EXCLUDES[@]}" "${APP_DIR}/" "${APP_DIR}.prev/" >>"${LOG_FILE}" 2>&1; then
+        SAVED_PREV="1"
+    else
+        warn "Не удалось сохранить копию текущего кода."
+    fi
+    # /import/ — каталог импорта на сервере (IMPORT_HOST_DIR): его содержимое при обновлении не трогаем.
+    # /maintenance/ — состояние режима обслуживания (каталог подключён в контейнер web).
+    rsync -a --delete --exclude '/var/' --exclude '/.env.local' --exclude '/.git/' --exclude '/docker/.env' --exclude '/docker/mysql-data/' --exclude '/backups/' --exclude '/import/' \
+        --exclude '/maintenance/' "${SOURCE_DIR}/" "${APP_DIR}/" >>"${LOG_FILE}" 2>&1 || die "Не удалось скопировать файлы новой версии."
     chmod +x "${APP_DIR}"/deploy/*.sh "${APP_DIR}/docker/entrypoint.sh" "${APP_DIR}/bin/console" 2>/dev/null || true
     docker compose build --pull >>"${LOG_FILE}" 2>&1 || die "Сборка образа новой версии не удалась."
     # Каталог импорта документов появился в 1.1.0: подключается в контейнеры как /var/www/html/var/import.
@@ -245,17 +359,37 @@ else
         printf '\n# Каталог импорта документов: путь на сервере или имя тома Docker.\nIMPORT_HOST_DIR=%s/import\n' "${APP_DIR}" >> "${APP_DIR}/docker/.env"
     fi
     mkdir -p "${APP_DIR}/import" && chown 82:82 "${APP_DIR}/import" 2>/dev/null && chmod 2775 "${APP_DIR}/import" || true
+    # До 1.6.1 установщик доверял заголовкам X-Forwarded-* от всех частных сетей — клиенты локальной сети
+    # могли подменить свой IP. nginx передаёт настоящий адрес по FastCGI, поэтому прокси не нужны.
+    if grep -q '^TRUSTED_PROXIES=172.16.0.0/12,10.0.0.0/8,192.168.0.0/16$' "${APP_DIR}/docker/.env" 2>/dev/null; then
+        sed -i 's|^TRUSTED_PROXIES=172.16.0.0/12,10.0.0.0/8,192.168.0.0/16$|TRUSTED_PROXIES=|' "${APP_DIR}/docker/.env" || true
+        warn "TRUSTED_PROXIES в docker/.env очищен: заголовкам X-Forwarded-* от всех частных сетей портал больше не доверяет. Если перед порталом стоит обратный прокси (TLS), укажите его адрес: TRUSTED_PROXIES=<IP прокси> в ${APP_DIR}/docker/.env и выполните: cd ${APP_DIR}/docker && docker compose up -d"
+    fi
+    # Страница обслуживания показывается, пока контейнер приложения применяет миграции (с 1.7.0 каталог
+    # ${APP_DIR}/maintenance подключён в контейнер web; при переходе с прежних версий web пересоздаётся
+    # командой up -d ниже и сразу начинает показывать страницу; режим включён в начале обновления).
     MIGRATED="1"
     docker compose up -d >>"${LOG_FILE}" 2>&1 || die "Не удалось запустить обновлённые контейнеры."
+    # Каталог docker/nginx подключён в web целиком: изменённая конфигурация применяется без пересоздания.
+    docker compose exec -T web nginx -s reload >>"${LOG_FILE}" 2>&1 || true
     health || die "Новая версия не отвечает."
+    maintenance_end
     install_cli_wrapper && info "Команда управления ${APP_ID} обновлена."
-    rm -rf "${APP_DIR}.prev"
-    docker image prune -f >>"${LOG_FILE}" 2>&1 || true
+    # Задания приложения выполняет контейнер cron; на сервере остаётся только резервное копирование.
+    ensure_cron_entries
+    install_logrotate
 fi
 
 APP_VERSION="${NEW_VERSION}"
 save_conf
 ROLLBACK_ENABLED="0"
+if [[ "${INSTALL_MODE}" == "docker" ]]; then
+    # Прежние код и образ убираются только теперь, когда откат уже не понадобится (и не должны достаться
+    # откату следующего обновления).
+    rm -rf "${APP_DIR}.prev"
+    [[ "${TAGGED_PREVIOUS}" == "1" ]] && docker image rm "${APP_ID}:previous" >>"${LOG_FILE}" 2>&1 || true
+    docker image prune -f >>"${LOG_FILE}" 2>&1 || true
+fi
 [[ -n "${CREATED_TMP}" ]] && rm -rf "${CREATED_TMP}" || true
 trap - ERR
 printf '\n%sОбновление завершено: версия %s.%s Журнал: %s\n' "${C_GREEN}${C_BOLD}" "${NEW_VERSION}" "${C_RESET}" "${LOG_FILE}"

@@ -19,6 +19,7 @@
                     {% if templates|default([])|length > 0 %}<a class="btn btn--ghost" href="{{ path('app_document_new', {section: section.id, template: templates[0].id}) }}" title="Шаблон «{{ templates[0].name }}»">Создать по шаблону</a>{% endif %}
                     <a class="btn btn--ghost" href="{{ path('app_section_new', {id: section.id}) }}">Новый подраздел</a>
                     <a class="btn btn--ghost" href="{{ path('app_section_edit', {id: section.id}) }}">Изменить раздел</a>
+                    <a class="btn btn--ghost" href="{{ path('app_section_bundle', {id: section.id}) }}" title="Действующие редакции документов раздела и подразделов одним PDF-файлом с содержанием">PDF-сборник</a>
                     {% if section.topLevel %}<a class="btn btn--ghost" href="{{ path('app_section_materials', {id: section.id}) }}" title="Таблица «Продуктовые материалы» раздела: типы, состояние, проверки PM и дизайна, загрузка файлов из строк">Таблица материалов</a>{% endif %}
                     {% if is_granted('ROLE_ADMIN') %}<a class="btn btn--ghost" href="{{ path('admin_section_moderators', {id: section.id}) }}">Модераторы</a>{% endif %}
                 {% endif %}

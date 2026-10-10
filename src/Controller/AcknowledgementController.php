@@ -7,13 +7,18 @@ namespace App\Controller;
 use App\Entity\Document;
 use App\Entity\DocumentAcknowledgement;
 use App\Entity\DocumentQuestion;
+use App\Entity\Section;
 use App\Entity\User;
 use App\Repository\DocumentAcknowledgementRepository;
 use App\Repository\DocumentQuestionRepository;
+use App\Repository\SectionRepository;
 use App\Repository\UserRepository;
 use App\Security\Access;
 use App\Security\Voter\PortalVoter;
+use App\Service\Csv;
 use App\Service\AcknowledgementService;
+use App\Service\Pdf\PdfFactory;
+use App\Service\Pdf\SignatureSheetService;
 use App\Service\QuizService;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\Request;
@@ -36,6 +41,8 @@ final class AcknowledgementController extends AbstractController
         private readonly Access $access,
         private readonly QuizService $quiz,
         private readonly DocumentQuestionRepository $questions,
+        private readonly SectionRepository $sections,
+        private readonly SignatureSheetService $signatureSheets,
     ) {
     }
 
@@ -236,6 +243,32 @@ final class AcknowledgementController extends AbstractController
         ]);
     }
 
+    /**
+     * Лист ознакомления в PDF с кодом проверки подлинности (QR): по коду страница /verify/<код> покажет,
+     * что лист выдан порталом и совпадают ли записи с текущими. При тех же записях код прежний.
+     */
+    #[Route('/documents/{id}/acknowledgements/sheet.pdf', name: 'app_document_acknowledgements_pdf', requirements: ['id' => '\d+'], methods: ['GET'])]
+    #[IsGranted(PortalVoter::DOCUMENT_EDIT, subject: 'document')]
+    public function sheetPdf(Document $document, Request $request, #[CurrentUser] User $user): Response
+    {
+        $version = (int) $request->query->get('version');
+        $report = $this->service->report($document, $version > 0 ? $version : null);
+        try {
+            $result = $this->signatureSheets->generate($document, $report['version'], $user);
+        } catch (\DomainException $e) {
+            $this->addFlash('error', $e->getMessage());
+
+            return $this->redirectToRoute('app_document_acknowledgements', ['id' => $document->getId()]);
+        }
+
+        return new Response($result['pdf'], Response::HTTP_OK, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => PdfFactory::disposition($result['filename'], 'inline' === $request->query->get('disposition')),
+            'Cache-Control' => 'private, no-store',
+            'X-Content-Type-Options' => 'nosniff',
+        ]);
+    }
+
     /** Выгрузка отчёта в CSV. */
     #[Route('/documents/{id}/acknowledgements.csv', name: 'app_document_acknowledgements_csv', requirements: ['id' => '\d+'], methods: ['GET'])]
     #[IsGranted(PortalVoter::DOCUMENT_EDIT, subject: 'document')]
@@ -246,13 +279,13 @@ final class AcknowledgementController extends AbstractController
         $response = new StreamedResponse(function () use ($document, $report): void {
             $out = fopen('php://output', 'wb');
             fwrite($out, "\xEF\xBB\xBF");
-            fputcsv($out, ['Документ', $document->getTitle()], ';', '"', '\\');
-            fputcsv($out, ['Обозначение', (string) $document->getCode()], ';', '"', '\\');
+            Csv::put($out, ['Документ', $document->getTitle()]);
+            Csv::put($out, ['Обозначение', (string) $document->getCode()]);
             fputcsv($out, ['Редакция (версия)', (string) $report['version']], ';', '"', '\\');
             fputcsv($out, [], ';', '"', '\\');
             fputcsv($out, ['Сотрудник', 'Подразделение', 'Назначено', 'Срок', 'Ознакомлен', 'Проверка знаний', 'IP'], ';', '"', '\\');
             foreach ($report['rows'] as $row) {
-                fputcsv($out, [
+                Csv::put($out, [
                     $row->getUser()->getDisplayName(),
                     (string) $row->getUser()->getDepartment(),
                     $row->getAssignedAt()->format('d.m.Y'),
@@ -260,7 +293,7 @@ final class AcknowledgementController extends AbstractController
                     $row->getConfirmedAt()?->format('d.m.Y H:i') ?? 'не ознакомлен',
                     $row->hasQuizResult() ? \sprintf('%d из %d (попыток: %d)', $row->getQuizScore(), $row->getQuizTotal(), $row->getQuizAttempts()) : '',
                     (string) $row->getConfirmedIp(),
-                ], ';', '"', '\\');
+                ]);
             }
             fclose($out);
         });
@@ -276,23 +309,75 @@ final class AcknowledgementController extends AbstractController
     public function mine(#[CurrentUser] User $user): Response
     {
         return $this->render('profile/acknowledgements.html.twig', [
-            'pending' => $this->acknowledgements->findPendingForUser($user),
+            'pending' => $this->acknowledgements->findPendingForUser($user, 100, $this->access->viewer($user)),
             'confirmed' => $this->acknowledgements->findConfirmedForUser($user, 50),
             'today' => new \DateTimeImmutable('today'),
         ]);
     }
 
-    /** Сводка по ознакомлениям в панели администратора. */
+    /** Документов-столбцов в сводке по подразделениям (остальные — в выгрузке CSV). */
+    private const MATRIX_DOCUMENTS = 30;
+
+    /** Сводка по ознакомлениям в панели администратора: по документам или по подразделениям. */
     #[Route('/admin/acknowledgements', name: 'admin_acknowledgements', methods: ['GET'])]
     #[IsGranted('ROLE_ADMIN')]
     public function overview(Request $request): Response
     {
         $onlyPending = filter_var($request->query->get('pending'), \FILTER_VALIDATE_BOOL);
+        $view = 'departments' === $request->query->get('view') ? 'departments' : 'documents';
+        $section = $this->filterSection($request);
+        $sort = 'pct' === $request->query->get('sort') ? 'pct' : 'name';
 
         return $this->render('admin/acknowledgements/index.html.twig', [
-            'rows' => $this->acknowledgements->overview($onlyPending),
+            'view' => $view,
+            'rows' => 'documents' === $view ? $this->acknowledgements->overview($onlyPending) : [],
+            'matrix' => 'departments' === $view ? $this->service->departmentMatrix($this->sectionIds($section), self::MATRIX_DOCUMENTS, $sort) : null,
             'totals' => $this->acknowledgements->totals(),
             'only_pending' => $onlyPending,
+            'tree' => 'departments' === $view ? $this->sections->findAllTree() : [],
+            'section' => $section,
+            'sort' => $sort,
         ]);
+    }
+
+    /** Сводка по подразделениям в CSV: строка на пару «подразделение — документ» (удобно для сводных таблиц Excel). */
+    #[Route('/admin/acknowledgements/departments.csv', name: 'admin_acknowledgements_departments_csv', methods: ['GET'])]
+    #[IsGranted('ROLE_ADMIN')]
+    public function departmentsCsv(Request $request): StreamedResponse
+    {
+        $matrix = $this->service->departmentMatrix($this->sectionIds($this->filterSection($request)), \PHP_INT_MAX);
+        $response = new StreamedResponse(static function () use ($matrix): void {
+            $out = fopen('php://output', 'wb');
+            fwrite($out, "\xEF\xBB\xBF");
+            Csv::put($out, ['Подразделение', 'Документ', 'Обозначение', 'Раздел', 'Назначено', 'Ознакомились', 'Просрочено', 'Ознакомились, %']);
+            foreach ($matrix['departments'] as $department) {
+                foreach ($matrix['all_documents'] as $column) {
+                    $cell = $department['cells'][$column['document']->getId()] ?? null;
+                    if (null === $cell) {
+                        continue;
+                    }
+                    Csv::put($out, [$department['name'], $column['document']->getTitle(), (string) $column['document']->getCode(),
+                        $column['document']->getSection()->getFullName(), $cell['assigned'], $cell['confirmed'], $cell['overdue'], $cell['pct']]);
+                }
+            }
+            fclose($out);
+        });
+        $response->headers->set('Content-Type', 'text/csv; charset=UTF-8');
+        $response->headers->set('Content-Disposition', 'attachment; filename="acknowledgements-departments-'.date('Y-m-d').'.csv"');
+
+        return $response;
+    }
+
+    private function filterSection(Request $request): ?Section
+    {
+        $id = (int) $request->query->get('section');
+
+        return $id > 0 ? $this->sections->find($id) : null;
+    }
+
+    /** @return list<int>|null */
+    private function sectionIds(?Section $section): ?array
+    {
+        return null === $section ? null : $this->sections->findSubtreeIds($section);
     }
 }

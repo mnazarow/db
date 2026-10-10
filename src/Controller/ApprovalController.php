@@ -58,7 +58,11 @@ final class ApprovalController extends AbstractController
             'document' => $document,
             'by_department' => $this->service->candidatesByDepartment($user),
             'history' => $this->approvals->findForDocument($document),
-            'version' => $document->getCurrentVersion()?->getNumber() ?? 0,
+            'version' => $this->service->versionToApprove($document)?->getNumber() ?? 0,
+            // Опубликованный документ: согласуется новая редакция, сотрудники до решения видят текущую.
+            'new_edition' => $document->isPublished() && null !== $document->getPendingVersion(),
+            'current_number' => $document->getCurrentVersion()?->getNumber() ?? 0,
+            'approval_auto_publish' => $this->service->isAutoPublish(),
         ]);
     }
 
@@ -77,8 +81,8 @@ final class ApprovalController extends AbstractController
         try {
             $this->service->decide($approval, $approved, (string) $request->request->get('note'), $user);
             $this->addFlash('success', $approved
-                ? ($this->service->isAutoPublish() ? 'Документ согласован и опубликован.' : 'Документ согласован — модератор может публиковать.')
-                : 'Документ отклонён, автор получил комментарий.');
+                ? ($this->service->isAutoPublish() ? 'Редакция согласована и вступила в силу.' : 'Редакция согласована — модератор может её публиковать.')
+                : 'Редакция отклонена, автор получил комментарий.');
         } catch (\DomainException $e) {
             $this->addFlash('danger', $e->getMessage());
         }

@@ -44,8 +44,18 @@ final class HomeController extends AbstractController
         $managedIds = $guest ? [] : $this->access->managedSectionIds($user);
         $isModerator = !$guest && $this->access->isModerator($user);
 
+        // Подразделы берутся из уже загруженного дерева: обращение к $section->getChildren() в шаблоне
+        // догружало бы каждую коллекцию отдельным запросом.
+        $children = [];
+        foreach ($tree as $section) {
+            if (null !== $section->getParent()) {
+                $children[$section->getParent()->getId()][] = $section;
+            }
+        }
+
         return $this->render('home/index.html.twig', [
             'roots' => array_values(array_filter($tree, static fn (Section $s) => null === $s->getParent())),
+            'children' => $children,
             'tree' => $tree,
             'counts' => $counts,
             'recent' => $this->documents->findRecentPublished(8, $guest, $viewer),
@@ -54,7 +64,7 @@ final class HomeController extends AbstractController
             'is_moderator' => $isModerator,
             'total_published' => $this->documents->countByStatus(null, $guest, $viewer)[Document::STATUS_PUBLISHED],
             // Что сотруднику нужно прочитать под подпись.
-            'to_acknowledge' => $guest ? [] : $this->acknowledgements->findPendingForUser($user, 6),
+            'to_acknowledge' => $guest ? [] : $this->acknowledgements->findPendingForUser($user, 6, $viewer),
             'today' => new \DateTimeImmutable('today'),
         ]);
     }
@@ -106,7 +116,14 @@ final class HomeController extends AbstractController
     {
         $out = [];
         foreach ($tree as $s) {
-            $out[$s->getId()] = ['published' => 0, 'total' => 0, 'children' => $s->getChildren()->count()];
+            $out[$s->getId()] = ['published' => 0, 'total' => 0, 'children' => 0];
+        }
+        // Число подразделов — по уже загруженному дереву (getChildren()->count() делал бы запрос на каждый раздел).
+        foreach ($tree as $s) {
+            $parentId = $s->getParent()?->getId();
+            if (null !== $parentId && isset($out[$parentId])) {
+                ++$out[$parentId]['children'];
+            }
         }
         foreach ($tree as $s) {
             $own = $perSection[$s->getId()] ?? [];

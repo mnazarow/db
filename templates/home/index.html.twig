@@ -100,10 +100,11 @@
                             {{ c.published|plural(['документ', 'документа', 'документов']) }}
                             {% if c.children > 0 %} · {{ c.children|plural(['подраздел', 'подраздела', 'подразделов']) }}{% endif %}
                         </div>
-                        {% if s.children|length > 0 %}
+                        {% set kids = children[s.id]|default([]) %}
+                        {% if kids|length > 0 %}
                             <div class="section-card__children">
-                                {% for ch in s.children|slice(0, 5) %}<span class="chip chip--static">{{ ch.name }}</span>{% endfor %}
-                                {% if s.children|length > 5 %}<span class="chip chip--static">ещё {{ s.children|length - 5 }}</span>{% endif %}
+                                {% for ch in kids|slice(0, 5) %}<span class="chip chip--static">{{ ch.name }}</span>{% endfor %}
+                                {% if kids|length > 5 %}<span class="chip chip--static">ещё {{ kids|length - 5 }}</span>{% endif %}
                             </div>
                         {% endif %}
                     </div>

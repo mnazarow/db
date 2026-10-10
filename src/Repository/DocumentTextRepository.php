@@ -52,7 +52,7 @@ final class DocumentTextRepository extends ServiceEntityRepository
             FROM document d
             JOIN document_version v ON v.id = d.current_version_id
             LEFT JOIN document_text t ON t.document_id = d.id
-            WHERE t.document_id IS NULL OR t.version_number <> v.number
+            WHERE t.document_id IS NULL OR t.version_number <> v.number OR t.status = 'pending'
             ORDER BY d.id
             LIMIT :limit
             SQL;

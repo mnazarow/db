@@ -6,15 +6,19 @@ namespace App\Service\Material;
 
 use App\Entity\Document;
 use App\Entity\DocumentKind;
+use App\Entity\DocumentVersion;
 use App\Entity\MaterialParameter;
 use App\Entity\MaterialRow;
+use App\Entity\MaterialRowChange;
 use App\Entity\Section;
 use App\Entity\User;
 use App\Repository\MaterialParameterRepository;
 use App\Repository\MaterialRowRepository;
+use App\Security\Access;
 use App\Service\ApprovalService;
 use App\Service\DocumentKindService;
 use App\Service\DocumentManager;
+use App\Service\PortalUrl;
 use Doctrine\ORM\EntityManagerInterface;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
@@ -38,8 +42,11 @@ final class MaterialService implements ResetInterface
         private readonly DocumentManager $documents,
         private readonly ApprovalService $approvals,
         private readonly UrlGeneratorInterface $urls,
+        private readonly PortalUrl $portalUrl,
+        private readonly Access $access,
         private readonly LoggerInterface $auditLogger,
         private readonly int $defaultValidityMonths,
+        private readonly ?MaterialHistory $history = null,
     ) {
     }
 
@@ -65,6 +72,24 @@ final class MaterialService implements ResetInterface
         $this->ensureDefaults($section);
         $this->em->flush();
         $this->auditLogger->info('Включена таблица материалов', ['section' => $section->getFullName(), 'user' => $by?->getUsername()]);
+    }
+
+    /**
+     * Удаляет таблицу раздела целиком — строки и столбцы — и выключает её. Документы, загруженные
+     * из строк, остаются в разделе. Возвращает число удалённых строк.
+     */
+    public function purge(Section $section, ?User $by = null): int
+    {
+        $rows = (int) $this->em->createQuery('DELETE FROM App\Entity\MaterialRow r WHERE r.section = :section')
+            ->setParameter('section', $section)->execute();
+        $this->em->createQuery('DELETE FROM App\Entity\MaterialParameter p WHERE p.section = :section')
+            ->setParameter('section', $section)->execute();
+        $section->setMaterialsEnabled(false);
+        $this->em->flush();
+        $this->forgetParameters($section);
+        $this->auditLogger->warning('Удалена таблица материалов', ['section' => $section->getFullName(), 'rows' => $rows, 'user' => $by?->getUsername()]);
+
+        return $rows;
     }
 
     /** Скрывает таблицу; строки и столбцы сохраняются и вернутся при повторном включении. */
@@ -146,6 +171,25 @@ final class MaterialService implements ResetInterface
         return $this->rows->findForSection($section);
     }
 
+    /**
+     * Можно ли через строку таблицы менять связанный с ней документ (название, тип, новые версии файла).
+     * Документ должен оставаться в разделе таблицы или его подразделе, а у сотрудника должно быть право
+     * править документ: иначе документ, который перенесли в чужой раздел, правился бы в обход прав.
+     * $by = null — системные операции (импорт из консоли).
+     */
+    public function canManageDocument(MaterialRow $row, ?User $by): bool
+    {
+        $document = $row->getDocument();
+        if (null === $document) {
+            return false;
+        }
+        if (!$document->getSection()->isSameOrDescendantOf($row->getSection())) {
+            return false;
+        }
+
+        return null === $by || $this->access->canEditDocument($by, $document);
+    }
+
     /** Состояние строки по «Требованиям PM» и «Дизайн-требованиям» — как в Excel. */
     public function state(MaterialRow $row): string
     {
@@ -170,6 +214,7 @@ final class MaterialService implements ResetInterface
         }
         $row = (new MaterialRow($section, $title, $position))->touch($by);
         $this->em->persist($row);
+        $this->history?->record($row, MaterialRowChange::CREATE, $by, null, null, null, '' !== $row->getTitle() ? $row->getTitle() : null);
         $this->em->flush();
         $this->auditLogger->info('Добавлена строка таблицы материалов', ['section' => $section->getFullName(), 'row' => $row->getId(), 'user' => $by?->getUsername()]);
 
@@ -190,7 +235,7 @@ final class MaterialService implements ResetInterface
             $row->setTitle($value);
             $new = $row->getTitle();
             $label = 'Материал';
-            if (null !== $row->getDocument() && '' !== $new && $row->getDocument()->getTitle() !== $new) {
+            if (null !== $row->getDocument() && '' !== $new && $row->getDocument()->getTitle() !== $new && $this->canManageDocument($row, $by)) {
                 // Название материала и название документа — одно и то же: правим оба.
                 $row->getDocument()->setTitle($new);
                 if (null !== $by) {
@@ -206,7 +251,7 @@ final class MaterialService implements ResetInterface
             $row->setKind($kind);
             $new = $kind?->getName() ?? '';
             $label = 'Тип';
-            if (null !== $kind && null !== $row->getDocument() && $row->getDocument()->getKind()?->getId() !== $kind->getId()) {
+            if (null !== $kind && null !== $row->getDocument() && $row->getDocument()->getKind()?->getId() !== $kind->getId() && $this->canManageDocument($row, $by)) {
                 $row->getDocument()->setKind($kind);
                 if (null !== $by) {
                     $this->documents->updateMetadata($row->getDocument(), null, $by);
@@ -223,6 +268,9 @@ final class MaterialService implements ResetInterface
             return;
         }
         $row->touch($by);
+        // В журнал — значения в том виде, как их видно в таблице (даты — ДД.ММ.ГГГГ).
+        $this->history?->record($row, MaterialRowChange::UPDATE, $by, $field, $label,
+            isset($parameter) ? $parameter->display($old) : $old, isset($parameter) ? $parameter->display($new) : $new);
         $this->em->flush();
         $this->auditLogger->info('Изменена таблица материалов', [
             'section' => $section->getFullName(),
@@ -243,6 +291,8 @@ final class MaterialService implements ResetInterface
             'document' => $row->getDocument()?->getId(),
             'user' => $by?->getUsername(),
         ]);
+        $this->history?->record($row, MaterialRowChange::DELETE, $by, null, null, $row->getDocument()?->getTitle(), null);
+        $this->history?->forgetRow($row);
         $this->em->remove($row);
         $this->em->flush();
     }
@@ -340,19 +390,23 @@ final class MaterialService implements ResetInterface
 
     /**
      * Загружает файл строки: первый раз создаёт документ в разделе (название и тип — из строки),
-     * дальше добавляет новые версии. Дата обновления и ссылка в строке заполняются сами.
+     * дальше добавляет новые версии. Дата обновления и ссылка в строке заполняются сами. Возвращает
+     * загруженную версию: при обязательном согласовании она может ещё не быть текущей (см. uploadMessage()).
      *
      * @throws \InvalidArgumentException|\DomainException при ошибке файла
      */
-    public function upload(MaterialRow $row, UploadedFile $file, User $by, ?string $ip = null): Document
+    public function upload(MaterialRow $row, UploadedFile $file, User $by, ?string $ip = null): DocumentVersion
     {
         $section = $row->getSection();
         $versionLabel = $row->getValue($this->roleParameter($section, MaterialParameter::ROLE_VERSION));
         $note = 'Загружено из таблицы материалов'.('' !== $versionLabel ? ', версия '.$versionLabel : '');
         $document = $row->getDocument();
+        if (null !== $document && !$this->canManageDocument($row, $by)) {
+            throw new \DomainException('Документ этой строки перенесён в другой раздел или недоступен вам для правки — новую версию из таблицы загрузить нельзя. Отвяжите файл от строки, чтобы загрузить новый документ.');
+        }
 
         if (null !== $document && $document->isFile()) {
-            $this->documents->addFileVersion($document, $file, $note, $by, $ip);
+            $version = $this->documents->addFileVersion($document, $file, $note, $by, $ip);
             if (null !== $row->getKind() && $document->getKind()?->getId() !== $row->getKind()->getId()) {
                 $document->setKind($row->getKind());
             }
@@ -366,6 +420,7 @@ final class MaterialService implements ResetInterface
                 $document->setValidUntil(new \DateTimeImmutable('today +'.$this->defaultValidityMonths.' months'));
             }
             $this->documents->create($document, $file, null, $note, $by, !$this->approvals->isRequired(), $ip);
+            $version = $document->getCurrentVersion() ?? throw new \LogicException('У нового документа нет версии.');
             $row->setDocument($document);
             if ('' === $row->getTitle()) {
                 $row->setTitle($document->getTitle());
@@ -381,19 +436,38 @@ final class MaterialService implements ResetInterface
         }
         $link = $this->roleParameter($section, MaterialParameter::ROLE_LINK);
         if (null !== $link && '' === $row->getValue($link)) {
-            $row->setValue($link, $this->urls->generate('app_document_show', ['id' => $document->getId()], UrlGeneratorInterface::ABSOLUTE_URL));
+            // Адрес — из настроек портала (APP_DEFAULT_URI), а не из заголовка Host запроса.
+            $row->setValue($link, $this->portalUrl->absolute('app_document_show', ['id' => $document->getId()]));
         }
         $row->touch($by);
+        $this->history?->record($row, MaterialRowChange::UPLOAD, $by, 'file', 'Файл', null, \sprintf('«%s», версия %d%s',
+            $file->getClientOriginalName(), $version->getNumber(), $document->isVersionReleased($version) ? '' : ' (ждёт согласования)'));
         $this->em->flush();
         $this->auditLogger->info('Загружен файл из таблицы материалов', [
             'section' => $section->getFullName(),
             'material' => $row->getTitle(),
             'document' => $document->getId(),
-            'version' => $document->getCurrentVersion()?->getNumber(),
+            'version' => $version->getNumber(),
+            'awaits_approval' => !$document->isVersionReleased($version),
             'user' => $by->getUsername(),
         ]);
 
-        return $document;
+        return $version;
+    }
+
+    /** Сообщение о загрузке для таблицы: номер загруженной версии и что с ней дальше. */
+    public function uploadMessage(DocumentVersion $version): string
+    {
+        $document = $version->getDocument();
+        $hint = match (true) {
+            !$document->isVersionReleased($version) => ' — ждёт согласования: пока его нет, сотрудники видят прежнюю редакцию',
+            $document->isPublished() => '',
+            $document->isArchived() => ' — документ в архиве: верните его из архива, чтобы сотрудники увидели файл',
+            $this->approvals->isRequired() => ' — черновик: отправьте документ на согласование',
+            default => ' — черновик: опубликуйте после проверки',
+        };
+
+        return \sprintf('Файл загружен: «%s», версия %d%s.', $document->getTitle(), $version->getNumber(), $hint);
     }
 
     /** Отвязывает документ от строки (сам документ остаётся в разделе). */
@@ -403,21 +477,26 @@ final class MaterialService implements ResetInterface
             return;
         }
         $this->auditLogger->info('Файл отвязан от строки таблицы материалов', ['material' => $row->getTitle(), 'document' => $row->getDocument()->getId(), 'user' => $by?->getUsername()]);
+        $this->history?->record($row, MaterialRowChange::DETACH, $by, 'file', 'Файл', $row->getDocument()->getTitle(), null);
         $row->setDocument(null)->touch($by);
         $this->em->flush();
     }
 
     /** После правки карточки документа переносит название и тип в строки, из которых он загружен. */
-    public function syncFromDocument(Document $document): void
+    public function syncFromDocument(Document $document, ?User $by = null): void
     {
         $changed = false;
         foreach ($this->rows->findByDocument($document) as $row) {
             if ($row->getTitle() !== $document->getTitle()) {
+                $old = $row->getTitle();
                 $row->setTitle($document->getTitle());
+                $this->history?->record($row, MaterialRowChange::UPDATE, $by, 'title', 'Материал (из карточки документа)', $old, $row->getTitle());
                 $changed = true;
             }
             if (null !== $document->getKind() && $row->getKind()?->getId() !== $document->getKind()->getId()) {
+                $old = $row->getKind()?->getName() ?? '';
                 $row->setKind($document->getKind());
+                $this->history?->record($row, MaterialRowChange::UPDATE, $by, 'kind', 'Тип (из карточки документа)', $old, $document->getKind()->getName());
                 $changed = true;
             }
         }
@@ -435,9 +514,12 @@ final class MaterialService implements ResetInterface
     // ---- Представление для страницы и JSON ------------------------------------------------------------
 
     /**
+     * Строка для страницы и ответов JSON. $viewer — кто смотрит: реквизиты документа, который ему
+     * не виден (перенесён в чужой раздел, ограничен доступ), не показываются.
+     *
      * @return array<string, mixed>
      */
-    public function serializeRow(MaterialRow $row): array
+    public function serializeRow(MaterialRow $row, ?User $viewer = null): array
     {
         $section = $row->getSection();
         $state = $this->state($row);
@@ -446,8 +528,6 @@ final class MaterialService implements ResetInterface
             $value = $row->getValue($parameter);
             $values[$parameter->key()] = ['value' => $value, 'display' => $parameter->display($value)];
         }
-        $document = $row->getDocument();
-        $version = $document?->getCurrentVersion();
 
         return [
             'id' => $row->getId(),
@@ -456,18 +536,35 @@ final class MaterialService implements ResetInterface
             'state' => $state,
             'stateClass' => MaterialState::css($state),
             'values' => $values,
-            'document' => null === $document ? null : [
-                'id' => $document->getId(),
-                'title' => $document->getTitle(),
-                'status' => $document->getStatus(),
-                'url' => $this->urls->generate('app_document_show', ['id' => $document->getId()]),
-                'download' => null !== $version && $version->isFile() ? $this->urls->generate('app_document_download', ['id' => $document->getId()]) : null,
-                'version' => $version?->getNumber(),
-                'fileName' => $version?->getOriginalName(),
-                'extension' => $version?->getExtension(),
-            ],
+            'document' => $this->serializeDocument($row, $viewer),
             'updatedAt' => $row->getUpdatedAt()->format('d.m.Y H:i'),
             'updatedBy' => $row->getUpdatedByName(),
+        ];
+    }
+
+    /** @return array<string, mixed>|null */
+    private function serializeDocument(MaterialRow $row, ?User $viewer): ?array
+    {
+        $document = $row->getDocument();
+        if (null === $document) {
+            return null;
+        }
+        if (null !== $viewer && !$this->access->canViewDocument($viewer, $document)) {
+            return ['id' => null, 'hidden' => true, 'manageable' => false, 'title' => 'Документ недоступен', 'status' => null, 'url' => null, 'download' => null, 'version' => null, 'fileName' => null, 'extension' => null];
+        }
+        $version = $document->getCurrentVersion();
+
+        return [
+            'id' => $document->getId(),
+            'hidden' => false,
+            'manageable' => $this->canManageDocument($row, $viewer),
+            'title' => $document->getTitle(),
+            'status' => $document->getStatus(),
+            'url' => $this->urls->generate('app_document_show', ['id' => $document->getId()]),
+            'download' => null !== $version && $version->isFile() ? $this->urls->generate('app_document_download', ['id' => $document->getId()]) : null,
+            'version' => $version?->getNumber(),
+            'fileName' => $version?->getOriginalName(),
+            'extension' => $version?->getExtension(),
         ];
     }
 

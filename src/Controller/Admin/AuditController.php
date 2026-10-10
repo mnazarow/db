@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Controller\Admin;
 
+use App\Service\Csv;
 use App\Entity\AuditEvent;
 use App\Repository\AuditEventRepository;
 use App\Service\Audit\AuditExporter;
@@ -58,14 +59,14 @@ final class AuditController extends AbstractController
             fwrite($out, "\xEF\xBB\xBF");
             fputcsv($out, ['Дата и время', 'Уровень', 'Действие', 'Сотрудник', 'Адрес', 'Подробности'], ';', '"', '\\');
             foreach ($events as $event) {
-                fputcsv($out, [
+                Csv::put($out, [
                     $event->getOccurredAt()->format('d.m.Y H:i:s'),
                     $event->getLevelLabel(),
                     $event->getAction(),
                     (string) $event->getActorName(),
                     (string) $event->getIp(),
                     $event->detailsLine(),
-                ], ';', '"', '\\');
+                ]);
             }
             fclose($out);
         });

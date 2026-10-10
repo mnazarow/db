@@ -6,8 +6,11 @@ namespace App\Repository;
 
 use App\Entity\Document;
 use App\Entity\DocumentAcknowledgement;
+use App\Entity\DocumentApproval;
 use App\Entity\User;
+use App\Security\Viewer;
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
+use Doctrine\ORM\QueryBuilder;
 use Doctrine\Persistence\ManagerRegistry;
 
 /**
@@ -25,6 +28,36 @@ final class DocumentAcknowledgementRepository extends ServiceEntityRepository
      * назначения прежняя неподтверждённая запись остаётся в истории, но сотруднику больше не показывается.
      */
     private const NOT_SUPERSEDED = 'NOT EXISTS (SELECT a2.id FROM App\\Entity\\DocumentAcknowledgement a2 WHERE a2.document = a.document AND a2.user = a.user AND a2.versionNumber > a.versionNumber)';
+
+    /**
+     * Документ ещё можно прочитать: он опубликован и открыт сотруднику по тем же правилам, что и при открытии
+     * документа (Access::canViewDocument()): документ без ограничений, сотрудник в списке допуска, его
+     * подразделение (без учёта регистра, «ё» и лишних пробелов), разделы, которые он модерирует, администратор.
+     * Назначения по архивным, снятым с публикации и закрытым от сотрудника документам ему не показываются:
+     * выполнить их он всё равно не может. $viewer — контекст Access::viewer() (без него модерация не учитывается).
+     */
+    private function applyReadable(QueryBuilder $qb, User $user, ?Viewer $viewer): void
+    {
+        $qb->andWhere("d.status = 'published'");
+        if (null !== $viewer && $viewer->unrestricted) {
+            return;
+        }
+        $conditions = ['d.restricted = false', ':reader MEMBER OF d.allowedUsers'];
+        $qb->setParameter('reader', $user);
+        $department = trim((string) $user->getDepartment());
+        if ('' !== $department) {
+            $conditions[] = 'd.allowedDepartments LIKE :reader_department';
+            $qb->setParameter('reader_department', '%'.addcslashes(Document::departmentNeedle($department), '%_\\').'%');
+        }
+        if (null !== $viewer && [] !== $viewer->managedSectionIds) {
+            $conditions[] = 'd.section IN (:reader_sections)';
+            $qb->setParameter('reader_sections', $viewer->managedSectionIds);
+        }
+        // Согласующий читает документ, который ждёт его решения (Access::isPendingApprover()).
+        $conditions[] = 'EXISTS (SELECT ap.id FROM App\\Entity\\DocumentApproval ap WHERE ap.document = d AND ap.approver = :reader AND ap.decision = :reader_pending)';
+        $qb->setParameter('reader_pending', DocumentApproval::PENDING);
+        $qb->andWhere('('.implode(' OR ', $conditions).')');
+    }
 
     /** Активное (неподтверждённое) назначение пользователя по документу — для кнопки «Ознакомлен». */
     public function findPending(Document $document, User $user): ?DocumentAcknowledgement
@@ -68,17 +101,19 @@ final class DocumentAcknowledgementRepository extends ServiceEntityRepository
      *
      * @return list<DocumentAcknowledgement>
      */
-    public function findPendingForUser(User $user, int $limit = 100): array
+    public function findPendingForUser(User $user, int $limit = 100, ?Viewer $viewer = null): array
     {
-        return $this->createQueryBuilder('a')
+        $qb = $this->createQueryBuilder('a')
             ->join('a.document', 'd')->addSelect('d')
             ->join('d.section', 's')->addSelect('s')
-            ->andWhere('a.user = :u')->setParameter('u', $user)
+            ->andWhere('a.user = :u_id')->setParameter('u_id', $user)
             ->andWhere('a.confirmedAt IS NULL')
             ->andWhere(self::NOT_SUPERSEDED)
             ->orderBy('a.dueAt', 'ASC')->addOrderBy('a.assignedAt', 'ASC')
-            ->setMaxResults($limit)
-            ->getQuery()->getResult();
+            ->setMaxResults($limit);
+        $this->applyReadable($qb, $user, $viewer);
+
+        return $qb->getQuery()->getResult();
     }
 
     /**
@@ -99,7 +134,9 @@ final class DocumentAcknowledgementRepository extends ServiceEntityRepository
     }
 
     /**
-     * Неподтверждённые назначения с истёкшим или наступающим сроком — для напоминаний по почте.
+     * Неподтверждённые назначения по опубликованным документам с истёкшим или наступающим сроком — для
+     * напоминаний по почте. Доступ сотрудника к документу проверяет вызывающий код (Access::canViewDocument()):
+     * в одном запросе на всех сотрудников права модераторов не выразить.
      *
      * @return list<DocumentAcknowledgement>
      */
@@ -110,11 +147,20 @@ final class DocumentAcknowledgementRepository extends ServiceEntityRepository
             ->join('a.user', 'u')->addSelect('u')
             ->andWhere('a.confirmedAt IS NULL')
             ->andWhere(self::NOT_SUPERSEDED)
+            ->andWhere("d.status = 'published'")
             ->andWhere('u.active = true')
-            ->andWhere('a.dueAt IS NULL OR a.dueAt <= :soon')->setParameter('soon', $today->modify('+'.max(0, $soonDays).' days'))
             ->orderBy('u.id', 'ASC')->addOrderBy('a.dueAt', 'ASC');
-        if (null !== $remindedBefore) {
-            $qb->andWhere('a.remindedAt IS NULL OR a.remindedAt < :before')->setParameter('before', $remindedBefore);
+        $soon = $today->modify('+'.max(0, $soonDays).' days');
+        if (null === $remindedBefore) {
+            $qb->andWhere('a.dueAt IS NULL OR a.dueAt <= :soon')->setParameter('soon', $soon);
+        } else {
+            // Со сроком — когда срок близко или прошёл, не чаще раза в REMINDER_INTERVAL_DAYS; без срока —
+            // первый раз через несколько дней после назначения и дальше раз в неделю, а не каждые три дня.
+            $qb->andWhere('(a.dueAt IS NOT NULL AND a.dueAt <= :soon AND (a.remindedAt IS NULL OR a.remindedAt < :before))'
+                .' OR (a.dueAt IS NULL AND a.assignedAt < :before AND (a.remindedAt IS NULL OR a.remindedAt < :weekly))')
+                ->setParameter('soon', $soon)
+                ->setParameter('before', $remindedBefore)
+                ->setParameter('weekly', $today->modify('-7 days'));
         }
 
         return $qb->getQuery()->getResult();
@@ -201,12 +247,61 @@ final class DocumentAcknowledgementRepository extends ServiceEntityRepository
         return ['assigned' => (int) $row['assigned'], 'confirmed' => (int) $row['confirmed'], 'overdue' => (int) $row['overdue'], 'documents' => (int) $row['documents']];
     }
 
-    public function countPendingForUser(User $user): int
+    /**
+     * Строки сводки по подразделениям: для каждого документа и подразделения — сколько сотрудникам назначено,
+     * сколько подтвердили и сколько просрочили. Учитываются последние назначения (более новая редакция
+     * перекрывает прежнюю), опубликованные документы и действующие учётные записи.
+     *
+     * @param list<int>|null $sectionIds разделы (раздел с подразделами); null — все
+     *
+     * @return list<array{document_id: int, department: string, assigned: int, confirmed: int, overdue: int, last_assigned: string}>
+     */
+    public function departmentRows(?array $sectionIds = null): array
     {
-        return (int) $this->createQueryBuilder('a')->select('COUNT(a.id)')
-            ->andWhere('a.user = :u')->setParameter('u', $user)
+        // Подразделения группируются по точному написанию (utf8mb4_bin): объединяет их вызывающий код,
+        // выбирая для названия самое частое написание (иначе база вернула бы случайное из группы).
+        $sql = 'SELECT a.document_id, COALESCE(u.department, \'\') COLLATE utf8mb4_bin AS dept_exact, COUNT(*) AS assigned,
+                    SUM(CASE WHEN a.confirmed_at IS NOT NULL THEN 1 ELSE 0 END) AS confirmed,
+                    SUM(CASE WHEN a.confirmed_at IS NULL AND a.due_at IS NOT NULL AND a.due_at < :today THEN 1 ELSE 0 END) AS overdue,
+                    MAX(a.assigned_at) AS last_assigned
+                FROM document_acknowledgement a
+                JOIN `user` u ON u.id = a.user_id
+                JOIN document d ON d.id = a.document_id
+                WHERE u.active = 1 AND d.status = :published
+                  AND NOT EXISTS (SELECT 1 FROM document_acknowledgement a2
+                                  WHERE a2.document_id = a.document_id AND a2.user_id = a.user_id AND a2.version_number > a.version_number)';
+        $params = ['today' => (new \DateTimeImmutable('today'))->format('Y-m-d'), 'published' => Document::STATUS_PUBLISHED];
+        $types = [];
+        if (null !== $sectionIds) {
+            if ([] === $sectionIds) {
+                return [];
+            }
+            $sql .= ' AND d.section_id IN (:sections)';
+            $params['sections'] = $sectionIds;
+            $types['sections'] = \Doctrine\DBAL\ArrayParameterType::INTEGER;
+        }
+        $sql .= ' GROUP BY a.document_id, COALESCE(u.department, \'\') COLLATE utf8mb4_bin';
+        $rows = $this->getEntityManager()->getConnection()->fetchAllAssociative($sql, $params, $types);
+
+        return array_map(static fn (array $r): array => [
+            'document_id' => (int) $r['document_id'],
+            'department' => (string) $r['dept_exact'],
+            'assigned' => (int) $r['assigned'],
+            'confirmed' => (int) $r['confirmed'],
+            'overdue' => (int) $r['overdue'],
+            'last_assigned' => (string) $r['last_assigned'],
+        ], $rows);
+    }
+
+    public function countPendingForUser(User $user, ?Viewer $viewer = null): int
+    {
+        $qb = $this->createQueryBuilder('a')->select('COUNT(a.id)')
+            ->join('a.document', 'd')
+            ->andWhere('a.user = :u_id')->setParameter('u_id', $user)
             ->andWhere('a.confirmedAt IS NULL')
-            ->andWhere(self::NOT_SUPERSEDED)
-            ->getQuery()->getSingleScalarResult();
+            ->andWhere(self::NOT_SUPERSEDED);
+        $this->applyReadable($qb, $user, $viewer);
+
+        return (int) $qb->getQuery()->getSingleScalarResult();
     }
 }

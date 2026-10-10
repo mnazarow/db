@@ -216,6 +216,82 @@ final class ApprovalQuizTest extends PortalTestCase
         self::assertStringContainsString('Незакрытых согласований нет', $crawler->text());
     }
 
+    public function testNewEditionOfPublishedDocumentWaitsForApproval(): void
+    {
+        $manager = static::getContainer()->get(DocumentManager::class);
+        $document = $this->draft('СОГЛ-010', 'Инструкция по охране труда на складе');
+        $manager->publish($document, $this->user('ivanov'));
+        $this->settings()->setApproval(true, false);
+
+        // Новая редакция опубликованного документа не заменяет текущую до согласования.
+        $v2 = $manager->addFileVersion($document, $this->upload('doc-v2.txt', 'Новая редакция'), 'Правки', $this->user('ivanov'));
+        self::assertSame(2, $v2->getNumber());
+        self::assertSame(1, $document->getCurrentVersion()?->getNumber(), 'сотрудники по-прежнему видят редакцию 1');
+        self::assertSame(2, $document->getPendingVersion()?->getNumber());
+        self::assertTrue($document->isPublished());
+        $id = (int) $document->getId();
+
+        // Сотрудник не видит и не скачивает новую редакцию, модератор — видит.
+        $this->loginAs('smirnov');
+        $this->client->request('GET', '/documents/'.$id.'/versions/2/download');
+        self::assertResponseStatusCodeSame(404);
+        $crawler = $this->client->request('GET', '/documents/'.$id);
+        self::assertResponseIsSuccessful();
+        self::assertSame(1, $crawler->filter('.versions-table tbody tr')->count(), 'в истории — только действующая редакция');
+        $this->loginAs('ivanov');
+        $crawler = $this->client->request('GET', '/documents/'.$id);
+        self::assertStringContainsString('Редакция 2 ещё не вступила в силу', $crawler->text());
+        $this->client->request('GET', '/documents/'.$id.'/versions/2/download');
+        self::assertResponseIsSuccessful();
+
+        // Сделать редакцию текущей без согласования нельзя.
+        $this->client->request('POST', '/documents/'.$id.'/versions/2/promote', ['_token' => $this->csrf($crawler)]);
+        self::assertStringContainsString('после согласования', $this->client->followRedirect()->text());
+        self::assertSame(1, $this->document('СОГЛ-010')->getCurrentVersion()?->getNumber());
+
+        // Согласование новой редакции: документ остаётся опубликованным (не прячется от сотрудников).
+        $approval = $this->service()->request($this->document('СОГЛ-010'), $this->user('kuznetsova'), null, $this->user('ivanov'));
+        self::assertSame(2, $approval->getVersionNumber());
+        self::assertTrue($this->document('СОГЛ-010')->isPublished());
+        // Пока редакция на согласовании, загрузить ещё одну нельзя: согласующий одобрил бы не то, что вступит в силу.
+        try {
+            $manager->addFileVersion($this->document('СОГЛ-010'), $this->upload('doc-v3.txt', 'Ещё правки'), null, $this->user('ivanov'));
+            self::fail('во время согласования новые редакции не загружаются');
+        } catch (\DomainException $e) {
+            self::assertStringContainsString('на согласовании', $e->getMessage());
+        }
+        // Согласующий открывает новую редакцию.
+        $this->loginAs('kuznetsova');
+        $this->client->request('GET', '/documents/'.$id.'/versions/2/download');
+        self::assertResponseIsSuccessful();
+
+        $this->settings()->setApproval(true, true);
+        $this->service()->decide($this->approvals()->findPending($this->document('СОГЛ-010')) ?? throw new \LogicException(), true, null, $this->user('kuznetsova'));
+        $this->em()->clear();
+        $fresh = $this->document('СОГЛ-010');
+        self::assertSame(2, $fresh->getCurrentVersion()?->getNumber(), 'согласованная редакция вступила в силу');
+        self::assertTrue($fresh->isPublished());
+        self::assertNull($fresh->getPendingVersion());
+    }
+
+    public function testApprovalIsClosedWhenDocumentIsArchivedAndBulkPublishRespectsApproval(): void
+    {
+        $manager = static::getContainer()->get(DocumentManager::class);
+        $document = $this->draft('СОГЛ-011');
+        $approval = $this->service()->request($document, $this->user('kuznetsova'), null, $this->user('ivanov'));
+        $manager->archive($document, $this->user('ivanov'));
+        self::assertSame(DocumentApproval::CANCELLED, $approval->getDecision(), 'архив закрывает незакрытое согласование');
+        self::assertSame(0, $this->approvals()->countPendingForUser($this->user('kuznetsova')));
+
+        // Массовая публикация несогласованного черновика не проходит.
+        $this->settings()->setApproval(true, false);
+        $draft = $this->draft('СОГЛ-012');
+        $result = static::getContainer()->get(\App\Service\BulkDocumentService::class)->run('publish', [(int) $draft->getId()], [], $this->user('admin'));
+        self::assertSame(0, $result['done']);
+        self::assertStringContainsString('не согласован', implode(' ', $result['messages']));
+        self::assertFalse($this->document('СОГЛ-012')->isPublished());
+    }
+
     public function testQuizBlocksConfirmationUntilAllAnswersAreCorrect(): void
     {
         $quiz = static::getContainer()->get(QuizService::class);
