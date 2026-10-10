@@ -537,6 +537,14 @@ if [[ "${INSTALL_MODE}" == "native" ]]; then
             warn "Не удалось установить poppler-utils — текст из PDF для API и описаний через LLM извлекаться не будет (установите пакет вручную)."
         fi
     fi
+    # Водяной знак на PDF (1.8.0) накладывает qpdf — небольшой пакет, ставим при обновлении, если его нет.
+    if ! command -v qpdf >/dev/null 2>&1; then
+        if pkg_install_optional qpdf && command -v qpdf >/dev/null 2>&1; then
+            info "Установлен пакет qpdf (водяной знак на PDF)."
+        else
+            warn "Не удалось установить qpdf — водяной знак на PDF работать не будет (установите пакет qpdf вручную)."
+        fi
+    fi
 
     # Удаление старых релизов
     mapfile -t old < <(ls -1dt "${APP_DIR}"/releases/*/ 2>/dev/null | tail -n +$((KEEP_RELEASES + 2)))

@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex">
+    <!-- Браузер не смог войти через Windows (Kerberos): возвращаемся к форме входа по паролю. -->
+    <meta http-equiv="refresh" content="0; url=/login?kerberos=failed">
+    <title>Вход через Windows не выполнен</title>
+    <style>body{font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:#1c1f1f;background:#f6f7f9;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center}main{max-width:520px;padding:32px;background:#fff;border-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,.06)}a{color:#0f4382}</style>
+</head>
+<body>
+<main>
+    <h1>Вход через Windows не выполнен</h1>
+    <p>Браузер не передал учётную запись домена. Сейчас откроется обычная форма входа —
+        если этого не произошло, <a href="/login?kerberos=failed">перейдите к ней</a>.</p>
+</main>
+<script>location.replace('/login?kerberos=failed');</script>
+</body>
+</html>

@@ -265,6 +265,137 @@ final class AcknowledgementService
         ];
     }
 
+    /**
+     * Единый отчёт «Документы и видео» по сотрудникам, сгруппированный по подразделениям: ознакомления с
+     * документами (последняя назначенная редакция опубликованных документов) и обязательные просмотры
+     * раздела «Видео» ($video — id сотрудника → назначено, выполнено, просрочено; null — сведений нет).
+     * В отчёт попадают активные сотрудники, которым назначено хоть что-то.
+     *
+     * @param list<int>|null                                                    $sectionIds документы только этих разделов
+     * @param array<int, array{assigned: int, completed: int, overdue: int}>|null $video
+     *
+     * @return array{departments: list<array{name: string, no_department: bool, people: list<array<string, mixed>>, docs: array{assigned: int, confirmed: int, overdue: int}, video: array{assigned: int, completed: int, overdue: int}, pending: int}>, totals: array<string, int>, department_names: list<string>, video_available: bool}
+     */
+    public function peopleReport(?array $sectionIds, ?array $video, ?string $department = null, bool $onlyPending = false): array
+    {
+        $docs = $this->acknowledgements->userRows($sectionIds);
+        $videoAvailable = null !== $video;
+        $video ??= [];
+        $zeroDocs = ['assigned' => 0, 'confirmed' => 0, 'overdue' => 0];
+        $zeroVideo = ['assigned' => 0, 'completed' => 0, 'overdue' => 0];
+        $filterKey = null !== $department && '' !== trim($department) ? ('-' === $department ? '' : Document::departmentKey($department)) : null;
+        $groups = [];
+        $names = [];
+        foreach ($this->users->findActiveOrdered() as $user) {
+            $id = (int) $user->getId();
+            if (!isset($docs[$id]) && !isset($video[$id])) {
+                continue;
+            }
+            $d = $docs[$id] ?? $zeroDocs;
+            $v = $video[$id] ?? $zeroVideo;
+            $pending = ($d['assigned'] - $d['confirmed']) + ($v['assigned'] - $v['completed']);
+            $name = trim((string) preg_replace('/\s+/u', ' ', (string) $user->getDepartment()));
+            $key = '' === $name ? '' : Document::departmentKey($name);
+            if ('' !== $name) {
+                $names[$key][$name] = ($names[$key][$name] ?? 0) + 1;
+            }
+            if (null !== $filterKey && $filterKey !== $key) {
+                continue;
+            }
+            if ($onlyPending && 0 === $pending) {
+                continue;
+            }
+            $groups[$key] ??= ['people' => [], 'docs' => $zeroDocs, 'video' => $zeroVideo, 'pending' => 0];
+            $groups[$key]['people'][] = ['user' => $user, 'docs' => $d, 'video' => $v, 'pending' => $pending, 'overdue' => $d['overdue'] + $v['overdue']];
+            foreach ($zeroDocs as $field => $_) {
+                $groups[$key]['docs'][$field] += $d[$field];
+            }
+            foreach ($zeroVideo as $field => $_) {
+                $groups[$key]['video'][$field] += $v[$field];
+            }
+            $groups[$key]['pending'] += $pending;
+        }
+        // Название подразделения — самое частое написание (как в сводке по подразделениям).
+        $label = static function (string $key) use ($names): string {
+            if ('' === $key || !isset($names[$key])) {
+                return self::NO_DEPARTMENT;
+            }
+            $variants = $names[$key];
+            arsort($variants);
+
+            return (string) array_key_first($variants);
+        };
+        $out = [];
+        $totals = ['people' => 0, 'pending' => 0] + array_combine(['docs_assigned', 'docs_confirmed', 'docs_overdue'], [0, 0, 0]) + ['video_assigned' => 0, 'video_completed' => 0, 'video_overdue' => 0];
+        foreach ($groups as $key => $group) {
+            // Сначала те, у кого больше просрочено и не выполнено.
+            usort($group['people'], static fn (array $a, array $b): int => [$b['overdue'], $b['pending'], $a['user']->getDisplayName()] <=> [$a['overdue'], $a['pending'], $b['user']->getDisplayName()]);
+            $out[] = ['name' => $label((string) $key), 'no_department' => '' === $key] + $group;
+            $totals['people'] += \count($group['people']);
+            $totals['pending'] += $group['pending'];
+            $totals['docs_assigned'] += $group['docs']['assigned'];
+            $totals['docs_confirmed'] += $group['docs']['confirmed'];
+            $totals['docs_overdue'] += $group['docs']['overdue'];
+            $totals['video_assigned'] += $group['video']['assigned'];
+            $totals['video_completed'] += $group['video']['completed'];
+            $totals['video_overdue'] += $group['video']['overdue'];
+        }
+        usort($out, static fn (array $a, array $b): int => [$a['no_department'], mb_strtolower($a['name'])] <=> [$b['no_department'], mb_strtolower($b['name'])]);
+        $allNames = array_map(static fn (string $key): string => $label($key), array_keys($names));
+        sort($allNames);
+
+        return ['departments' => $out, 'totals' => $totals, 'department_names' => $allNames, 'video_available' => $videoAvailable];
+    }
+
+    /**
+     * «Мои сотрудники»: подчинённые руководителя (прямые и их подчинённые) с ознакомлениями и обязательными
+     * просмотрами; у кого не выполнено — список документов (названия документов, которые руководителю не открыты,
+     * скрыты). $video — как в peopleReport (null — видео недоступно).
+     *
+     * @param array<int, array{assigned: int, completed: int, overdue: int}>|null $video
+     *
+     * @return array{people: list<array{user: User, depth: int, docs: array{assigned: int, confirmed: int, overdue: int}, video: array{assigned: int, completed: int, overdue: int}, pending: int, overdue: int, documents: list<array{title: ?string, url_id: ?int, due: ?\DateTimeImmutable, overdue: bool}>}>, totals: array<string, int>, video_available: bool}
+     */
+    public function teamReport(User $manager, ?array $video, bool $details = true): array
+    {
+        $docs = $this->acknowledgements->userRows(null);
+        $videoAvailable = null !== $video;
+        $video ??= [];
+        $today = new \DateTimeImmutable('today');
+        $people = [];
+        $totals = ['people' => 0, 'pending' => 0, 'overdue' => 0, 'docs_assigned' => 0, 'docs_confirmed' => 0, 'video_assigned' => 0, 'video_completed' => 0];
+        foreach ($this->users->findSubordinates($manager) as ['user' => $user, 'depth' => $depth]) {
+            $id = (int) $user->getId();
+            $d = $docs[$id] ?? ['assigned' => 0, 'confirmed' => 0, 'overdue' => 0];
+            $v = $video[$id] ?? ['assigned' => 0, 'completed' => 0, 'overdue' => 0];
+            $pending = ($d['assigned'] - $d['confirmed']) + ($v['assigned'] - $v['completed']);
+            $documents = [];
+            if ($details && $d['assigned'] > $d['confirmed']) {
+                foreach ($this->acknowledgements->findPendingForUser($user, 30) as $ack) {
+                    $document = $ack->getDocument();
+                    $visible = null === $this->access || $this->access->canViewDocument($manager, $document);
+                    $due = $ack->getDueAt();
+                    $documents[] = [
+                        'title' => $visible ? $document->getTitle() : null,
+                        'url_id' => $visible ? $document->getId() : null,
+                        'due' => $due,
+                        'overdue' => null !== $due && $due < $today,
+                    ];
+                }
+            }
+            $people[] = ['user' => $user, 'depth' => $depth, 'docs' => $d, 'video' => $v, 'pending' => $pending, 'overdue' => $d['overdue'] + $v['overdue'], 'documents' => $documents];
+            ++$totals['people'];
+            $totals['pending'] += $pending;
+            $totals['overdue'] += $d['overdue'] + $v['overdue'];
+            $totals['docs_assigned'] += $d['assigned'];
+            $totals['docs_confirmed'] += $d['confirmed'];
+            $totals['video_assigned'] += $v['assigned'];
+            $totals['video_completed'] += $v['completed'];
+        }
+
+        return ['people' => $people, 'totals' => $totals, 'video_available' => $videoAvailable];
+    }
+
     private static function startsUpper(string $name): bool
     {
         $first = mb_substr($name, 0, 1);

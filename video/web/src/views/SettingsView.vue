@@ -139,6 +139,7 @@ async function copy(t) { await copyWithToast(ui, t); }
             <label class="switch"><input type="checkbox" v-model="notif.newVideos" /><span class="track"></span><span>Новые видео на каналах, на которые я подписан</span></label>
             <label class="switch"><input type="checkbox" v-model="notif.replies" /><span class="track"></span><span>Комментарии к моим видео и ответы на мои комментарии</span></label>
             <label class="switch"><input type="checkbox" v-model="notif.moderation" /><span class="track"></span><span>Результаты проверки моих видео</span></label>
+            <div v-if="auth.isPortal" class="small muted">Письма и сообщения в Telegram о задачах — назначенных просмотрах, сроках, модерации — присылает {{ auth.portalName }}: почта и Telegram настраиваются в профиле портала («Подписки и уведомления»).</div>
             <div class="divider"></div>
             <label class="switch"><input type="checkbox" v-model="notif.email" /><span class="track"></span><span>Дублировать важные уведомления на почту (ответы, модерация, обработка)</span></label>
             <label class="switch"><input type="checkbox" v-model="notif.emailNewVideos" :disabled="!notif.email" /><span class="track"></span><span>Письма о новых видео из подписок</span></label>

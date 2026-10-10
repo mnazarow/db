@@ -35,6 +35,7 @@ use App\Service\Material\MaterialState;
 use App\Service\StatsService;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\Form\FormError;
+use App\Service\Pdf\PdfWatermarker;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
 use Symfony\Component\HttpFoundation\HeaderUtils;
@@ -73,6 +74,7 @@ final class DocumentController extends AbstractController
         private readonly DocumentTemplateRepository $templateRepository,
         private readonly MaterialService $materials,
         private readonly int $defaultValidityMonths,
+        private readonly ?PdfWatermarker $watermarker = null,
     ) {
     }
 
@@ -243,6 +245,9 @@ final class DocumentController extends AbstractController
             'can_promote' => null !== $pendingVersion && $canManage && $this->approvals->canPromote($document, $pendingVersion),
             'can_manage' => $canManage,
             'inline' => null !== $current && $current->isFile() && FileStorage::isInlineViewable($current->getMimeType(), $current->getExtension()),
+            // Водяной знак поверх страницы портала (у PDF он ставится в сам файл).
+            'page_watermark' => null !== $current && $current->isPage() && null !== $this->watermarker && $this->watermarker->needsMark($document, $user)
+                ? $this->watermarker->svgDataUri($this->watermarker->texts($user, $request->getClientIp())['main']) : null,
             'file_exists' => null !== $current && $current->isFile() ? $this->manager->getStorage()->exists($current) : true,
             // Офисные файлы показываем через конвертацию в PDF (LibreOffice) — по кнопке, чтобы не ждать в карточке.
             'previewable' => null !== $current && $this->previewer->isAvailable() && $this->previewer->supports($current),
@@ -428,20 +433,20 @@ final class DocumentController extends AbstractController
     /** Предпросмотр офисного файла в браузере: LibreOffice переводит его в PDF (результат кэшируется). */
     #[Route('/{id}/preview', name: 'app_document_preview', requirements: ['id' => '\d+'], methods: ['GET'])]
     #[IsGranted(PortalVoter::DOCUMENT_VIEW, subject: 'document')]
-    public function preview(Document $document): Response
+    public function preview(Document $document, Request $request, #[CurrentUser] ?User $user): Response
     {
         $version = $document->getCurrentVersion() ?? throw $this->createNotFoundException('У документа нет версий.');
 
-        return $this->servePreview($document, $version);
+        return $this->servePreview($document, $version, $request, $user);
     }
 
     #[Route('/{id}/versions/{number}/preview', name: 'app_document_version_preview', requirements: ['id' => '\d+', 'number' => '\d+'], methods: ['GET'])]
     #[IsGranted(PortalVoter::DOCUMENT_VIEW, subject: 'document')]
-    public function previewVersion(Document $document, int $number, #[CurrentUser] ?User $user): Response
+    public function previewVersion(Document $document, int $number, Request $request, #[CurrentUser] ?User $user): Response
     {
         $version = $this->visibleVersion($document, $number, $user);
 
-        return $this->servePreview($document, $version);
+        return $this->servePreview($document, $version, $request, $user);
     }
 
     #[Route('/{id}/versions/{number}', name: 'app_document_version', requirements: ['id' => '\d+', 'number' => '\d+'], methods: ['GET'])]
@@ -584,7 +589,7 @@ final class DocumentController extends AbstractController
         ]);
     }
 
-    private function servePreview(Document $document, DocumentVersion $version): Response
+    private function servePreview(Document $document, DocumentVersion $version, Request $request, ?User $user): Response
     {
         if (!$this->previewer->isAvailable()) {
             throw $this->createNotFoundException('Предпросмотр офисных файлов не настроен: на сервере нет LibreOffice.');
@@ -599,12 +604,16 @@ final class DocumentController extends AbstractController
 
             return $this->redirectToRoute('app_document_show', ['id' => $document->getId()]);
         }
-        $response = new BinaryFileResponse($pdf);
+        $marked = $this->watermarked($document, $pdf, $request, $user);
+        $response = new BinaryFileResponse($marked ?? $pdf);
         $response->headers->set('Content-Type', 'application/pdf');
         $response->headers->set('X-Content-Type-Options', 'nosniff');
         $name = pathinfo($version->getOriginalName() ?? 'document', \PATHINFO_FILENAME).'.pdf';
         $response->setContentDisposition(ResponseHeaderBag::DISPOSITION_INLINE, $name, self::asciiName($name));
         $response->setPrivate();
+        if (null !== $marked) {
+            self::markedResponse($response, $request);
+        }
 
         return $response;
     }
@@ -630,7 +639,11 @@ final class DocumentController extends AbstractController
         if (!$inline) {
             $this->manager->recordDownload($document, $version, $user, $request->getClientIp());
         }
-        $response = new BinaryFileResponse($path);
+        $marked = 'pdf' === strtolower((string) $version->getExtension()) ? $this->watermarked($document, $path, $request, $user) : null;
+        $response = new BinaryFileResponse($marked ?? $path);
+        if (null !== $marked) {
+            self::markedResponse($response, $request);
+        }
         $inlineType = $inline ? FileStorage::inlineContentType($version->getExtension()) : null;
         // В браузере файл открывается с типом по расширению из белого списка; при скачивании — с исходным типом.
         $response->headers->set('Content-Type', $inlineType ?? ($version->getMimeType() ?: 'application/octet-stream'));
@@ -644,6 +657,31 @@ final class DocumentController extends AbstractController
         $response->setPrivate();
 
         return $response;
+    }
+
+    /**
+     * Копия PDF с водяным знаком (ФИО, логин, время), если он нужен этому сотруднику для этого документа;
+     * null — отдать файл как есть (знак выключен, не нужен или не наложился — тогда причина в журнале).
+     */
+    private function watermarked(Document $document, string $pdf, Request $request, ?User $user): ?string
+    {
+        if (null === $this->watermarker || !$this->watermarker->needsMark($document, $user)) {
+            return null;
+        }
+
+        return $this->watermarker->apply($pdf, $this->watermarker->texts($user, $request->getClientIp(), null, $document->getTitle()));
+    }
+
+    /**
+     * Копия со знаком своя у каждого запроса: она удаляется после отправки, не кэшируется, и докачка частями
+     * не поддерживается (иначе части взялись бы из разных копий).
+     */
+    private static function markedResponse(BinaryFileResponse $response, Request $request): void
+    {
+        $response->deleteFileAfterSend(true);
+        $response->headers->set('Cache-Control', 'private, no-store');
+        $response->headers->set('Accept-Ranges', 'none');
+        $request->headers->remove('Range');
     }
 
     private function trackView(Document $document, Request $request, ?User $user): void

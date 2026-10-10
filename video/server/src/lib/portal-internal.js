@@ -102,3 +102,69 @@ export async function searchVideos({ q, audience = 'guest', limit = 6 }) {
     })),
   };
 }
+
+/**
+ * Обязательные просмотры по сотрудникам портала — для единого отчёта портала «Документы и видео»:
+ * по каждому сотруднику (portal_user_id) — сколько действующих назначений, сколько выполнено (просмотрены
+ * все видео назначения), сколько просрочено. Логика выполнения — как в assignmentSummaries (lib/assignments.js).
+ */
+export async function assignmentsByPortalUser() {
+  const rows = await many(
+    `WITH active AS (SELECT id, kind, video_id, playlist_id, course_id, due_at FROM assignments WHERE status = 'active'),
+     targets AS (
+       SELECT DISTINCT t.assignment_id, u.id AS user_id FROM assignment_targets t
+       JOIN active a ON a.id = t.assignment_id
+       JOIN users u ON u.status = 'active' AND u.deleted_at IS NULL AND u.portal_user_id IS NOT NULL
+         AND (t.target_type = 'all' OR t.user_id = u.id
+              OR (t.target_type = 'group' AND EXISTS (SELECT 1 FROM group_members gm WHERE gm.group_id = t.group_id AND gm.user_id = u.id)))),
+     vids AS (
+       SELECT a.id AS assignment_id, v.id AS video_id FROM active a JOIN videos v ON v.id = a.video_id AND v.deleted_at IS NULL WHERE a.kind = 'video'
+       UNION
+       SELECT a.id, v.id FROM active a JOIN playlist_items pi ON pi.playlist_id = a.playlist_id
+         JOIN videos v ON v.id = pi.video_id AND v.deleted_at IS NULL AND v.status = 'ready' WHERE a.kind = 'playlist'
+       UNION
+       SELECT a.id, v.id FROM active a JOIN course_items ci ON ci.course_id = a.course_id AND ci.kind = 'video' AND ci.required
+         JOIN videos v ON v.id = ci.video_id AND v.deleted_at IS NULL AND v.status = 'ready' WHERE a.kind = 'course'),
+     need AS (SELECT assignment_id, count(*) AS n FROM vids GROUP BY assignment_id),
+     done AS (
+       SELECT p.assignment_id, p.user_id, count(DISTINCT p.video_id) AS n FROM assignment_progress p
+       JOIN vids v ON v.assignment_id = p.assignment_id AND v.video_id = p.video_id
+       WHERE p.completed_at IS NOT NULL GROUP BY p.assignment_id, p.user_id),
+     per AS (
+       SELECT u.portal_user_id, a.due_at, (coalesce(need.n, 0) > 0 AND coalesce(done.n, 0) >= need.n) AS completed
+       FROM targets t JOIN active a ON a.id = t.assignment_id JOIN users u ON u.id = t.user_id
+       LEFT JOIN need ON need.assignment_id = t.assignment_id
+       LEFT JOIN done ON done.assignment_id = t.assignment_id AND done.user_id = t.user_id)
+     SELECT portal_user_id, count(*)::int AS assigned, count(*) FILTER (WHERE completed)::int AS completed,
+            count(*) FILTER (WHERE NOT completed AND due_at IS NOT NULL AND due_at < now())::int AS overdue
+     FROM per GROUP BY portal_user_id`,
+  );
+  return {
+    users: rows.map((r) => ({ portalUserId: Number(r.portal_user_id), assigned: r.assigned, completed: r.completed, overdue: r.overdue })),
+  };
+}
+
+/**
+ * Фрагменты видео для ответа на вопрос (ответы ИИ на странице поиска портала): видео, где встречается хоть одно
+ * слово вопроса, с выдержками из расшифровки речи вокруг совпадений (до трёх фрагментов) и описанием.
+ * Видимость — как у поиска: сотруднику открытые и внутренние, гостю только открытые.
+ */
+export async function contextForQuestion({ q, audience = 'guest', limit = 3 }) {
+  const words = String(q || '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 3).slice(0, 12);
+  if (!words.length) return { items: [] };
+  const n = Math.max(1, Math.min(5, Number(limit) || 3));
+  const viewer = audience === 'employee' ? { status: 'active', role: 'user' } : null;
+  const rows = await many(
+    `SELECT v.short_id, v.title, left(coalesce(v.description, ''), 600) AS description, u.display_name AS channel,
+            CASE WHEN coalesce(v.transcript, '') <> ''
+                 THEN ts_headline('russian', v.transcript, websearch_to_tsquery('russian', unaccent($1)),
+                                  'MaxWords=60, MinWords=25, MaxFragments=3, FragmentDelimiter=" … ", StartSel="", StopSel=""')
+                 ELSE '' END AS excerpt
+     FROM videos v JOIN users u ON u.id = v.owner_id
+     WHERE ${listVisibilitySql(viewer)} AND v.search_vector @@ websearch_to_tsquery('russian', unaccent($1))
+     ORDER BY ts_rank_cd(v.search_vector, websearch_to_tsquery('russian', unaccent($1))) DESC, v.published_at DESC
+     LIMIT $2`,
+    [words.join(' or '), n],
+  );
+  return { items: rows.map((r) => ({ shortId: r.short_id, title: r.title, channel: r.channel, description: r.description || '', excerpt: r.excerpt || '' })) };
+}

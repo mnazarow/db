@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Security;
 
+use App\Controller\KerberosController;
 use App\Entity\User;
 use Doctrine\ORM\EntityManagerInterface;
 use Psr\Log\LoggerInterface;
@@ -86,5 +87,7 @@ final class LoginSuccessSubscriber implements EventSubscriberInterface
         if (null !== $token) {
             $this->auditLogger->info('Выход из системы', ['user' => $token->getUserIdentifier()]);
         }
+        // После выхода страница входа не пробует сразу войти через Windows — иначе выйти было бы нельзя.
+        $event->getResponse()?->headers->setCookie(KerberosController::skipCookie($event->getRequest()));
     }
 }

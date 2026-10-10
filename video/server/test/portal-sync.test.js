@@ -200,3 +200,37 @@ test('сведения для портала: подпись, число на м
   assert.ok('freeBytes' in status.storage || 'error' in status.storage);
   assert.equal(status.portalSync.enabled, true);
 });
+
+test('обязательные просмотры по сотрудникам портала: назначено, выполнено, просрочено', { skip }, async () => {
+  const video = await m.db.one(`SELECT id FROM videos WHERE short_id = 'intvid0001'`);
+  const group = await m.db.one(`SELECT id FROM groups WHERE portal_department = 'Маркетинг'`);
+  const a = await m.db.one(
+    `INSERT INTO assignments(kind, video_id, title, due_at) VALUES ('video', $1, 'Обязательно к просмотру', now() - interval '1 day') RETURNING id`,
+    [video.id],
+  );
+  await m.db.query(`INSERT INTO assignment_targets(assignment_id, target_type, group_id) VALUES ($1, 'group', $2)`, [a.id, group.id]);
+  const done = await userByPortal(9001);
+  await m.db.query(`INSERT INTO assignment_progress(assignment_id, user_id, video_id, percent, completed_at) VALUES ($1, $2, $3, 100, now())`, [a.id, done.id, video.id]);
+  // Закрытое назначение в сводку не входит.
+  const closed = await m.db.one(`INSERT INTO assignments(kind, video_id, title, status) VALUES ('video', $1, 'Закрыто', 'closed') RETURNING id`, [video.id]);
+  await m.db.query(`INSERT INTO assignment_targets(assignment_id, target_type) VALUES ($1, 'all')`, [closed.id]);
+
+  const { users } = await m.internal.assignmentsByPortalUser();
+  const by = Object.fromEntries(users.map((u) => [u.portalUserId, u]));
+  assert.deepEqual(by[9001], { portalUserId: 9001, assigned: 1, completed: 1, overdue: 0 });
+  assert.deepEqual(by[9002], { portalUserId: 9002, assigned: 1, completed: 0, overdue: 1 }, 'срок прошёл, не посмотрел');
+  assert.equal(by[9003], undefined, 'не в группе — назначения нет');
+});
+
+test('фрагменты видео для ответа на вопрос: любое слово вопроса, выдержки из расшифровки, видимость', { skip }, async () => {
+  await m.db.query(`UPDATE videos SET transcript = $1 WHERE short_id = 'intvid0001'`,
+    ['Сегодня разберём монтаж. Перед запуском насосной станции проверьте давление в системе и затяжку фланцев. Потом включите насос на малых оборотах.']);
+  const r = await m.internal.contextForQuestion({ q: 'Как проверить давление перед запуском?', audience: 'employee', limit: 3 });
+  const internal = r.items.find((v) => v.shortId === 'intvid0001');
+  assert.ok(internal, 'видео с этими словами в расшифровке найдено');
+  assert.match(internal.excerpt, /давлени/i);
+  assert.doesNotMatch(internal.excerpt, /<b>/, 'выдержка без разметки');
+  const guest = await m.internal.contextForQuestion({ q: 'давление запуск', audience: 'guest' });
+  assert.equal(guest.items.find((v) => v.shortId === 'intvid0001'), undefined, 'гостю внутреннее видео не отдаётся');
+  assert.deepEqual(await m.internal.contextForQuestion({ q: 'и в на' }), { items: [] });
+});

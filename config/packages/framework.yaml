@@ -45,6 +45,11 @@ framework:
             limit: 10
             interval: '15 minutes'
             cache_pool: app.login_limiter_pool
+        # Ответы ИИ на странице поиска (каждый — платный запрос к языковой модели): по сотруднику.
+        ai_answer:
+            policy: sliding_window
+            limit: 30
+            interval: '1 hour'
 
     cache:
         app: cache.adapter.filesystem

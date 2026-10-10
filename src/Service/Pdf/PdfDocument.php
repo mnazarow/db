@@ -32,8 +32,11 @@ final class PdfDocument
     /** Текущая позиция по вертикали (от верха страницы). */
     public float $y = 0.0;
 
-    /** @var list<array{content: string, annots: list<string>}> */
+    /** @var list<array{content: string, annots: list<string>, width: float, height: float}> */
     private array $pages = [];
+
+    /** @var array<string, string> прозрачность → имя графического состояния (GS1, GS2…) */
+    private array $alphas = [];
     private int $page = -1;
 
     /** @var array<string, array{font: TrueTypeFont, glyphs: array<int, int>, key: string}> */
@@ -79,9 +82,13 @@ final class PdfDocument
         $this->header = $header;
     }
 
-    public function addPage(): void
+    /**
+     * Новая страница. Размер по умолчанию — A4; другой размер (в пунктах) нужен для водяного знака под
+     * страницы чужого PDF — на таких страницах используйте только методы с координатами PDF (rotatedText).
+     */
+    public function addPage(?float $width = null, ?float $height = null): void
     {
-        $this->pages[] = ['content' => '', 'annots' => []];
+        $this->pages[] = ['content' => '', 'annots' => [], 'width' => $width ?? self::A4_WIDTH, 'height' => $height ?? self::A4_HEIGHT];
         $this->page = \count($this->pages) - 1;
         $this->y = $this->marginTop;
         if (null !== $this->header && $this->page > 0) {
@@ -144,6 +151,63 @@ final class PdfDocument
         }
         $baseline = $y + $size * $font->ascender / $font->unitsPerEm;
         $this->out(\sprintf('BT %s rg /%s %s Tf %s %s Td <%s> Tj ET', self::color($color), $entry['key'], self::num($size), self::num($x), self::num(self::A4_HEIGHT - $baseline), $hex));
+    }
+
+    /**
+     * Повёрнутая полупрозрачная строка (водяной знак). Координаты — в системе PDF (начало внизу слева),
+     * ($cx, $cy) — центр строки, $angle — угол поворота в градусах против часовой стрелки.
+     *
+     * @param array{0: float, 1: float, 2: float} $color
+     */
+    public function rotatedText(float $cx, float $cy, string $text, float $size, float $angle, array $color = self::MUTED, float $opacity = 1.0, string $style = self::REGULAR): void
+    {
+        if ('' === $text) {
+            return;
+        }
+        $entry = &$this->fonts[$style];
+        $font = $entry['font'];
+        $hex = '';
+        foreach (self::codepoints($text) as $codepoint) {
+            $glyph = $font->glyph($codepoint);
+            if (0 === $glyph && 0x20 !== $codepoint) {
+                $glyph = $font->glyph(0x3F);
+                $codepoint = 0x3F;
+            }
+            $entry['glyphs'][$glyph] ??= $codepoint;
+            $hex .= \sprintf('%04X', $glyph);
+        }
+        $width = $this->textWidth($text, $size, $style);
+        // Середина строки по высоте — примерно половина высоты прописных букв.
+        $capHeight = $size * ($font->capHeight > 0 ? $font->capHeight : $font->ascender * 0.7) / $font->unitsPerEm;
+        $rad = deg2rad($angle);
+        $cos = cos($rad);
+        $sin = sin($rad);
+        // Начало строки: от центра назад на половину ширины и вниз на половину высоты (в повёрнутых осях).
+        $x = $cx - $cos * $width / 2 + $sin * $capHeight / 2;
+        $y = $cy - $sin * $width / 2 - $cos * $capHeight / 2;
+        $opacity = max(0.01, min(1.0, $opacity));
+        $gs = '';
+        if ($opacity < 1.0) {
+            $key = self::num($opacity);
+            $this->alphas[$key] ??= 'GS'.(\count($this->alphas) + 1);
+            $gs = '/'.$this->alphas[$key].' gs ';
+        }
+        $this->out(\sprintf('q %sBT %s rg /%s %s Tf %s %s %s %s %s %s Tm <%s> Tj ET Q', $gs, self::color($color), $entry['key'], self::num($size),
+            self::num($cos), self::num($sin), self::num(-$sin), self::num($cos), self::num($x), self::num($y), $hex));
+    }
+
+    /**
+     * Размер текущей страницы в пунктах: [ширина, высота].
+     *
+     * @return array{0: float, 1: float}
+     */
+    public function pageSize(): array
+    {
+        if ($this->page < 0) {
+            return [self::A4_WIDTH, self::A4_HEIGHT];
+        }
+
+        return [$this->pages[$this->page]['width'], $this->pages[$this->page]['height']];
     }
 
     /**
@@ -620,6 +684,9 @@ final class PdfDocument
         if ([] !== $imageRefs) {
             $resources .= ' /XObject <<'.implode('', array_map(static fn (string $k, int $id): string => ' /'.$k.' '.$id.' 0 R', array_keys($imageRefs), $imageRefs)).' >>';
         }
+        if ([] !== $this->alphas) {
+            $resources .= ' /ExtGState <<'.implode('', array_map(static fn (string $alpha, string $name): string => ' /'.$name.' << /Type /ExtGState /ca '.$alpha.' /CA '.$alpha.' >>', array_keys($this->alphas), $this->alphas)).' >>';
+        }
         $resources .= ' >>';
 
         $kids = [];
@@ -632,7 +699,7 @@ final class PdfDocument
                 $annots = ' /Annots ['.implode(' ', array_map(static fn (int $id): string => $id.' 0 R', $ids)).']';
             }
             $kids[] = $add(\sprintf('<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %s %s] /Resources %s /Contents %d 0 R%s >>',
-                $pagesId, self::num(self::A4_WIDTH), self::num(self::A4_HEIGHT), $resources, $contentId, $annots));
+                $pagesId, self::num($page['width']), self::num($page['height']), $resources, $contentId, $annots));
         }
         $objects[$pagesId - 1] = \sprintf('<< /Type /Pages /Kids [%s] /Count %d >>', implode(' ', array_map(static fn (int $id): string => $id.' 0 R', $kids)), \count($kids));
         $objects[$catalogId - 1] = \sprintf('<< /Type /Catalog /Pages %d 0 R >>', $pagesId);

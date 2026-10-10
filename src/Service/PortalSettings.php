@@ -51,6 +51,8 @@ final class PortalSettings
     public const LLM_TIMEOUT = 'llm.timeout';
     public const LLM_AUTO_DESCRIBE = 'llm.auto_describe';
     public const LLM_TEMPERATURE = 'llm.temperature';
+    /** Ответы на вопросы сотрудников на странице поиска (по документам и видео, со ссылками на источники). */
+    public const LLM_ANSWERS = 'llm.answers';
 
     public const LLM_DEFAULT_BASE_URL = 'https://api.openai.com/v1';
     public const LLM_DEFAULT_MODEL = 'gpt-4o-mini';
@@ -89,6 +91,22 @@ final class PortalSettings
 
     // Безопасность: обязательный второй фактор для администраторов.
     public const SECURITY_REQUIRE_2FA_ADMINS = 'security.require_2fa_admins';
+
+    // Вход через Kerberos (Windows, без пароля): учётную запись проверяет nginx (SPNEGO) или прокси перед порталом.
+    public const KERBEROS_ENABLED = 'kerberos.enabled';
+    public const KERBEROS_SOURCE = 'kerberos.source';
+    public const KERBEROS_HEADER = 'kerberos.header';
+    public const KERBEROS_PROXIES = 'kerberos.trusted_proxies';
+    public const KERBEROS_REALMS = 'kerberos.realms';
+    public const KERBEROS_AUTO = 'kerberos.auto';
+    public const KERBEROS_CREATE = 'kerberos.create_users';
+    public const KERBEROS_ALLOW_LOCAL = 'kerberos.allow_local';
+    public const KERBEROS_DEFAULT_HEADER = 'X-Remote-User';
+
+    // Водяной знак на PDF при просмотре и скачивании (режим — PdfWatermarker::MODE_*).
+    public const WATERMARK_MODE = 'watermark.mode';
+    public const WATERMARK_TEXT = 'watermark.text';
+    public const WATERMARK_SKIP_EDITORS = 'watermark.skip_editors';
 
     // Согласование документов перед публикацией.
     public const APPROVAL_REQUIRED = 'approval.required';
@@ -261,7 +279,7 @@ final class PortalSettings
     // ---- LLM ---------------------------------------------------------------------------------------------
 
     /**
-     * @return array{enabled: bool, base_url: string, api_key: string, model: string, prompt: string, max_input_chars: int, timeout: int, auto_describe: bool, temperature: float}
+     * @return array{enabled: bool, base_url: string, api_key: string, model: string, prompt: string, max_input_chars: int, timeout: int, auto_describe: bool, temperature: float, answers: bool}
      */
     public function llm(): array
     {
@@ -278,6 +296,7 @@ final class PortalSettings
             'timeout' => max(5, min(600, (int) $this->get(self::LLM_TIMEOUT, self::LLM_DEFAULT_TIMEOUT))),
             'auto_describe' => (bool) $this->get(self::LLM_AUTO_DESCRIBE, false),
             'temperature' => (float) $this->get(self::LLM_TEMPERATURE, self::LLM_DEFAULT_TEMPERATURE),
+            'answers' => (bool) $this->get(self::LLM_ANSWERS, true),
         ];
     }
 
@@ -390,6 +409,96 @@ final class PortalSettings
     }
 
     /**
+     * Вход через Kerberos: source — откуда портал берёт проверенную учётную запись: remote_user (переменная
+     * REMOTE_USER от nginx с модулем SPNEGO) или header (заголовок от прокси с адресов trusted_proxies);
+     * realms — допустимые области (пусто — любые); auto — пробовать вход сразу при открытии страницы входа;
+     * create_users — заводить доменные учётные записи при первом входе; allow_local — пускать в локальные
+     * учётные записи с тем же логином (по умолчанию нет: доменный «admin» не войдёт в локального «admin»).
+     *
+     * @return array{enabled: bool, source: string, header: string, trusted_proxies: string, realms: string, auto: bool, create_users: bool, allow_local: bool}
+     */
+    public function kerberos(): array
+    {
+        $source = (string) $this->get(self::KERBEROS_SOURCE, 'remote_user');
+        $header = trim((string) $this->get(self::KERBEROS_HEADER, ''));
+
+        return [
+            'enabled' => (bool) $this->get(self::KERBEROS_ENABLED, false),
+            'source' => 'header' === $source ? 'header' : 'remote_user',
+            'header' => '' !== $header ? $header : self::KERBEROS_DEFAULT_HEADER,
+            'trusted_proxies' => trim((string) $this->get(self::KERBEROS_PROXIES, '')),
+            'realms' => trim((string) $this->get(self::KERBEROS_REALMS, '')),
+            'auto' => (bool) $this->get(self::KERBEROS_AUTO, false),
+            'create_users' => (bool) $this->get(self::KERBEROS_CREATE, true),
+            'allow_local' => (bool) $this->get(self::KERBEROS_ALLOW_LOCAL, false),
+        ];
+    }
+
+    /** @param array<string, mixed> $values ключи как в kerberos() */
+    public function setKerberos(array $values, ?User $by = null): void
+    {
+        $header = trim((string) ($values['header'] ?? ''));
+        if ('' !== $header && !preg_match('/^[A-Za-z0-9-]{1,64}$/', $header)) {
+            throw new \InvalidArgumentException('Имя заголовка — латинские буквы, цифры и дефис.');
+        }
+        $proxies = [];
+        foreach (preg_split('/[\s,;]+/', (string) ($values['trusted_proxies'] ?? '')) ?: [] as $proxy) {
+            if ('' === $proxy) {
+                continue;
+            }
+            [$ip, $mask] = array_pad(explode('/', $proxy, 2), 2, null);
+            if (false === filter_var($ip, \FILTER_VALIDATE_IP) || (null !== $mask && (!ctype_digit($mask) || (int) $mask > (str_contains($ip, ':') ? 128 : 32)))) {
+                throw new \InvalidArgumentException(\sprintf('«%s» — не IP-адрес и не подсеть (например, 10.0.0.5 или 10.0.0.0/24).', $proxy));
+            }
+            $proxies[] = $proxy;
+        }
+        $realms = implode(', ', array_filter(array_map(static fn (string $r): string => strtoupper(trim($r)), preg_split('/[\s,;]+/', (string) ($values['realms'] ?? '')) ?: [])));
+        $source = 'header' === ($values['source'] ?? '') ? 'header' : 'remote_user';
+        if ((bool) ($values['enabled'] ?? false) && 'header' === $source && [] === $proxies) {
+            throw new \InvalidArgumentException('Для учётной записи из заголовка укажите адреса доверенных прокси: иначе заголовок мог бы подставить кто угодно.');
+        }
+        $this->setMany([
+            self::KERBEROS_ENABLED => (bool) ($values['enabled'] ?? false),
+            self::KERBEROS_SOURCE => $source,
+            self::KERBEROS_HEADER => '' !== $header ? $header : self::KERBEROS_DEFAULT_HEADER,
+            self::KERBEROS_PROXIES => implode(', ', $proxies),
+            self::KERBEROS_REALMS => $realms,
+            self::KERBEROS_AUTO => (bool) ($values['auto'] ?? false),
+            self::KERBEROS_CREATE => (bool) ($values['create_users'] ?? true),
+            self::KERBEROS_ALLOW_LOCAL => (bool) ($values['allow_local'] ?? false),
+        ], $by);
+    }
+
+    /**
+     * Водяной знак на PDF: режим (off, restricted, internal, all) и дополнительный текст перед ФИО
+     * (например, «Для служебного пользования»).
+     *
+     * Тем, кто может править документ (модераторы раздела, администраторы), знак по умолчанию не ставится:
+     * им нужен чистый файл для новой редакции.
+     *
+     * @return array{mode: string, text: string, skip_editors: bool}
+     */
+    public function watermark(): array
+    {
+        $mode = (string) $this->get(self::WATERMARK_MODE, 'off');
+
+        return [
+            'mode' => \in_array($mode, ['off', 'restricted', 'internal', 'all'], true) ? $mode : 'off',
+            'text' => mb_substr(trim((string) $this->get(self::WATERMARK_TEXT, '')), 0, 60),
+            'skip_editors' => (bool) $this->get(self::WATERMARK_SKIP_EDITORS, true),
+        ];
+    }
+
+    public function setWatermark(string $mode, string $text, bool $skipEditors = true, ?User $by = null): void
+    {
+        $this->setMany([
+            self::WATERMARK_MODE => \in_array($mode, ['off', 'restricted', 'internal', 'all'], true) ? $mode : 'off',
+            self::WATERMARK_TEXT => mb_substr(trim(str_replace(["\r", "\n"], ' ', $text)), 0, 60),
+            self::WATERMARK_SKIP_EDITORS => $skipEditors,
+        ], $by);
+    }
+
+    /**
      * Согласование перед публикацией.
      *
      * @return array{required: bool, auto_publish: bool}
@@ -453,6 +562,9 @@ final class PortalSettings
             self::LLM_AUTO_DESCRIBE => (bool) ($values['auto_describe'] ?? false),
             self::LLM_TEMPERATURE => $temperature,
         ];
+        if (\array_key_exists('answers', $values)) {
+            $set[self::LLM_ANSWERS] = (bool) $values['answers'];
+        }
         if (\array_key_exists('api_key', $values) && null !== $values['api_key']) {
             $set[self::LLM_API_KEY] = trim((string) $values['api_key']);
         }

@@ -12,7 +12,49 @@
         if (document.readyState !== 'loading') { fn(); } else { document.addEventListener('DOMContentLoaded', fn); }
     }
 
+    /* Установка портала как приложения: service worker (только оформление в кэше и страница «Нет связи») */
+    if ('serviceWorker' in navigator && window.isSecureContext) {
+        window.addEventListener('load', function () {
+            navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () { /* не критично */ });
+        });
+    }
+
+    /* Ответ ИИ на странице поиска: вопрос уходит на сервер, ответ — с пронумерованными ссылками на источники */
+    function setupAiAnswer(box) {
+        var body = box.querySelector('[data-ai-body]');
+        var button = box.querySelector('[data-ai-ask]');
+        box.hidden = false;
+        function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+        function ask() {
+            if (button) { button.disabled = true; }
+            body.innerHTML = '<p class="text-muted ai-answer__wait">Ищу ответ в документах…</p>';
+            var data = new FormData();
+            data.append('q', box.getAttribute('data-q') || '');
+            data.append('_token', box.getAttribute('data-token') || '');
+            fetch(box.getAttribute('data-url'), { method: 'POST', body: data, credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+                .then(function (r) { return r.json().catch(function () { return { error: 'Сервер ответил ошибкой (' + r.status + ').' }; }); })
+                .then(function (res) {
+                    var html = '';
+                    if (res.html) { html += '<div class="ai-answer__text">' + res.html + '</div>'; }
+                    if (res.error) { html += '<p class="' + (res.html ? 'text-muted' : 'alert alert--info') + '">' + esc(res.error) + '</p>'; }
+                    if (res.sources && res.sources.length) {
+                        html += '<ol class="ai-answer__sources">' + res.sources.map(function (s) {
+                            return '<li value="' + s.n + '"><span class="tag">' + (s.type === 'video' ? 'видео' : 'документ') + '</span> <a href="' + esc(s.url) + '">' + esc(s.title) + '</a>' + (s.meta ? ' <span class="text-muted">' + esc(s.meta) + '</span>' : '') + '</li>';
+                        }).join('') + '</ol>';
+                    }
+                    body.innerHTML = html || '<p class="text-muted">Ответа нет.</p>';
+                })
+                .catch(function () { body.innerHTML = '<p class="alert alert--info">Нет связи с сервером — повторите позже.</p>'; })
+                .then(function () { if (button) { button.disabled = false; button.textContent = 'Ответить ещё раз'; } });
+        }
+        if (button) { button.addEventListener('click', ask); }
+        if (box.hasAttribute('data-auto')) { ask(); }
+    }
+
     ready(function () {
+        var aiBox = document.querySelector('[data-ai-answer]');
+        if (aiBox && window.fetch && window.FormData) { setupAiAnswer(aiBox); }
+
         /* Подтверждения: data-confirm у формы или у нажатой кнопки (например, «Удалить» рядом с «Сохранить») */
         document.addEventListener('submit', function (e) {
             var form = e.target;

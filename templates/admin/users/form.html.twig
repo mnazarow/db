@@ -25,6 +25,10 @@
             {{ form_row(form.displayName, ql.get('ldap_name') ? {value: ql.get('ldap_name')} : {}) }}
             {{ form_row(form.email, ql.get('ldap_email') ? {value: ql.get('ldap_email')} : {}) }}
             {{ form_row(form.department, ql.get('ldap_dept') ? {value: ql.get('ldap_dept')} : {}) }}
+            {{ form_row(form.jobTitle) }}
+            {{ form_row(form.employeeNumber) }}
+            {{ form_row(form.managerLogin) }}
+            <datalist id="user-logins">{% for u in logins|default([]) %}{% if u.login != user.username %}<option value="{{ u.login }}">{{ u.name }}</option>{% endif %}{% endfor %}</datalist>
             {% if form.authSource is defined %}
                 <div class="form-row">
                     <div class="form-label">{{ form_label(form.authSource) }}</div>

@@ -393,7 +393,40 @@ final class DocumentRepository extends ServiceEntityRepository
      */
     public function searchContent(SearchQuery $query, array $statuses, ?Section $section = null, int $limit = 30, bool $publicOnly = false, ?Viewer $viewer = null): array
     {
-        $boolean = $query->booleanMode();
+        return $this->contentHits($query->booleanMode(), $query, $statuses, $section, $limit, $publicOnly, $viewer);
+    }
+
+    /**
+     * Поиск по содержимому «хотя бы одно слово» (для ответов на вопросы: в вопросе много слов, и требовать
+     * все — значит почти ничего не найти). Порядок — по релевантности индекса.
+     *
+     * @param list<string> $terms слова вопроса (служебные уже отброшены)
+     * @param list<string> $statuses
+     *
+     * @return list<array{document: Document, score: float, text: string}>
+     */
+    public function searchContentAny(array $terms, array $statuses, int $limit = 10, bool $publicOnly = false, ?Viewer $viewer = null): array
+    {
+        $parts = [];
+        foreach ($terms as $term) {
+            foreach (preg_split('/[^\p{L}\p{N}]+/u', mb_strtolower($term)) ?: [] as $word) {
+                if (mb_strlen($word) >= 3) {
+                    $parts[] = SearchQuery::stem($word).'*';
+                }
+            }
+        }
+        $parts = array_values(array_unique($parts));
+
+        return [] === $parts ? [] : $this->contentHits(implode(' ', \array_slice($parts, 0, 12)), SearchQuery::parse(''), $statuses, null, $limit, $publicOnly, $viewer);
+    }
+
+    /**
+     * @param list<string> $statuses
+     *
+     * @return list<array{document: Document, score: float, text: string}>
+     */
+    private function contentHits(string $boolean, SearchQuery $query, array $statuses, ?Section $section, int $limit, bool $publicOnly, ?Viewer $viewer): array
+    {
         if ('' === $boolean || [] === $statuses) {
             return [];
         }

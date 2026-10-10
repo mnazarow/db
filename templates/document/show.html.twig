@@ -198,7 +198,7 @@
             {% if current and document.page %}
                 <div class="card">
                     <h2 class="h-section">Содержание</h2>
-                    <div class="page-content">{{ current.content|raw }}</div>
+                    <div class="page-content{{ page_watermark ? ' page-content--watermark' }}"{% if page_watermark %} style="--watermark: url('{{ page_watermark }}')"{% endif %}>{{ current.content|raw }}</div>
                 </div>
             {% elseif current and inline and file_exists %}
                 <div class="card card--preview">

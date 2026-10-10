@@ -100,6 +100,8 @@ fi
 if [[ "${INSTALL_MODE}" == "native" ]]; then
     if command -v pdftotext >/dev/null 2>&1; then ok "Извлечение текста из PDF (pdftotext): доступно"
     else warn "pdftotext не найден — установите пакет poppler-utils, иначе API и описания через LLM не получат текст PDF-файлов"; fi
+    if command -v qpdf >/dev/null 2>&1; then ok "Водяной знак на PDF (qpdf): доступен"
+    else info "qpdf не найден — водяной знак на PDF работать не будет (пакет qpdf; нужен, только если знак включён)"; fi
     if command -v soffice >/dev/null 2>&1; then ok "Предпросмотр офисных файлов (LibreOffice): доступен"
     else info "LibreOffice не установлен — docx/xlsx/pptx открываются только скачиванием (включить: ${APP_DIR}/current/deploy/refresh.sh --with-preview)"; fi
     if command -v tesseract >/dev/null 2>&1; then ok "Распознавание сканов (tesseract): доступно"

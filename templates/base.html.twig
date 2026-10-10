@@ -8,6 +8,11 @@
     <link rel="icon" href="{{ asset('img/favicon.svg') }}" type="image/svg+xml">
     <link rel="icon" href="{{ asset('favicon-32x32.png') }}" sizes="32x32" type="image/png">
     <link rel="apple-touch-icon" href="{{ asset('apple-touch-icon.png') }}" sizes="180x180">
+    {# Установка как приложения (PWA): манифест, цвет окна, иконки — см. PwaController и public/sw.js #}
+    <link rel="manifest" href="{{ path('app_manifest') }}">
+    <meta name="theme-color" content="#0F4382">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="{{ app_name }}">
     <link rel="preload" href="{{ asset('fonts/DINCondensed-Light.woff2') }}" as="font" type="font/woff2" crossorigin>
     <link rel="preload" href="{{ asset('fonts/DINCondensed-Regular.woff2') }}" as="font" type="font/woff2" crossorigin>
     <link rel="preload" href="{{ asset('fonts/roboto-cyrillic-400-normal.woff2') }}" as="font" type="font/woff2" crossorigin>
@@ -127,6 +132,7 @@
                 <a href="{{ path('app_home') }}">Разделы и документы</a>
                 <a href="{{ path('app_search') }}">Поиск</a>
                 <a href="{{ path('app_profile_acknowledgements') }}">Мои ознакомления</a>
+                {% if has_team() %}<a href="{{ path('app_profile_team') }}">Мои сотрудники</a>{% endif %}
                 {% if approvals_pending() > 0 %}<a href="{{ path('app_profile_approvals') }}">Мне на согласование</a>{% endif %}
                 {% if is_contributor() %}<a href="{{ path('app_moderation') }}">Модерация материалов</a>{% endif %}
                 {% if video_enabled() %}<a href="{{ video_url('/') }}">Видео</a>{% endif %}

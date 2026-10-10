@@ -232,4 +232,39 @@ final class VideoIntegrationTest extends PortalTestCase
         self::assertStringContainsString('Connection refused', $video['message']);
         self::assertSame(0, $built['metrics']['video_up']);
     }
+
+    public function testPeopleReportJoinsDocumentsAndVideo(): void
+    {
+        $smirnov = $this->user('smirnov');
+        $this->http()->setDefault(new HttpResponse(200, (string) json_encode(['users' => [
+            ['portalUserId' => (int) $smirnov->getId(), 'assigned' => 2, 'completed' => 1, 'overdue' => 1],
+        ]])));
+        $this->loginAs('admin');
+        $crawler = $this->client->request('GET', '/admin/acknowledgements?view=people');
+        self::assertResponseIsSuccessful();
+        self::assertCount(1, $this->videoRequests('/api/internal/assignments'));
+        self::assertSelectorTextContains('.tabs', 'По сотрудникам: документы и видео');
+        $row = $crawler->filter('.people-report tbody tr')->reduce(static fn ($tr): bool => str_contains($tr->text(), 'smirnov'));
+        self::assertCount(1, $row, 'сотрудник с обязательным просмотром видео есть в отчёте');
+        self::assertStringContainsString('1/2', $row->text());
+        self::assertStringContainsString('is-expired', (string) $row->attr('class'), 'просрочено — строка выделена');
+
+        // Только с невыполненным и выгрузка CSV.
+        $this->client->request('GET', '/admin/acknowledgements/people.csv?pending=1');
+        self::assertResponseIsSuccessful();
+        $csv = (string) $this->client->getInternalResponse()->getContent();
+        self::assertStringContainsString('Видео назначено', $csv);
+        self::assertMatchesRegularExpression('/;smirnov;\d+;\d+;\d+;2;1;1;\d+/u', $csv);
+
+        // Видеопортал не ответил — отчёт по документам открывается с предупреждением.
+        $this->http()->setDefault(new HttpResponse(0, '', 'Connection refused'));
+        $this->client->request('GET', '/admin/acknowledgements?view=people');
+        self::assertResponseIsSuccessful();
+        self::assertSelectorTextContains('.alert--warning', 'Раздел «Видео» не ответил');
+
+        // Обычному сотруднику отчёт недоступен.
+        $this->loginAs('smirnov');
+        $this->client->request('GET', '/admin/acknowledgements?view=people');
+        self::assertResponseStatusCodeSame(403);
+    }
 }

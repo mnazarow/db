@@ -27,6 +27,17 @@
     </div>
 
     {% if q|length >= 2 %}
+        {% if ai_answers %}
+        <div class="card ai-answer" data-ai-answer data-url="{{ path('app_search_answer') }}" data-token="{{ csrf_token('search_answer') }}" data-q="{{ q }}"{% if ai_auto %} data-auto{% endif %} hidden>
+            <div class="card__head card__head--padded">
+                <h2 class="h-section">Ответ на вопрос</h2>
+                <button class="btn btn--ghost btn--small" type="button" data-ai-ask>Ответить по документам{{ video_enabled() ? ' и видео' }}</button>
+            </div>
+            <div class="card__padded ai-answer__body" data-ai-body aria-live="polite">
+                <p class="text-muted">Языковая модель составит ответ по документам{{ video_enabled() ? ' и видео' }}, которые вам доступны, и покажет, откуда он взят. Проверяйте важное по источникам.</p>
+            </div>
+        </div>
+        {% endif %}
         <div class="card table-card">
             <div class="card__head card__head--padded">
                 <h2 class="h-section">Найдено: {{ results|length }}</h2>

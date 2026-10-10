@@ -1258,3 +1258,55 @@ fieldset.form-row > legend { padding: 0; margin-bottom: 6px; }
 @media (max-width: 560px) {
     .video-hit__thumb { flex-basis: 112px; }
 }
+
+/* Ознакомление → «По сотрудникам: документы и видео» */
+.people-report .people-report__dept th, .people-report .people-report__dept td { background: var(--blue-bg); font-weight: 700; }
+.people-report tbody + tbody .people-report__dept th, .people-report tbody + tbody .people-report__dept td { border-top: 2px solid var(--border-light); }
+
+/* Поиск: ответ ИИ по документам и видео */
+.ai-answer { border-left: 4px solid var(--blue); }
+.ai-answer__text p { margin: 0 0 10px; line-height: 1.6; }
+.ai-answer__text ul { margin: 0 0 10px; padding-left: 20px; line-height: 1.6; }
+.ai-answer__ref { font-size: 12px; vertical-align: super; text-decoration: none; margin-left: 1px; }
+.ai-answer__sources { margin: 12px 0 0; padding-left: 22px; font-size: 14px; line-height: 1.7; border-top: 1px solid var(--border-light); padding-top: 10px; }
+.ai-answer__wait::after { content: ''; display: inline-block; width: 10px; height: 10px; margin-left: 8px; border: 2px solid var(--blue-light); border-top-color: var(--blue); border-radius: 50%; animation: ai-spin 0.8s linear infinite; vertical-align: middle; }
+@keyframes ai-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .ai-answer__wait::after { animation: none; } }
+
+/* Водяной знак поверх страницы портала (ФИО, логин, время) — не мешает выделять текст и нажимать ссылки. */
+.page-content--watermark { position: relative; }
+.page-content--watermark::after { content: ''; position: absolute; inset: 0; background-image: var(--watermark); background-repeat: repeat; pointer-events: none; z-index: 1; }
+@media print { .page-content--watermark::after { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+.admin-table .col-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--muted); }
+
+/* Мои сотрудники */
+.grid--team { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom: 24px; }
+.team-table__person { padding-left: calc(var(--depth, 0) * 18px); }
+.team-table__details summary { cursor: pointer; list-style: none; display: inline-block; }
+.team-table__details summary::-webkit-details-marker { display: none; }
+.team-table__details[open] summary { margin-bottom: 6px; }
+.team-table__details .mini-list { margin: 0 0 4px; }
+.login__sso-second { margin-top: 10px; }
+.radio-stack { display: grid; gap: 8px; }
+.meta--spaced { margin-top: 20px; }
+.meta--org { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+.meta--org .meta__wide { grid-column: 1 / -1; }
+.team-table__more { font-size: 13px; color: var(--blue); text-decoration: underline dotted; margin-left: 4px; }
+.team-table__details[open] .team-table__more { display: none; }
+@media (max-width: 600px) {
+    .grid--team { grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 8px; margin-bottom: 16px; }
+    .grid--team .card { padding: 12px 14px; }
+    .grid--team .stat__value { font-size: 30px; }
+    .grid--team .stat__value--text { font-size: 18px; }
+    .grid--team .stat__label { font-size: 10px; letter-spacing: .06em; }
+    .grid--team .stat__hint { display: none; }
+}
+@media (max-width: 600px) {
+    .team-table, .team-table tbody, .team-table tr, .team-table td { display: block; width: auto; }
+    .team-table thead { display: none; }
+    .team-table tr { padding: 12px 0; border-bottom: 1px solid var(--border-light); }
+    .team-table td { border: 0; padding: 3px 0; white-space: normal; }
+    .team-table td[data-label]::before { content: attr(data-label) ': '; color: var(--muted); font-size: 12px; }
+    .team-table td[data-label] .team-table__details { display: inline; }
+}
+.people-report .people-report__dept th { border-bottom: 1px solid var(--border-light); }

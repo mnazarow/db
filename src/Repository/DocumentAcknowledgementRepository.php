@@ -293,6 +293,44 @@ final class DocumentAcknowledgementRepository extends ServiceEntityRepository
         ], $rows);
     }
 
+    /**
+     * Ознакомления по сотрудникам (последняя назначенная редакция опубликованных документов, активные
+     * сотрудники): user_id → назначено, подтверждено, просрочено. Для единого отчёта «Документы и видео».
+     *
+     * @param list<int>|null $sectionIds
+     *
+     * @return array<int, array{assigned: int, confirmed: int, overdue: int}>
+     */
+    public function userRows(?array $sectionIds = null): array
+    {
+        $sql = 'SELECT a.user_id, COUNT(*) AS assigned,
+                    SUM(CASE WHEN a.confirmed_at IS NOT NULL THEN 1 ELSE 0 END) AS confirmed,
+                    SUM(CASE WHEN a.confirmed_at IS NULL AND a.due_at IS NOT NULL AND a.due_at < :today THEN 1 ELSE 0 END) AS overdue
+                FROM document_acknowledgement a
+                JOIN `user` u ON u.id = a.user_id
+                JOIN document d ON d.id = a.document_id
+                WHERE u.active = 1 AND d.status = :published
+                  AND NOT EXISTS (SELECT 1 FROM document_acknowledgement a2
+                                  WHERE a2.document_id = a.document_id AND a2.user_id = a.user_id AND a2.version_number > a.version_number)';
+        $params = ['today' => (new \DateTimeImmutable('today'))->format('Y-m-d'), 'published' => Document::STATUS_PUBLISHED];
+        $types = [];
+        if (null !== $sectionIds) {
+            if ([] === $sectionIds) {
+                return [];
+            }
+            $sql .= ' AND d.section_id IN (:sections)';
+            $params['sections'] = $sectionIds;
+            $types['sections'] = \Doctrine\DBAL\ArrayParameterType::INTEGER;
+        }
+        $sql .= ' GROUP BY a.user_id';
+        $out = [];
+        foreach ($this->getEntityManager()->getConnection()->fetchAllAssociative($sql, $params, $types) as $r) {
+            $out[(int) $r['user_id']] = ['assigned' => (int) $r['assigned'], 'confirmed' => (int) $r['confirmed'], 'overdue' => (int) $r['overdue']];
+        }
+
+        return $out;
+    }
+
     public function countPendingForUser(User $user, ?Viewer $viewer = null): int
     {
         $qb = $this->createQueryBuilder('a')->select('COUNT(a.id)')

@@ -775,7 +775,7 @@ DEXEC=(docker compose exec -u www-data)
 [[ -t 0 && -t 1 ]] || DEXEC+=(-T)
 cmd="\${1:-help}"; shift || true
 case "\${cmd}" in
-    update|backup|restore|uninstall|status|doctor|maintenance|verify-backup|remote-backup|video|auto-update)
+    update|backup|restore|uninstall|status|doctor|maintenance|verify-backup|remote-backup|video|auto-update|kerberos)
         [[ "\${cmd}" == "status" ]] && cmd="doctor"
         exec "\${DEPLOY}/\${cmd}.sh" "\$@" ;;
     console)
@@ -803,6 +803,26 @@ case "\${cmd}" in
         SRC=\$(cd "\${SRC}" && pwd)
         # Пользователь службы должен читать каталог: при необходимости скопируйте его в \${APP_DIR}/shared/import.
         exec runuser -u "\${SERVICE_USER}" -- php "\${APP_DIR}/current/bin/console" app:import:directory "\${SRC}" --root-as-section "\$@" ;;
+    org-import)
+        # org-import ФАЙЛ [параметры app:org:import]: оргструктура из выгрузки 1С:ЗУП (CSV или Excel).
+        # Файл копируется туда, где его прочитает пользователь службы (в Docker — в контейнер), и после загрузки удаляется.
+        [[ \$# -gt 0 && -f "\${1}" ]] || { echo "Использование: ${APP_ID} org-import ФАЙЛ.csv|ФАЙЛ.xlsx [--dry-run] [--create] [--no-deactivate] [--names]" >&2; exit 1; }
+        SRC="\${1}"; shift
+        EXT="\${SRC##*.}"; TMPNAME="org-import-\$\$.\${EXT}"
+        rc=0
+        if [[ "\${INSTALL_MODE}" == "docker" ]]; then
+            cd "\${APP_DIR}/docker"
+            docker compose cp "\${SRC}" "app:/tmp/\${TMPNAME}" >/dev/null || exit 1
+            docker compose exec -T app chmod 644 "/tmp/\${TMPNAME}" >/dev/null 2>&1 || true
+            "\${DEXEC[@]}" app php bin/console app:org:import "/tmp/\${TMPNAME}" "\$@" || rc=\$?
+            docker compose exec -T app rm -f "/tmp/\${TMPNAME}" >/dev/null 2>&1 || true
+            exit "\${rc}"
+        fi
+        TMPDIR_ORG=\$(mktemp -d) || exit 1
+        install -m 0644 "\${SRC}" "\${TMPDIR_ORG}/\${TMPNAME}" && chmod 0755 "\${TMPDIR_ORG}" || { rm -rf "\${TMPDIR_ORG}"; exit 1; }
+        runuser -u "\${SERVICE_USER}" -- php "\${APP_DIR}/current/bin/console" app:org:import "\${TMPDIR_ORG}/\${TMPNAME}" "\$@" || rc=\$?
+        rm -rf "\${TMPDIR_ORG}"
+        exit "\${rc}" ;;
     api-key|describe|reindex|acknowledge-remind|telegram)
         # api-key — ключи REST API; describe — описания через LLM; reindex — индекс поиска по содержимому;
         # acknowledge-remind — напоминания сотрудникам о неподтверждённом ознакомлении;
@@ -846,6 +866,10 @@ case "\${cmd}" in
   reindex             Индекс полнотекстового поиска по содержимому файлов (--all — всё заново, --status — состояние)
   acknowledge-remind  Напоминания о неподтверждённом ознакомлении (--days=N, --dry-run)
   telegram            Уведомления в Telegram: разбор сообщений бота (--status, --check, --send "текст" --user ЛОГИН)
+  kerberos on|off|status   Вход через Windows без пароля (Kerberos/SPNEGO в nginx):
+                      on --keytab ФАЙЛ --service HTTP/имя.портала [--realm ОБЛАСТЬ] [--auto]
+  org-import ФАЙЛ     Оргструктура из 1С:ЗУП (CSV или Excel): подразделения, должности, руководители, уволенные
+                      (--dry-run — только показать изменения; --create — создать недостающих; --no-deactivate; --names)
   video <команда>     Раздел «Видео» (видеопортал по адресу /video, общий вход и роли с порталом):
                       enable [--no-live] [--backup-media] | status | restart | sync-users | logs [api|worker|mediamtx] | disable
   logs                Журнал приложения

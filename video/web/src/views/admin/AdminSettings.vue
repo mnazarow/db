@@ -186,6 +186,7 @@ const blockedWords = computed({ get: () => (s.value['comments.blocked_words'] ||
 
         <div v-else-if="tab === 'smtp'" class="panel"><h3 class="mb-8">Электронная почта (SMTP)</h3>
           <p class="small muted">Нужна для подтверждения адресов, приглашений, восстановления паролей и уведомлений. Без почты регистрация работает без подтверждения e-mail.</p>
+          <div v-if="auth.isPortal" class="hint mb-16"><b>В составе портала документации</b> письма о задачах — модерация, назначенные просмотры и напоминания о сроках, жалобы, просьбы о рецензии, сертификаты — отправляет портал по своей настройке почты (Панель администратора портала → Настройки). Почта видеопортала нужна только для остальных писем (новые видео, ответы на комментарии, дайджест); без неё эти уведомления видны в колокольчике.</div>
           <label class="switch mb-16"><input type="checkbox" v-model="s['smtp.enabled']" /><span class="track"></span><span>Отправка почты включена</span></label>
           <div class="form-grid">
             <div class="field"><label>Сервер SMTP</label><input class="input" v-model="s['smtp.host']" placeholder="mail.vodokomfort.ru" /></div>
@@ -253,6 +254,7 @@ const blockedWords = computed({ get: () => (s.value['comments.blocked_words'] ||
         <div v-else-if="tab === 'integrations'" class="col gap-24">
           <div class="panel"><h3 class="mb-8">Уведомления в Telegram</h3>
             <p class="small muted">Создайте бота через @BotFather, укажите токен. Сотрудники привязывают Telegram в «Настройки → Уведомления» (бот получает команду /start с кодом). Входящие команды портал читает сам (long polling) — входящий адрес и вебхук не нужны.</p>
+            <div v-if="auth.isPortal" class="hint mb-16"><b>В составе портала документации</b> уведомления о задачах (модерация, назначенные просмотры, напоминания, жалобы, рецензии, сертификаты) приходят в Telegram через бота портала — сотрудник привязывает его один раз в профиле портала («Подписки и уведомления»). Отдельный бот видеопортала нужен, только если хотите получать в Telegram и остальные уведомления.</div>
             <label class="switch mb-16"><input type="checkbox" v-model="s['telegram.enabled']" /><span class="track"></span><span>Уведомления в Telegram включены</span></label>
             <div class="form-grid">
               <div class="field"><label>Токен бота</label><input class="input" type="password" v-model="s['telegram.bot_token']" autocomplete="new-password" /></div>

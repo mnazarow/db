@@ -11,6 +11,7 @@ use App\Repository\DocumentAcknowledgementRepository;
 use App\Repository\DocumentRepository;
 use App\Repository\SectionRepository;
 use App\Security\Access;
+use App\Service\Llm\AnswerService;
 use App\Service\StatsService;
 use App\Service\Text\SearchQuery;
 use App\Service\Video\VideoApi;
@@ -29,6 +30,7 @@ final class HomeController extends AbstractController
         private readonly Access $access,
         private readonly StatsService $stats,
         private readonly ?VideoApi $videoApi = null,
+        private readonly ?AnswerService $answers = null,
     ) {
     }
 
@@ -113,6 +115,9 @@ final class HomeController extends AbstractController
             'results' => $results,
             'content_results' => $content,
             'video_results' => $videos,
+            // Ответ ИИ — только вошедшим сотрудникам и только если ответы включены в «Интеграциях».
+            'ai_answers' => null !== $user && null !== $this->answers && $this->answers->isEnabled(),
+            'ai_auto' => (bool) preg_match('/\?\s*$|^(как|что|где|когда|кто|почему|зачем|сколько|можно ли|нужно ли|какой|какая|какие)\b/iu', $q),
         ]);
     }
 

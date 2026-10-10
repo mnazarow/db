@@ -32,7 +32,17 @@ final class UserType extends AbstractType
             ->add('username', TextType::class, ['label' => 'Логин', 'attr' => ['maxlength' => 64, 'autocomplete' => 'off', 'autocapitalize' => 'off', 'spellcheck' => 'false'], 'help' => 'Для доменной учётной записи — логин в домене (sAMAccountName), без префикса домена.'])
             ->add('displayName', TextType::class, ['label' => 'Имя', 'attr' => ['maxlength' => 128, 'placeholder' => 'Фамилия Имя Отчество']])
             ->add('email', EmailType::class, ['label' => 'E-mail', 'required' => false, 'attr' => ['maxlength' => 180], 'help' => 'Нужен для уведомлений о сроках актуальности документов.'])
-            ->add('department', TextType::class, ['label' => 'Подразделение', 'required' => false, 'attr' => ['maxlength' => 128]]);
+            ->add('department', TextType::class, ['label' => 'Подразделение', 'required' => false, 'attr' => ['maxlength' => 128]])
+            ->add('jobTitle', TextType::class, ['label' => 'Должность', 'required' => false, 'attr' => ['maxlength' => 128]])
+            ->add('employeeNumber', TextType::class, ['label' => 'Табельный номер', 'required' => false, 'attr' => ['maxlength' => 32], 'help' => 'По нему выгрузка из 1С:ЗУП находит сотрудника, если в ней нет логина.'])
+            ->add('managerLogin', TextType::class, [
+                'label' => 'Руководитель',
+                'mapped' => false,
+                'required' => false,
+                'data' => $options['manager_login'],
+                'attr' => ['maxlength' => 64, 'list' => 'user-logins', 'autocomplete' => 'off', 'placeholder' => 'логин руководителя'],
+                'help' => 'Непосредственный руководитель видит ознакомления и обязательные просмотры сотрудника на странице «Мои сотрудники».',
+            ]);
 
         if ($options['ldap_enabled']) {
             $builder->add('authSource', ChoiceType::class, [
@@ -73,7 +83,9 @@ final class UserType extends AbstractType
             'is_admin' => false,
             'position' => null,
             'ldap_enabled' => false,
+            'manager_login' => null,
         ]);
+        $resolver->setAllowedTypes('manager_login', ['null', 'string']);
         $resolver->setAllowedTypes('position', ['null', 'string']);
         $resolver->setAllowedTypes('is_new', 'bool');
         $resolver->setAllowedTypes('is_admin', 'bool');

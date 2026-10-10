@@ -7,6 +7,7 @@ namespace App\Service\Monitoring;
 use App\Entity\SystemJob;
 use App\Repository\SystemJobRepository;
 use App\Service\FileStorage;
+use App\Service\Pdf\PdfWatermarker;
 use App\Service\PortalSettings;
 use App\Service\Preview\DocumentPreviewer;
 use App\Service\Video\VideoApi;
@@ -62,6 +63,7 @@ final class HealthReport
         #[Autowire(param: 'kernel.secret')]
         private readonly string $appSecret = '',
         private readonly ?VideoApi $videoApi = null,
+        private readonly ?PdfWatermarker $watermarker = null,
     ) {
     }
 
@@ -87,6 +89,11 @@ final class HealthReport
         $checks[] = $this->previewer->isAvailable()
             ? self::check('preview', 'Предпросмотр офисных файлов (LibreOffice)', self::INFO, 'установлен')
             : self::check('preview', 'Предпросмотр офисных файлов (LibreOffice)', self::INFO, 'не установлен — docx/xlsx открываются только скачиванием');
+        if (null !== $this->watermarker && PdfWatermarker::MODE_OFF !== $this->settings->watermark()['mode']) {
+            $checks[] = $this->watermarker->isAvailable()
+                ? self::check('watermark', 'Водяной знак на PDF (qpdf)', self::OK, 'включён, qpdf установлен')
+                : self::check('watermark', 'Водяной знак на PDF (qpdf)', self::WARNING, 'включён, но на сервере нет qpdf — PDF отдаются без знака (установите пакет qpdf)');
+        }
 
         $status = self::OK;
         foreach ($checks as $check) {

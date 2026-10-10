@@ -205,7 +205,7 @@
 
 <div class="grid grid--two" id="llm">
     <div class="card card--form">
-        <div class="card__head"><h2 class="h-section">Описания документов через LLM</h2>
+        <div class="card__head"><h2 class="h-section">Языковая модель (LLM): описания и ответы</h2>
             {% if llm.enabled %}<span class="badge badge--done"><span class="badge__dot"></span>Включено</span>{% else %}<span class="badge badge--none"><span class="badge__dot"></span>Выключено</span>{% endif %}</div>
         <p>Портал может формировать краткие описания документов через внешнюю языковую модель по OpenAI-совместимому API (OpenAI, OpenRouter, Ollama, LM Studio, vLLM, LocalAI и др.). Модель получает название, раздел, теги, имя файла и начало текста документа.</p>
         <form method="post" action="{{ path('admin_integrations_llm') }}" class="form">
@@ -215,6 +215,9 @@
             </div>
             <div class="form-row form-row--check">
                 <label class="form-check"><input type="checkbox" name="auto_describe" value="1" {{ llm.auto_describe ? 'checked' }}><span>Автоматически описывать новые документы (при создании и импорте), если описание не заполнено</span></label>
+            </div>
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="answers" value="1" {{ llm.answers ? 'checked' }}><span>Отвечать на вопросы сотрудников на странице поиска — по фрагментам доступных им документов и видео, со ссылками на источники</span></label>
             </div>
             <div class="form-grid">
                 <div class="form-row">

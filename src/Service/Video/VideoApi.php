@@ -87,6 +87,71 @@ final class VideoApi
         }
     }
 
+    /**
+     * Фрагменты видео для ответа на вопрос (ответы ИИ): видео со словами вопроса и выдержки из расшифровки речи.
+     *
+     * @return list<array{title: string, url: string, channel: string, text: string}>
+     */
+    public function context(string $question, bool $employee, int $limit = 3): array
+    {
+        if (!$this->isAvailable() || '' === trim($question)) {
+            return [];
+        }
+        $url = $this->baseUrl().'/api/internal/context?'.http_build_query(['q' => mb_substr($question, 0, 500), 'audience' => $employee ? 'employee' : 'guest', 'limit' => max(1, min(5, $limit))]);
+        $response = $this->http->request('GET', $url, null, $this->headers(), 5);
+        $data = $response->json();
+        if (!$response->ok() || !\is_array($data['items'] ?? null)) {
+            $this->logger->info('Видеопортал не дал фрагменты для ответа', ['error' => $response->describeError()]);
+
+            return [];
+        }
+        $out = [];
+        foreach ($data['items'] as $row) {
+            if (!\is_array($row) || '' === (string) ($row['shortId'] ?? '')) {
+                continue;
+            }
+            $text = trim(strip_tags((string) ($row['excerpt'] ?? '')));
+            $description = trim(strip_tags((string) ($row['description'] ?? '')));
+            $out[] = [
+                'title' => (string) ($row['title'] ?? ''),
+                'url' => $this->video->url('/watch/'.rawurlencode((string) $row['shortId'])),
+                'channel' => (string) ($row['channel'] ?? ''),
+                'text' => trim(('' !== $description ? 'Описание: '.$description."\n" : '').('' !== $text ? 'Из расшифровки речи: '.$text : '')),
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
+     * Обязательные просмотры по сотрудникам портала: id сотрудника → назначено, выполнено, просрочено.
+     * null — раздел выключен или видеопортал не ответил.
+     *
+     * @return array<int, array{assigned: int, completed: int, overdue: int}>|null
+     */
+    public function assignmentsByUser(): ?array
+    {
+        if (!$this->isAvailable()) {
+            return null;
+        }
+        $response = $this->http->request('GET', $this->baseUrl().'/api/internal/assignments', null, $this->headers(), 10);
+        $data = $response->json();
+        if (!$response->ok() || !\is_array($data['users'] ?? null)) {
+            $this->logger->warning('Видеопортал не сообщил обязательные просмотры', ['error' => $response->describeError()]);
+
+            return null;
+        }
+        $out = [];
+        foreach ($data['users'] as $row) {
+            $id = (int) ($row['portalUserId'] ?? 0);
+            if ($id > 0) {
+                $out[$id] = ['assigned' => (int) ($row['assigned'] ?? 0), 'completed' => (int) ($row['completed'] ?? 0), 'overdue' => (int) ($row['overdue'] ?? 0)];
+            }
+        }
+
+        return $out;
+    }
+
     /** Сбросить кэш числа видео на модерации (тесты, решение модератора). */
     public function forgetPending(): void
     {

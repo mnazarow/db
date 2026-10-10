@@ -17,9 +17,75 @@
 <nav class="tabs tabs--links" aria-label="Вид сводки">
     <a class="tab {{ view == 'documents' ? 'is-active' }}" href="{{ path('admin_acknowledgements') }}"{% if view == 'documents' %} aria-current="page"{% endif %}>По документам</a>
     <a class="tab {{ view == 'departments' ? 'is-active' }}" href="{{ path('admin_acknowledgements', {view: 'departments'}) }}"{% if view == 'departments' %} aria-current="page"{% endif %}>По подразделениям</a>
+    <a class="tab {{ view == 'people' ? 'is-active' }}" href="{{ path('admin_acknowledgements', {view: 'people'}) }}"{% if view == 'people' %} aria-current="page"{% endif %}>По сотрудникам{{ video_on ? ': документы и видео' }}</a>
 </nav>
 
-{% if view == 'departments' %}
+{% if view == 'people' %}
+<div class="card toolbar">
+    <form method="get" class="filters">
+        <input type="hidden" name="view" value="people">
+        <select class="form-control form-control--inline" name="department" aria-label="Подразделение" data-autosubmit>
+            <option value="">Все подразделения</option>
+            {% for name in people.department_names %}<option value="{{ name }}" {{ department == name ? 'selected' }}>{{ name }}</option>{% endfor %}
+            <option value="-" {{ department == '-' ? 'selected' }}>Без подразделения</option>
+        </select>
+        <select class="form-control form-control--inline" name="section" aria-label="Раздел документов" data-autosubmit><option value="">Документы всех разделов</option>{{ m.section_option_tree(tree, section) }}</select>
+        <label class="form-check form-check--inline"><input type="checkbox" name="pending" value="1" {{ only_pending ? 'checked' }} data-autosubmit><span>только с невыполненным</span></label>
+        <noscript><button class="btn btn--ghost btn--small" type="submit">Показать</button></noscript>
+        <a class="btn btn--ghost btn--small" href="{{ path('admin_acknowledgements_people_csv', {section: section ? section.id : null, department: department ?: null, pending: only_pending ? 1 : null}) }}">Выгрузить CSV</a>
+    </form>
+</div>
+{% if video_on and not people.video_available %}
+    <div class="alert alert--warning">Раздел «Видео» не ответил — обязательные просмотры не показаны (проверьте: <code>docportal video status</code>).</div>
+{% endif %}
+<div class="card table-card">
+    <div class="card__head card__head--padded">
+        <h2 class="h-section">Сотрудники <span class="tag">{{ people.totals.people }}</span></h2>
+        <span class="text-muted">не выполнено всего: {{ people.totals.pending }}</span>
+    </div>
+    {% if people.departments|length == 0 %}
+        <div class="table-card__empty">{{ only_pending ? 'Всё назначенное выполнено.' : 'Сотрудникам пока ничего не назначено.' }}</div>
+    {% else %}
+    <div class="table-scroll"><table class="admin-table people-report">
+        <thead>
+            <tr>
+                <th scope="col">Сотрудник</th>
+                <th scope="col" class="col-num">Документы: ознакомился</th>
+                <th scope="col" class="col-num">Просрочено</th>
+                {% if video_on %}<th scope="col" class="col-num">Видео: просмотрел</th><th scope="col" class="col-num">Просрочено</th>{% endif %}
+                <th scope="col" class="col-num">Не выполнено</th>
+            </tr>
+        </thead>
+        {% for group in people.departments %}
+            <tbody>
+                <tr class="people-report__dept">
+                    <th scope="rowgroup" class="{{ group.no_department ? 'text-muted' }}">{{ group.name }} <span class="text-muted">({{ group.people|length }})</span></th>
+                    <td class="col-num">{{ group.docs.confirmed }}/{{ group.docs.assigned }}</td>
+                    <td class="col-num {{ group.docs.overdue > 0 ? 'text-danger' }}">{{ group.docs.overdue }}</td>
+                    {% if video_on %}<td class="col-num">{{ group.video.completed }}/{{ group.video.assigned }}</td><td class="col-num {{ group.video.overdue > 0 ? 'text-danger' }}">{{ group.video.overdue }}</td>{% endif %}
+                    <td class="col-num">{{ group.pending }}</td>
+                </tr>
+                {% for row in group.people %}
+                    <tr class="{{ row.overdue > 0 ? 'is-expired' : (row.pending > 0 ? 'is-soon') }}">
+                        <td>{{ row.user.displayName }} <span class="text-muted">{{ row.user.username }}</span></td>
+                        <td class="col-num {{ row.docs.assigned > 0 and row.docs.confirmed == row.docs.assigned ? 'text-success' }}">{{ row.docs.assigned > 0 ? row.docs.confirmed ~ '/' ~ row.docs.assigned : '—' }}</td>
+                        <td class="col-num {{ row.docs.overdue > 0 ? 'text-danger' }}">{{ row.docs.overdue ?: '' }}</td>
+                        {% if video_on %}
+                            <td class="col-num {{ row.video.assigned > 0 and row.video.completed == row.video.assigned ? 'text-success' }}">{{ row.video.assigned > 0 ? row.video.completed ~ '/' ~ row.video.assigned : '—' }}</td>
+                            <td class="col-num {{ row.video.overdue > 0 ? 'text-danger' }}">{{ row.video.overdue ?: '' }}</td>
+                        {% endif %}
+                        <td class="col-num">{{ row.pending ?: '' }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        {% endfor %}
+    </table></div>
+    {% endif %}
+    <div class="card__padded">
+        <p class="form-help">Документы — ознакомления с последней назначенной редакцией опубликованных документов{{ section ? ' раздела «' ~ section.fullName ~ '»' }}{% if video_on %}; видео — действующие обязательные просмотры раздела «Видео» (выполнено — просмотрены все видео назначения; назначаются в разделе «Видео» → «Назначения», в том числе целым подразделениям){% endif %}. Сверху в каждом подразделении — сотрудники с просроченным и невыполненным.</p>
+    </div>
+</div>
+{% elseif view == 'departments' %}
 <div class="card toolbar">
     <form method="get" class="filters">
         <input type="hidden" name="view" value="departments">

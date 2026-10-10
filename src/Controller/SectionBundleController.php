@@ -13,6 +13,7 @@ use App\Service\Pdf\Bundle\BundleJob;
 use App\Service\Pdf\Bundle\BundleJobStore;
 use App\Service\Pdf\Bundle\SectionBundleBuilder;
 use App\Service\Pdf\PdfFactory;
+use App\Service\Pdf\PdfWatermarker;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -51,6 +52,7 @@ final class SectionBundleController extends AbstractController
     public function __construct(
         private readonly SectionBundleBuilder $builder,
         private readonly BundleJobStore $jobs,
+        private readonly ?PdfWatermarker $watermarker = null,
     ) {
     }
 
@@ -163,7 +165,7 @@ final class SectionBundleController extends AbstractController
 
     #[Route('/{job}/download', name: 'app_section_bundle_download', requirements: ['job' => self::JOB_ID], methods: ['GET'])]
     #[IsGranted(PortalVoter::SECTION_MANAGE, subject: 'section')]
-    public function download(Section $section, string $job, #[CurrentUser] User $user): Response
+    public function download(Section $section, string $job, Request $request, #[CurrentUser] User $user): Response
     {
         $bundle = $this->ownJob($section, $job, $user);
         $path = $this->jobs->result($bundle);
@@ -172,8 +174,17 @@ final class SectionBundleController extends AbstractController
         }
         $name = 'Сборник — '.$section->getName().' — '.$bundle->createdAt->format('Y-m-d').'.pdf';
         $name = (string) preg_replace('~[\\\\/:*?"<>|\x00-\x1f]+~u', ' ', $name);
-        $response = new BinaryFileResponse($path, Response::HTTP_OK, ['Content-Type' => 'application/pdf', 'Cache-Control' => 'private, no-store', 'X-Content-Type-Options' => 'nosniff']);
+        $marked = null !== $this->watermarker && $this->watermarker->marksBundles()
+            ? $this->watermarker->apply($path, $this->watermarker->texts($user, $request->getClientIp(), null, 'Сборник: '.$section->getName()))
+            : null;
+        $response = new BinaryFileResponse($marked ?? $path, Response::HTTP_OK, ['Content-Type' => 'application/pdf', 'Cache-Control' => 'private, no-store', 'X-Content-Type-Options' => 'nosniff']);
         $response->headers->set('Content-Disposition', PdfFactory::disposition($name));
+        if (null !== $marked) {
+            // Копия со знаком своя у каждого скачивания: удаляется после отправки, частями не отдаётся.
+            $response->deleteFileAfterSend(true);
+            $response->headers->set('Accept-Ranges', 'none');
+            $request->headers->remove('Range');
+        }
 
         return $response;
     }

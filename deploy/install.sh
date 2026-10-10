@@ -639,6 +639,7 @@ install_packages_native() {
         debian)
             pkg_install ca-certificates curl gnupg rsync tar gzip unzip cron acl lsb-release git
             pkg_install_optional poppler-utils || warn "Пакет poppler-utils (pdftotext) не установлен — текст из PDF для API и LLM извлекаться не будет."
+            pkg_install_optional qpdf || warn "Пакет qpdf не установлен — водяной знак на PDF будет недоступен."
             install_optional_tools
             install_php_debian
             pkg_install nginx
@@ -647,6 +648,7 @@ install_packages_native() {
         rhel)
             pkg_install ca-certificates curl rsync tar gzip unzip cronie policycoreutils-python-utils git
             pkg_install_optional poppler-utils || warn "Пакет poppler-utils (pdftotext) не установлен — текст из PDF для API и LLM извлекаться не будет."
+            pkg_install_optional qpdf || warn "Пакет qpdf не установлен — водяной знак на PDF будет недоступен."
             install_optional_tools
             install_php_rhel
             pkg_install nginx

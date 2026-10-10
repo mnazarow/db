@@ -35,6 +35,7 @@ use Symfony\Component\Validator\Constraints as Assert;
 #[ORM\UniqueConstraint(name: 'uniq_user_username', columns: ['username'])]
 #[ORM\UniqueConstraint(name: 'uniq_user_sso_subject', columns: ['sso_subject'])]
 #[ORM\Index(name: 'idx_user_source', columns: ['auth_source'])]
+#[ORM\Index(name: 'idx_user_employee_number', columns: ['employee_number'])]
 #[UniqueEntity(fields: ['username'], message: 'Пользователь с таким логином уже существует.')]
 class User implements UserInterface, PasswordAuthenticatedUserInterface, EquatableInterface
 {
@@ -90,6 +91,21 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface, Equatab
     #[ORM\Column(length: 128, nullable: true)]
     #[Assert\Length(max: 128)]
     private ?string $department = null;
+
+    /** Должность (из 1С:ЗУП или вручную). */
+    #[ORM\Column(name: 'job_title', length: 128, nullable: true)]
+    #[Assert\Length(max: 128)]
+    private ?string $jobTitle = null;
+
+    /** Табельный номер: по нему выгрузка из кадровой системы находит сотрудника, если в ней нет логина. */
+    #[ORM\Column(name: 'employee_number', length: 32, nullable: true)]
+    #[Assert\Length(max: 32)]
+    private ?string $employeeNumber = null;
+
+    /** Непосредственный руководитель: видит ознакомления и просмотры своих сотрудников («Мои сотрудники»). */
+    #[ORM\ManyToOne(targetEntity: self::class)]
+    #[ORM\JoinColumn(name: 'manager_id', nullable: true, onDelete: 'SET NULL')]
+    private ?User $manager = null;
 
     /** @var list<string> */
     #[ORM\Column(type: Types::JSON)]
@@ -233,6 +249,54 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface, Equatab
     {
         $department = null === $department ? '' : trim($department);
         $this->department = '' === $department ? null : mb_substr($department, 0, 128);
+
+        return $this;
+    }
+
+    public function getJobTitle(): ?string
+    {
+        return $this->jobTitle;
+    }
+
+    public function setJobTitle(?string $jobTitle): static
+    {
+        $jobTitle = trim((string) preg_replace('/\s+/u', ' ', (string) $jobTitle));
+        $this->jobTitle = '' === $jobTitle ? null : mb_substr($jobTitle, 0, 128);
+
+        return $this;
+    }
+
+    public function getEmployeeNumber(): ?string
+    {
+        return $this->employeeNumber;
+    }
+
+    public function setEmployeeNumber(?string $employeeNumber): static
+    {
+        $employeeNumber = trim((string) $employeeNumber);
+        $this->employeeNumber = '' === $employeeNumber ? null : mb_substr($employeeNumber, 0, 32);
+
+        return $this;
+    }
+
+    public function getManager(): ?User
+    {
+        return $this->manager;
+    }
+
+    /**
+     * Руководитель. Сам себе и «по кругу» (руководитель подчиняется своему сотруднику) — нельзя.
+     *
+     * @throws \DomainException
+     */
+    public function setManager(?User $manager): static
+    {
+        for ($m = $manager, $depth = 0; null !== $m && $depth < 64; $m = $m->getManager(), ++$depth) {
+            if ($m === $this || (null !== $this->id && $m->getId() === $this->id)) {
+                throw new \DomainException(null === $manager || $manager === $this ? 'Сотрудник не может быть руководителем самому себе.' : \sprintf('«%s» не может быть руководителем «%s»: он сам подчиняется «%s».', $manager->getDisplayName(), $this->getDisplayName(), $this->getDisplayName()));
+            }
+        }
+        $this->manager = $manager;
 
         return $this;
     }

@@ -111,8 +111,11 @@ final class UserManager
             ->setPassword('')
             ->setMustChangePassword(false)
             ->setDisplayName($info->displayName)
-            ->setLdapDn($info->dn)
-            ->setDepartment($info->department);
+            ->setLdapDn($info->dn);
+        // Пустое подразделение в каталоге не стирает заполненное в портале (например, загруженное из 1С:ЗУП).
+        if (null !== $info->department && '' !== trim($info->department)) {
+            $user->setDepartment($info->department);
+        }
         if (null !== $info->email) {
             $user->setEmail($info->email);
         }

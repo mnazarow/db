@@ -242,6 +242,7 @@ final class IntegrationsController extends AbstractController
                 'max_input_chars' => (int) $request->request->get('max_input_chars', PortalSettings::LLM_DEFAULT_MAX_INPUT_CHARS),
                 'timeout' => (int) $request->request->get('timeout', PortalSettings::LLM_DEFAULT_TIMEOUT),
                 'auto_describe' => (bool) $request->request->get('auto_describe', false),
+                'answers' => (bool) $request->request->get('answers', false),
                 'temperature' => (string) $request->request->get('temperature', (string) PortalSettings::LLM_DEFAULT_TEMPERATURE),
             ], $user);
             if ((bool) $request->request->get('clear_api_key', false)) {
