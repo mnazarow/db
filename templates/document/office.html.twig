@@ -1,0 +1,32 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}{{ edit ? 'Редактирование' : 'Просмотр' }} — {{ document.title }}{% endblock %}
+{% block body_class %}page-office{% endblock %}
+
+{% block body %}
+<section class="office-bar">
+    <div class="container office-bar__row">
+        <div class="office-bar__title">
+            <div class="eyebrow">{{ edit ? 'Редактирование онлайн' : 'Просмотр в редакторе' }} · версия {{ version.number }}</div>
+            <h1 class="h-section">{{ document.title }}</h1>
+        </div>
+        <div class="hero__actions">
+            <a class="btn btn--ghost btn--small" href="{{ path('app_document_show', {id: document.id}) }}">← К документу</a>
+        </div>
+    </div>
+    {% if edit %}
+        <div class="container">
+            <p class="office-bar__hint">Изменения сохраняются в портале новой версией документа после того, как все участники закроют редактор (обычно в течение минуты).{% if pending %} Вы правите редакцию {{ version.number }}, которая ещё ждёт согласования.{% endif %}</p>
+        </div>
+    {% endif %}
+</section>
+<div class="office-frame" data-onlyoffice data-api="{{ api_url }}">
+    <div class="alert alert--danger office-frame__error" data-onlyoffice-error hidden>Не удалось загрузить редактор с сервера документов ({{ api_url|split('/web-apps')|first }}). Проверьте, что сервер документов доступен с вашего компьютера, или скачайте файл.</div>
+    <div id="onlyoffice-editor"></div>
+</div>
+<script type="application/json" id="onlyoffice-config">{{ config|json_encode(constant('JSON_UNESCAPED_UNICODE') b-or constant('JSON_HEX_TAG') b-or constant('JSON_HEX_AMP'))|raw }}</script>
+{% endblock %}
+
+{% block javascripts %}
+<script src="{{ asset('js/onlyoffice.js') }}" defer></script>
+{% endblock %}

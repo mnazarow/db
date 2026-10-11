@@ -1,0 +1,2 @@
+{# Ошибки формы целиком (устаревший CSRF-токен, общие проверки) — у отдельных полей они выводятся рядом с полем. #}
+{% if form.vars.errors|length > 0 %}<div class="alert alert--danger" role="alert">{{ form_errors(form) }}</div>{% endif %}

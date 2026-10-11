@@ -3,7 +3,9 @@
 {% block title %}План импорта{% endblock %}
 {% block admin_title %}План импорта: {{ plan.label }}{% endblock %}
 {% block admin_actions %}
-    <a class="btn btn--ghost" href="{{ path('admin_import', values|filter(v => v is not same as(false) and v is not same as('') and v is not same as(0))) }}">← Изменить параметры</a>
+    {# Все параметры передаются явно (флажки — 1/0): отброшенные «ложь» и 0 вернули бы в форму значения по умолчанию
+       (например, срок «бессрочно» превратился бы в 12 месяцев, снятый флажок «обновлять» — в поставленный). #}
+    <a class="btn btn--ghost" href="{{ path('admin_import', values|map(v => v is same as(true) ? 1 : (v is same as(false) ? 0 : v))) }}">← Изменить параметры</a>
 {% endblock %}
 
 {% block admin_body %}

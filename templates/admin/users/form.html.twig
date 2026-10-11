@@ -25,6 +25,10 @@
             {{ form_row(form.displayName, ql.get('ldap_name') ? {value: ql.get('ldap_name')} : {}) }}
             {{ form_row(form.email, ql.get('ldap_email') ? {value: ql.get('ldap_email')} : {}) }}
             {{ form_row(form.department, ql.get('ldap_dept') ? {value: ql.get('ldap_dept')} : {}) }}
+            {{ form_row(form.jobTitle) }}
+            {{ form_row(form.employeeNumber) }}
+            {{ form_row(form.managerLogin) }}
+            <datalist id="user-logins">{% for u in logins|default([]) %}{% if u.login != user.username %}<option value="{{ u.login }}">{{ u.name }}</option>{% endif %}{% endfor %}</datalist>
             {% if form.authSource is defined %}
                 <div class="form-row">
                     <div class="form-label">{{ form_label(form.authSource) }}</div>
@@ -42,12 +46,25 @@
                 <a class="btn btn--ghost" href="{{ path('admin_users') }}">Отмена</a>
             </div>
         {{ form_end(form) }}
+        {% if not is_new and user.ssoSubject %}
+            <div class="sso-binding">
+                <h3 class="h-small">Вход через SSO</h3>
+                <p class="form-help">Учётная запись привязана к пользователю провайдера <code>{{ user.ssoSubject }}</code>. Если у провайдера сменился адрес (издатель) или идентификатор сотрудника, снимите привязку — при следующем входе через SSO запись привяжется заново.</p>
+                <form method="post" action="{{ path('admin_user_sso_unbind', {id: user.id}) }}" class="inline-form" data-confirm="Снять привязку учётной записи «{{ user.username }}» к SSO? Следующий вход через SSO с этим логином привяжет её к новому пользователю провайдера.">
+                    <input type="hidden" name="_token" value="{{ csrf_token('user_' ~ user.id) }}">
+                    <button type="submit" class="btn btn--ghost btn--small">Снять привязку к SSO</button>
+                </form>
+            </div>
+        {% endif %}
     </div>
     <div class="card card--info">
         <h2 class="h-section">Роли и права</h2>
-        <p><b>Пользователь</b> — читает и скачивает опубликованные документы во всех разделах, пользуется поиском.</p>
-        <p><b>Модератор</b> — пользователь, назначенный на раздел («Разделы» → «Модераторы»): создаёт и публикует документы, загружает версии, управляет подразделами. Права действуют на все вложенные подразделы.</p>
-        <p><b>Администратор</b> — всё перечисленное во всех разделах плюс панель администратора: пользователи, модераторы, статистика, настройки.</p>
+        <p><b>Пользователь</b> — читает и скачивает опубликованные документы во всех разделах, пользуется поиском, смотрит одобренные видео.</p>
+        <p><b>Помощник маркетолога</b> — добавляет документы в любой раздел, загружает новые редакции, правит строки таблиц материалов, загружает видео; всё это публикуется после одобрения маркетолога (страница «Модерация»).</p>
+        <p><b>Маркетолог</b> — модератор всех разделов и раздела «Видео»: публикует сразу и решает по материалам на модерации.</p>
+        <p><b>Модератор раздела</b> — не роль, а назначение («Разделы» → «Модераторы»): создаёт и публикует документы своего раздела и всех вложенных, решает по материалам на модерации из них. Его можно дать сотруднику с любой ролью.</p>
+        <p><b>Администратор</b> — всё перечисленное во всех разделах плюс панель администратора: пользователи, роли, модераторы, статистика, настройки.</p>
+        {% if ldap_enabled %}<p class="text-muted">Если в настройках входа через домен заданы группы маркетологов и помощников (LDAP_MARKETER_GROUP, LDAP_ASSISTANT_GROUP), роль доменного сотрудника обновляется по группам при каждом входе.</p>{% endif %}
         {% if not is_new and moderated is defined %}
             <h3 class="h-small">Модерирует разделы</h3>
             {% if moderated|length == 0 %}<p class="text-muted">Назначений нет.</p>{% else %}

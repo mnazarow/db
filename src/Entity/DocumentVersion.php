@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Entity;
 
 use App\Repository\DocumentVersionRepository;
+use Doctrine\Common\Collections\ArrayCollection;
+use Doctrine\Common\Collections\Collection;
 use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\Mapping as ORM;
 
@@ -51,9 +53,14 @@ class DocumentVersion
     #[ORM\Column(length: 64, nullable: true)]
     private ?string $checksum = null;
 
-    /** HTML-содержимое страницы (для версий-страниц), уже очищенное от опасной разметки. */
-    #[ORM\Column(type: Types::TEXT, length: 16777215, nullable: true)]
-    private ?string $content = null;
+    /**
+     * HTML-содержимое страницы (для версий-страниц) — в отдельной таблице и загружается только при обращении
+     * (коллекция из одного элемента: внешний ключ со стороны текста удаляет его вместе с версией).
+     *
+     * @var Collection<int, DocumentVersionContent>
+     */
+    #[ORM\OneToMany(targetEntity: DocumentVersionContent::class, mappedBy: 'version', cascade: ['persist', 'detach'], fetch: 'LAZY', orphanRemoval: true)]
+    private Collection $bodies;
 
     #[ORM\Column(type: Types::TEXT, nullable: true)]
     private ?string $changeNote = null;
@@ -73,6 +80,7 @@ class DocumentVersion
         $this->document = $document;
         $this->number = $number;
         $this->createdAt = new \DateTimeImmutable();
+        $this->bodies = new ArrayCollection();
         $document->addVersion($this);
     }
 
@@ -180,12 +188,26 @@ class DocumentVersion
 
     public function getContent(): ?string
     {
-        return $this->content;
+        $body = $this->bodies->first();
+
+        return false === $body ? null : $body->getHtml();
     }
 
     public function setContent(?string $content): static
     {
-        $this->content = $content;
+        $body = $this->bodies->first();
+        if (null === $content) {
+            if (false !== $body) {
+                $this->bodies->removeElement($body);
+            }
+
+            return $this;
+        }
+        if (false === $body) {
+            $this->bodies->add(new DocumentVersionContent($this, $content));
+        } else {
+            $body->setHtml($content);
+        }
 
         return $this;
     }
@@ -193,10 +215,11 @@ class DocumentVersion
     /** Текст страницы без разметки (для поиска и сравнения версий). */
     public function getPlainText(): string
     {
-        if (null === $this->content) {
+        $content = $this->getContent();
+        if (null === $content) {
             return '';
         }
-        $html = preg_replace('#</(p|div|li|h[1-6]|tr|blockquote|pre)>#i', "$0\n", $this->content) ?? $this->content;
+        $html = preg_replace('#</(p|div|li|h[1-6]|tr|blockquote|pre)>#i', "$0\n", $content) ?? $content;
         $html = preg_replace('#<br\s*/?>#i', "\n", $html) ?? $html;
         $text = html_entity_decode(strip_tags($html), \ENT_QUOTES | \ENT_HTML5, 'UTF-8');
         $text = preg_replace("/[ \t]+/u", ' ', $text) ?? $text;

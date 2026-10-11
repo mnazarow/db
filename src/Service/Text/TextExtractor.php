@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\Service\Text;
 
 use App\Entity\DocumentVersion;
+use App\Repository\DocumentTextRepository;
 use App\Service\FileStorage;
+use App\Service\Process\Shell;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -22,6 +24,8 @@ final class TextExtractor
     public const STATUS_UNSUPPORTED = 'unsupported'; // формат не поддерживается
     public const STATUS_MISSING = 'missing';         // файл отсутствует в хранилище
     public const STATUS_ERROR = 'error';
+    /** Нужен OCR, но он выполняется только в фоне (задание cron app:search:reindex): текст появится позже. */
+    public const STATUS_PENDING = 'pending';
 
     private const PLAIN = ['txt', 'md', 'markdown', 'csv', 'tsv', 'json', 'xml', 'yaml', 'yml', 'log', 'ini', 'conf', 'sql', 'rst'];
     private const HTML = ['html', 'htm', 'xhtml'];
@@ -36,7 +40,13 @@ final class TextExtractor
     /** Максимальный размер одной записи внутри архива docx/xlsx/pptx/odt (защита от «зип-бомбы»). */
     private const MAX_ENTRY_BYTES = 33_554_432;
 
+    /** Больше общих строк книги Excel не разбираем (остальные ячейки считаются пустыми). */
+    private const MAX_SHARED_STRINGS = 300_000;
+
     private ?bool $pdftotext = null;
+
+    /** Распознавание в этом процессе: в консоли (cron) — да, в веб-запросе — нет (оно может идти минутами). */
+    private ?bool $ocrAllowed = null;
 
     public function __construct(
         private readonly FileStorage $storage,
@@ -44,6 +54,7 @@ final class TextExtractor
         private readonly string $cacheDir,
         private readonly string $pdftotextBin = 'pdftotext',
         private readonly ?OcrReader $ocr = null,
+        private readonly ?DocumentTextRepository $texts = null,
     ) {
     }
 
@@ -55,6 +66,17 @@ final class TextExtractor
         return \in_array($ext, self::PLAIN, true) || \in_array($ext, self::HTML, true) || \in_array($ext, self::OFFICE, true)
             || ('pdf' === $ext && $this->hasPdftotext())
             || (\in_array($ext, OcrReader::IMAGE_EXTENSIONS, true) && $this->ocrEnabled());
+    }
+
+    /** Разрешить или запретить распознавание в текущем процессе (по умолчанию — только в консоли). */
+    public function allowOcr(?bool $allowed): void
+    {
+        $this->ocrAllowed = $allowed;
+    }
+
+    private function ocrAllowedHere(): bool
+    {
+        return $this->ocrAllowed ?? (\PHP_SAPI === 'cli');
     }
 
     /** Включено ли распознавание сканов (картинки и PDF без текстового слоя). */
@@ -82,7 +104,8 @@ final class TextExtractor
     {
         if (null === $this->pdftotext) {
             $this->pdftotext = false;
-            if (\function_exists('exec')) {
+            // Внешние программы запускаются через proc_open (Shell::run).
+            if (\function_exists('proc_open')) {
                 $bin = str_contains($this->pdftotextBin, '/') ? $this->pdftotextBin : (self::which($this->pdftotextBin) ?? '');
                 $this->pdftotext = '' !== $bin && is_executable($bin);
             }
@@ -111,7 +134,10 @@ final class TextExtractor
         if (!$this->supports($ext)) {
             return ['status' => self::STATUS_UNSUPPORTED, 'text' => null, 'chars' => 0, 'cached' => false];
         }
-        $cacheFile = $this->cacheDir.'/'.$version->getId().'-'.substr((string) ($version->getChecksum() ?: md5_file($path)), 0, 16).'.txt';
+        // В ключ кэша входит режим распознавания: после включения OCR (или смены языков) сканы
+        // извлекаются заново, а не отдаются из кэша пустыми.
+        $ocrKey = ('pdf' === $ext || \in_array($ext, OcrReader::IMAGE_EXTENSIONS, true)) && $this->ocrEnabled() ? '-ocr-'.substr(md5((string) $this->ocr?->languages()), 0, 6) : '';
+        $cacheFile = $this->cacheDir.'/'.$version->getId().'-'.substr((string) ($version->getChecksum() ?: md5_file($path)), 0, 16).$ocrKey.'.txt';
         if (is_file($cacheFile)) {
             $text = (string) file_get_contents($cacheFile);
 
@@ -119,6 +145,17 @@ final class TextExtractor
         }
         try {
             $text = $this->extractFile($path, $ext) ?? '';
+        } catch (OcrDeferredException $e) {
+            // Скан: распознавание выполняет фоновое задание. Его результат хранится в индексе (document_text):
+            // файловый кэш у веб-процесса свой — в Docker это другой контейнер, а в обычной установке кэш
+            // очищается при каждом обновлении. Поэтому уже распознанный текст берётся из индекса.
+            $indexed = $this->indexedText($version);
+            if (null !== $indexed) {
+                return $indexed;
+            }
+            $partial = trim($e->textLayer);
+
+            return ['status' => self::STATUS_PENDING, 'text' => '' === $partial ? null : $partial, 'chars' => mb_strlen($partial), 'cached' => false];
         } catch (\Throwable $e) {
             $this->logger->warning('Не удалось извлечь текст из файла', ['version' => $version->getId(), 'file' => $version->getOriginalName(), 'error' => $e->getMessage()]);
 
@@ -136,6 +173,29 @@ final class TextExtractor
         return ['status' => '' === $text ? self::STATUS_EMPTY : self::STATUS_OK, 'text' => '' === $text ? null : $text, 'chars' => mb_strlen($text), 'cached' => false];
     }
 
+    /**
+     * Текст версии из индекса полнотекстового поиска, если он получен для этой же редакции и не ждёт
+     * распознавания.
+     *
+     * @return array{status: string, text: ?string, chars: int, cached: bool}|null
+     */
+    private function indexedText(DocumentVersion $version): ?array
+    {
+        $row = $this->texts?->findForDocument($version->getDocument());
+        if (null === $row || !\in_array($row->getStatus(), [self::STATUS_OK, self::STATUS_EMPTY], true)) {
+            return null;
+        }
+        // Номер 0 — индекс помечен устаревшим («Переиндексировать всё»): текст относится к текущей редакции.
+        $sameVersion = $row->getVersionNumber() === $version->getNumber()
+            || (0 === $row->getVersionNumber() && $version->getDocument()->getCurrentVersion()?->getId() === $version->getId());
+        if (!$sameVersion) {
+            return null;
+        }
+        $text = $row->getContent();
+
+        return ['status' => '' === $text ? self::STATUS_EMPTY : self::STATUS_OK, 'text' => '' === $text ? null : $text, 'chars' => mb_strlen($text), 'cached' => true];
+    }
+
     /** Извлекает текст из файла на диске по расширению; null — формат не поддерживается. */
     public function extractFile(string $path, string $extension): ?string
     {
@@ -144,7 +204,7 @@ final class TextExtractor
             \in_array($ext, self::PLAIN, true) => self::toUtf8(self::readHead($path)),
             \in_array($ext, self::HTML, true) => self::htmlToText(self::toUtf8(self::readHead($path))),
             'pdf' === $ext => $this->pdfToTextWithOcr($path),
-            \in_array($ext, OcrReader::IMAGE_EXTENSIONS, true) && $this->ocrEnabled() => (string) $this->ocr?->readImage($path),
+            \in_array($ext, OcrReader::IMAGE_EXTENSIONS, true) && $this->ocrEnabled() => $this->ocrAllowedHere() ? (string) $this->ocr?->readImage($path) : throw new OcrDeferredException(''),
             'docx' === $ext => $this->docxToText($path),
             'xlsx' === $ext => $this->xlsxToText($path),
             'pptx' === $ext => $this->pptxToText($path),
@@ -223,18 +283,14 @@ final class TextExtractor
             throw new \RuntimeException('pdftotext (poppler-utils) не установлен.');
         }
         $bin = str_contains($this->pdftotextBin, '/') ? $this->pdftotextBin : (self::which($this->pdftotextBin) ?? $this->pdftotextBin);
-        $cmd = \sprintf('%s -layout -enc UTF-8 -q %s - 2>/dev/null', escapeshellarg($bin), escapeshellarg($path));
-        if (null !== self::which('timeout')) {
-            $cmd = 'timeout 120 '.$cmd;
+        // Вывод ограничен: из огромного PDF берётся начало текста (он всё равно обрезается до MAX_CHARS),
+        // а не весь текст в память.
+        $run = Shell::run([$bin, '-layout', '-enc', 'UTF-8', '-q', $path, '-'], 120, null, [], self::MAX_READ_BYTES);
+        if (0 !== $run['code'] && '' === trim($run['out'])) {
+            throw new \RuntimeException(\sprintf('pdftotext завершился с кодом %d.', $run['code']));
         }
-        $output = [];
-        $code = 0;
-        exec($cmd, $output, $code);
-        $text = implode("\n", $output);
-        if (0 !== $code && '' === trim($text)) {
-            throw new \RuntimeException(\sprintf('pdftotext завершился с кодом %d.', $code));
-        }
-        return $text;
+
+        return $run['out'];
     }
 
     /**
@@ -249,6 +305,9 @@ final class TextExtractor
         $text = str_replace("\f", "\n\n", $raw);
         $text = preg_replace('/[ ]{2,}/', ' ', $text) ?? $text;
         if (null !== $this->ocr && $this->ocr->isEnabled() && $this->ocr->looksLikeScan($text, $pages)) {
+            if (!$this->ocrAllowedHere()) {
+                throw new OcrDeferredException($text);
+            }
             $recognized = trim($this->ocr->readPdf($path));
             if ('' !== $recognized) {
                 return $recognized;
@@ -265,7 +324,11 @@ final class TextExtractor
         // Основной текст, затем колонтитулы и сноски (по возрастанию номера).
         $names = self::zipEntries($zip, static fn (string $n): bool => 'word/document.xml' === $n || (bool) preg_match('#^word/(header|footer|footnotes|endnotes)\d*\.xml$#', $n));
         usort($names, static fn (string $a, string $b): int => ('word/document.xml' === $a ? -1 : ('word/document.xml' === $b ? 1 : strcmp($a, $b))));
+        $budget = self::MAX_CHARS;
         foreach ($names as $name) {
+            if ($budget <= 0) {
+                break;
+            }
             $xml = self::zipRead($zip, $name);
             $xml = preg_replace('#<w:tab/>#', "\t", $xml) ?? $xml;
             $xml = preg_replace('#<w:(br|cr)\b[^>]*/>#', "\n", $xml) ?? $xml;
@@ -273,23 +336,31 @@ final class TextExtractor
             $xml = preg_replace_callback('#<w:tc\b[^>]*>(.*?)</w:tc>#s', static fn (array $m): string => str_replace('</w:p>', ' ', $m[1])."\t", $xml) ?? $xml;
             $xml = preg_replace('#</w:tr>#', "\n", $xml) ?? $xml;
             $xml = preg_replace('#</w:p>#', "\n", $xml) ?? $xml;
-            $parts[] = self::xmlText($xml);
+            $part = self::xmlText($xml);
+            unset($xml);
+            $budget -= mb_strlen($part);
+            $parts[] = $part;
         }
         $zip->close();
 
         return implode("\n\n", array_filter(array_map('trim', $parts)));
     }
 
+    /**
+     * Текст книги Excel. Строки перебираются по одной (без массива всех совпадений на весь лист) и только
+     * пока не набран MAX_CHARS: книга на сотни тысяч строк не должна исчерпать память PHP.
+     */
     private function xlsxToText(string $path): string
     {
         $zip = self::openZip($path);
         $shared = [];
         $sst = self::zipRead($zip, 'xl/sharedStrings.xml');
-        if ('' !== $sst && preg_match_all('#<si>(.*?)</si>#s', $sst, $m)) {
-            foreach ($m[1] as $si) {
-                $shared[] = self::xmlText($si);
-            }
+        $offset = 0;
+        while (\count($shared) < self::MAX_SHARED_STRINGS && 1 === preg_match('#<si>(.*?)</si>#s', $sst, $m, \PREG_OFFSET_CAPTURE, $offset)) {
+            $shared[] = self::xmlText($m[1][0]);
+            $offset = $m[0][1] + \strlen($m[0][0]);
         }
+        unset($sst);
         $sheetNames = [];
         $workbook = self::zipRead($zip, 'xl/workbook.xml');
         if ('' !== $workbook && preg_match_all('#<sheet\b[^>]*\bname="([^"]*)"[^>]*\br:id="([^"]+)"#', $workbook, $m, \PREG_SET_ORDER)) {
@@ -305,33 +376,44 @@ final class TextExtractor
         $entries = self::zipEntries($zip, static fn (string $n): bool => (bool) preg_match('#^xl/worksheets/sheet\d+\.xml$#', $n));
         natsort($entries);
         $out = [];
+        $budget = self::MAX_CHARS;
         foreach ($entries as $entry) {
+            if ($budget <= 0) {
+                break;
+            }
             $xml = self::zipRead($zip, $entry);
             $rows = [];
-            if (preg_match_all('#<row\b[^>]*>(.*?)</row>#s', $xml, $rm)) {
-                foreach ($rm[1] as $rowXml) {
-                    $cells = [];
-                    if (preg_match_all('#<c\b([^>]*?)(?:/>|>(.*?)</c>)#s', $rowXml, $cm, \PREG_SET_ORDER)) {
-                        foreach ($cm as $cell) {
-                            $attrs = $cell[1];
-                            $inner = $cell[2] ?? '';
-                            $type = preg_match('#\bt="([^"]+)"#', $attrs, $tm) ? $tm[1] : '';
-                            if ('s' === $type) {
-                                $value = preg_match('#<v>(.*?)</v>#s', $inner, $vm) ? ($shared[(int) $vm[1]] ?? '') : '';
-                            } elseif ('inlineStr' === $type) {
-                                $value = self::xmlText($inner);
-                            } else {
-                                $value = preg_match('#<v>(.*?)</v>#s', $inner, $vm) ? html_entity_decode($vm[1], \ENT_QUOTES | \ENT_XML1, 'UTF-8') : '';
-                            }
-                            $cells[] = trim($value);
+            $offset = 0;
+            // Пустая строка листа записывается как <row r="5"/> — её пропускаем, не «склеивая» со следующей.
+            while ($budget > 0 && 1 === preg_match('#<row\b[^>]*?(?:/>|>(.*?)</row>)#s', $xml, $rm, \PREG_OFFSET_CAPTURE, $offset)) {
+                $offset = $rm[0][1] + \strlen($rm[0][0]);
+                $rowXml = $rm[1][0] ?? '';
+                if ('' === $rowXml) {
+                    continue;
+                }
+                $cells = [];
+                if (preg_match_all('#<c\b([^>]*?)(?:/>|>(.*?)</c>)#s', $rowXml, $cm, \PREG_SET_ORDER)) {
+                    foreach ($cm as $cell) {
+                        $attrs = $cell[1];
+                        $inner = $cell[2] ?? '';
+                        $type = preg_match('#\bt="([^"]+)"#', $attrs, $tm) ? $tm[1] : '';
+                        if ('s' === $type) {
+                            $value = preg_match('#<v>(.*?)</v>#s', $inner, $vm) ? ($shared[(int) $vm[1]] ?? '') : '';
+                        } elseif ('inlineStr' === $type) {
+                            $value = self::xmlText($inner);
+                        } else {
+                            $value = preg_match('#<v>(.*?)</v>#s', $inner, $vm) ? html_entity_decode($vm[1], \ENT_QUOTES | \ENT_XML1, 'UTF-8') : '';
                         }
-                    }
-                    $line = rtrim(implode("\t", $cells));
-                    if ('' !== trim($line)) {
-                        $rows[] = $line;
+                        $cells[] = trim($value);
                     }
                 }
+                $line = rtrim(implode("\t", $cells));
+                if ('' !== trim($line)) {
+                    $rows[] = $line;
+                    $budget -= mb_strlen($line) + 1;
+                }
             }
+            unset($xml);
             if ([] !== $rows) {
                 $title = $sheetNames[$entry] ?? null;
                 $out[] = (null !== $title ? '['.$title."]\n" : '').implode("\n", $rows);

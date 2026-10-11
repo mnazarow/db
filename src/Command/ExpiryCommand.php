@@ -39,6 +39,7 @@ final class ExpiryCommand extends Command
             ['Уведомлений сформировано', $stats['notified']],
             ['Пропущено (уже уведомлены)', $stats['skipped']],
             ['Писем отправлено', $stats['emails']],
+            ['Не доставлено (повтор при следующей проверке)', $stats['failed']],
             ['Получатели', implode(', ', $stats['recipients']) ?: '—'],
         ]);
         if ($input->getOption('dry-run')) {

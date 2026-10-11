@@ -1,0 +1,119 @@
+{% extends 'admin/_layout.html.twig' %}
+
+{% block title %}Оргструктура из 1С{% endblock %}
+{% block admin_title %}Оргструктура из кадровой системы{% endblock %}
+{% block admin_actions %}
+    <a class="btn btn--ghost" href="{{ path('admin_users') }}">Пользователи</a>
+{% endblock %}
+
+{% macro options_fields(options) %}
+    <div class="form-row form-row--check">
+        <label class="form-check"><input type="checkbox" name="deactivate" value="1" {{ options.deactivate ? 'checked' }}><span>Блокировать уволенных (по столбцу «Дата увольнения», «Уволен» или «Состояние»)</span></label>
+    </div>
+    <div class="form-row form-row--check">
+        <label class="form-check"><input type="checkbox" name="create" value="1" {{ options.create ? 'checked' }}><span>Создавать учётные записи для сотрудников с логином, которых нет в портале</span></label>
+    </div>
+    <div class="form-row form-row--check">
+        <label class="form-check"><input type="checkbox" name="names" value="1" {{ options.names ? 'checked' }}><span>Заменять ФИО данными из файла (без флажка ФИО заполняется, только если пустое)</span></label>
+    </div>
+{% endmacro %}
+
+{% block admin_body %}
+{% if report is null %}
+<div class="card card--form">
+    <h2 class="h-section">Загрузить выгрузку</h2>
+    <p class="form-help">Портал обновит у сотрудников подразделение, должность, табельный номер и непосредственного руководителя.
+        Руководитель увидит ознакомления и обязательные просмотры своих сотрудников на странице «Мои сотрудники».
+        Сначала будет показано, что изменится; до подтверждения ничего не сохраняется.</p>
+    <form method="post" action="{{ path('admin_users_org_import') }}" enctype="multipart/form-data" class="form">
+        <input type="hidden" name="_token" value="{{ csrf_token('org_import') }}">
+        <div class="form-row">
+            <label class="form-label" for="org-file">Файл CSV или Excel</label>
+            <input class="form-control" type="file" id="org-file" name="file" accept=".csv,.txt,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
+            <div class="form-help">До 20 МБ. CSV — в UTF-8 или Windows-1251 (как сохраняют 1С и Excel), разделитель «;», «,» или табуляция.</div>
+        </div>
+        {{ _self.options_fields(options) }}
+        <div class="form-actions"><button type="submit" class="btn btn--pill">Проверить файл</button></div>
+    </form>
+</div>
+
+<div class="card">
+    <h2 class="h-section">Какие столбцы нужны</h2>
+    <p>Строка заголовков может быть не первой — над ней в отчётах 1С бывают название и дата. Столбцы узнаются по названию:</p>
+    <ul>
+        <li><b>Логин</b> (учётная запись AD), <b>Почта</b>, <b>Табельный номер</b> или <b>ФИО</b> («Сотрудник», «Физическое лицо») — по ним портал находит сотрудника, в этом порядке; ФИО — только если такое одно;</li>
+        <li><b>Подразделение</b>, <b>Должность</b>;</li>
+        <li><b>Руководитель</b> — логин, почта, табельный номер, ФИО или «Фамилия И.О.» руководителя;</li>
+        <li><b>Дата увольнения</b>, <b>Уволен</b> (да/нет) или <b>Состояние</b> («Уволен») — необязательно.</li>
+    </ul>
+    <p class="form-help">В 1С:ЗУП подойдёт отчёт «Кадровые данные сотрудников» или «Списочный состав» с нужными колонками —
+        сохраните его как «Лист Excel 2007» или CSV. Для регулярной загрузки по расписанию есть команда
+        <code>docportal console app:org:import файл.csv</code> (параметры — <code>--help</code>; пробный запуск — <code>--dry-run</code>).</p>
+</div>
+{% else %}
+<div class="card">
+    <div class="card__head">
+        <h2 class="h-section">{{ report.dry_run ? 'Что изменится' : 'Загрузка выполнена' }}{% if file_name %} · {{ file_name }}{% endif %}</h2>
+        {% if report.dry_run %}<span class="badge badge--progress"><span class="badge__dot"></span>пробная загрузка — ничего не сохранено</span>{% else %}<span class="badge badge--done"><span class="badge__dot"></span>сохранено</span>{% endif %}
+    </div>
+    <dl class="meta meta--org">
+        <div class="meta__wide"><dt>Узнанные столбцы</dt><dd>{{ report.columns|join(', ') }}</dd></div>
+        <div><dt>Строк в файле</dt><dd>{{ report.rows }}</dd></div>
+        <div><dt>Найдено сотрудников</dt><dd>{{ report.matched }}{% if report.created %}, {{ report.dry_run ? 'будет создано' : 'создано' }}: {{ report.created }}{% endif %}</dd></div>
+        <div><dt>{{ report.dry_run ? 'Изменится' : 'Изменено' }}</dt><dd>{{ report.updated }} (без изменений — {{ report.unchanged }})</dd></div>
+        <div><dt>Руководители</dt><dd>{{ report.dry_run ? 'будет назначено' : 'назначено' }}: {{ report.managers }}</dd></div>
+        <div><dt>Уволенные</dt><dd>{{ report.dry_run ? 'будет заблокировано' : 'заблокировано' }}: {{ report.deactivated }}</dd></div>
+        <div><dt>Пропущено строк</dt><dd>{{ report.skipped }}</dd></div>
+    </dl>
+    {% if report.dry_run and token %}
+        <form method="post" action="{{ path('admin_users_org_import_apply') }}" class="form meta--spaced">
+            <input type="hidden" name="_token" value="{{ csrf_token('org_import') }}">
+            <input type="hidden" name="file_token" value="{{ token }}">
+            <input type="hidden" name="file_name" value="{{ file_name }}">
+            {{ _self.options_fields(options) }}
+            <div class="form-actions">
+                <button type="submit" class="btn btn--pill">Загрузить оргструктуру</button>
+                <a class="btn btn--ghost" href="{{ path('admin_users_org_import') }}">Выбрать другой файл</a>
+            </div>
+        </form>
+    {% else %}
+        <div class="form-actions meta--spaced"><a class="btn btn--ghost" href="{{ path('admin_users_org_import') }}">Загрузить ещё файл</a></div>
+    {% endif %}
+</div>
+
+{% if report.problems is not empty %}
+<div class="card table-card">
+    <h2 class="h-section">Строки с проблемами ({{ report.problems|length }}{{ report.problems|length >= 500 ? '+' }})</h2>
+    <div class="table-scroll">
+        <table class="admin-table">
+            <thead><tr><th>Строка</th><th>Что не так</th></tr></thead>
+            <tbody>
+            {% for p in report.problems %}<tr><td class="col-num">{{ p.line }}</td><td>{{ p.message }}</td></tr>{% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% if report.changes is not empty %}
+<div class="card table-card">
+    <h2 class="h-section">{{ report.dry_run ? 'Изменения' : 'Что изменено' }} ({{ report.changes|length }}{{ report.changes|length >= 500 ? '+' }})</h2>
+    <div class="table-scroll">
+        <table class="admin-table">
+            <thead><tr><th>Строка</th><th>Сотрудник</th><th>Изменения</th></tr></thead>
+            <tbody>
+            {% for c in report.changes %}
+                <tr>
+                    <td class="col-num">{{ c.line }}</td>
+                    <td>{{ c.name }}<div class="hints">{{ c.login }}</div></td>
+                    <td>{% if c.created %}<span class="badge badge--done"><span class="badge__dot"></span>новая учётная запись</span>{% endif %}
+                        {% for label, change in c.fields %}<div><b>{{ label }}:</b> {% if change[0] %}<s class="text-muted">{{ change[0] }}</s> → {% endif %}{{ change[1] }}</div>{% endfor %}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}

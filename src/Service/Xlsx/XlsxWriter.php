@@ -46,13 +46,20 @@ final class XlsxWriter
         return $sheet;
     }
 
-    /** Название листа по правилам Excel: до 31 символа, без []:*?/\ и уникальное. */
+    /**
+     * Название листа по правилам Excel: до 31 символа, без []:*?/\ и апострофа по краям; «History»
+     * Excel зарезервировал для журнала изменений.
+     */
     public static function sheetName(string $name): string
     {
         $name = trim(str_replace(['[', ']', ':', '*', '?', '/', '\\'], ' ', $name));
         $name = trim(preg_replace('/\s+/u', ' ', $name) ?? '', " '");
+        $name = trim(mb_substr($name, 0, 31), " '");
+        if ('history' === mb_strtolower($name)) {
+            $name .= ' 1';
+        }
 
-        return '' !== $name ? mb_substr($name, 0, 31) : 'Лист';
+        return '' !== $name ? $name : 'Лист';
     }
 
     /** Ссылка на лист в формуле: 'Имя листа'!$C:$C. */
@@ -78,11 +85,17 @@ final class XlsxWriter
         return self::column($col).$row;
     }
 
-    /** Дата → порядковый номер дня Excel (1900-система). */
-    public static function serial(\DateTimeInterface $date): string
+    /**
+     * Дата → порядковый номер дня Excel (1900-система); null — дата раньше 1 марта 1900 года, которую
+     * Excel датой не хранит (к тому же до марта 1900 года его нумерация сбита выдуманным 29 февраля).
+     */
+    public static function serial(\DateTimeInterface $date): ?string
     {
-        $base = new \DateTimeImmutable('1899-12-30', new \DateTimeZone('UTC'));
         $day = new \DateTimeImmutable($date->format('Y-m-d'), new \DateTimeZone('UTC'));
+        if ($day < new \DateTimeImmutable('1900-03-01', new \DateTimeZone('UTC'))) {
+            return null;
+        }
+        $base = new \DateTimeImmutable('1899-12-30', new \DateTimeZone('UTC'));
 
         return (string) (int) $base->diff($day)->format('%a');
     }
@@ -275,7 +288,8 @@ final class XlsxWriter
             .'<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
             .'<bookViews><workbookView activeTab="0"/></bookViews><sheets>';
         foreach ($this->sheets as $index => $sheet) {
-            $xml .= \sprintf('<sheet name="%s" sheetId="%d" r:id="rId%d"/>', self::escape($sheet->getName()), $index + 1, $index + 1);
+            $state = 'visible' !== $sheet->getState() ? ' state="'.$sheet->getState().'"' : '';
+            $xml .= \sprintf('<sheet name="%s" sheetId="%d"%s r:id="rId%d"/>', self::escape($sheet->getName()), $index + 1, $state, $index + 1);
         }
 
         // Формулы пересчитываются при открытии: закэшированные значения нужны только для просмотрщиков.

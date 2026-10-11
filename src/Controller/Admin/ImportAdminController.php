@@ -8,6 +8,7 @@ use App\Entity\Section;
 use App\Entity\User;
 use App\Repository\SectionRepository;
 use App\Service\FileStorage;
+use App\Service\Import\DirectoryScanner;
 use App\Service\Import\DirectoryImporter;
 use App\Service\Import\ImportJobStore;
 use App\Service\Import\ImportOptions;
@@ -205,6 +206,18 @@ final class ImportAdminController extends AbstractController
             throw new \InvalidArgumentException(\sprintf('Каталог импорта %s не существует. Создайте его на сервере (параметр IMPORT_DIR).', $this->importDir));
         }
         $folder = trim((string) $values['folder']);
+        if (str_starts_with($folder, 'b64:')) {
+            // Имя папки не в UTF-8 (архив Windows): в форме оно передаётся в base64. Испорченное значение —
+            // ошибка, а не «корень каталога импорта».
+            $decoded = base64_decode(substr($folder, 4), true);
+            if (false === $decoded || '' === $decoded) {
+                throw new \InvalidArgumentException('Недопустимое имя подкаталога.');
+            }
+            $folder = $decoded;
+        }
+        if (str_contains($folder, "\0")) {
+            throw new \InvalidArgumentException('Недопустимое имя подкаталога.');
+        }
         if ('' === $folder) {
             $path = $root;
         } else {
@@ -213,7 +226,7 @@ final class ImportAdminController extends AbstractController
             }
             $path = realpath($root.'/'.$folder);
             if (false === $path || !is_dir($path) || !str_starts_with($path, $root.'/')) {
-                throw new \InvalidArgumentException(\sprintf('Подкаталог «%s» не найден в каталоге импорта.', $folder));
+                throw new \InvalidArgumentException(\sprintf('Подкаталог «%s» не найден в каталоге импорта.', DirectoryScanner::displayName($folder)));
             }
         }
         $target = null;

@@ -107,18 +107,26 @@ final class ImportPlan
 
     public function absolutePath(array $entry): string
     {
-        return '' === $entry['path'] ? $this->dir : $this->dir.'/'.$entry['path'];
+        // Имена не в UTF-8 (архивы Windows) хранятся перекодированными, а путь в байтах — в raw (base64).
+        $path = isset($entry['raw']) ? (string) base64_decode((string) $entry['raw'], true) : (string) $entry['path'];
+
+        return '' === $path ? $this->dir : $this->dir.'/'.$path;
     }
 
     /** @return array<string, mixed> */
     public function toArray(): array
     {
-        return ['dir' => $this->dir, 'label' => $this->label, 'entries' => $this->entries];
+        // Путь каталога не в UTF-8 (архив Windows) сохраняется в base64: JSON принимает только UTF-8.
+        $dir = mb_check_encoding($this->dir, 'UTF-8') ? ['dir' => $this->dir] : ['dir' => DirectoryScanner::displayName($this->dir), 'dir_raw' => base64_encode($this->dir)];
+
+        return $dir + ['label' => $this->label, 'entries' => $this->entries];
     }
 
     /** @param array<string, mixed> $a */
     public static function fromArray(array $a): self
     {
-        return new self((string) $a['dir'], (string) ($a['label'] ?? basename((string) $a['dir'])), array_values((array) ($a['entries'] ?? [])));
+        $dir = isset($a['dir_raw']) ? (string) base64_decode((string) $a['dir_raw'], true) : (string) $a['dir'];
+
+        return new self($dir, (string) ($a['label'] ?? DirectoryScanner::displayName(basename($dir))), array_values((array) ($a['entries'] ?? [])));
     }
 }

@@ -35,6 +35,7 @@ use App\Service\Material\MaterialState;
 use App\Service\StatsService;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\Form\FormError;
+use App\Service\Pdf\PdfWatermarker;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
 use Symfony\Component\HttpFoundation\HeaderUtils;
@@ -73,19 +74,20 @@ final class DocumentController extends AbstractController
         private readonly DocumentTemplateRepository $templateRepository,
         private readonly MaterialService $materials,
         private readonly int $defaultValidityMonths,
+        private readonly ?PdfWatermarker $watermarker = null,
     ) {
     }
 
     #[Route('/new', name: 'app_document_new', methods: ['GET', 'POST'])]
-    #[IsGranted(PortalVoter::MODERATOR)]
+    #[IsGranted(PortalVoter::CONTRIBUTOR)]
     public function new(Request $request, #[CurrentUser] User $user): Response
     {
         $sectionId = (int) $request->query->get('section');
         $section = $sectionId > 0 ? $this->sections->find($sectionId) : null;
-        if (null !== $section && !$this->access->canManageSection($user, $section)) {
+        if (null !== $section && !$this->access->canContribute($user, $section)) {
             throw $this->createAccessDeniedException('Нет прав на добавление документов в этот раздел.');
         }
-        $choices = $this->access->managedSections($user);
+        $choices = $this->access->contributableSections($user);
         if ([] === $choices) {
             $this->addFlash('warning', 'У вас нет разделов, в которые можно добавлять документы.');
 
@@ -97,6 +99,11 @@ final class DocumentController extends AbstractController
         }
         $type = (string) $request->query->get('type', Document::TYPE_FILE);
         $document->setType(\in_array($type, Document::TYPES, true) ? $type : Document::TYPE_FILE);
+        // ?title= — заготовка названия (например, со страницы «Вопросы к ИИ»: документ по вопросу без ответа).
+        $title = trim((string) preg_replace('/\s+/u', ' ', (string) $request->query->get('title', '')));
+        if ('' !== $title && $request->isMethod('GET')) {
+            $document->setTitle(mb_substr($title, 0, 255));
+        }
 
         // Шаблон заполняет карточку заготовкой: раздел, вид, название, обозначение с автонумерацией,
         // теги, срок и текст страницы. Номер выдаётся сразу, поэтому шаблон применяется только на GET.
@@ -107,7 +114,7 @@ final class DocumentController extends AbstractController
             $template = $this->templateRepository->find($templateId);
             if (null !== $template && $template->isActive()) {
                 $templateBody = $this->templates->prepare($template, $document);
-                if (!$this->access->canManageSection($user, $document->getSection())) {
+                if (!$this->access->canContribute($user, $document->getSection())) {
                     $document->setSection($section ?? $choices[0]);
                 }
                 $this->templates->markUsed($template);
@@ -115,10 +122,13 @@ final class DocumentController extends AbstractController
             }
         }
 
+        // Помощник маркетолога (не модератор выбранного раздела) публикует только через модерацию.
+        $moderation = $this->access->isAssistant($user) && !$this->access->isModerator($user);
         $form = $this->createForm(DocumentType::class, $document, [
             'section_choices' => $choices,
             'is_new' => true,
             'accept' => $this->acceptList(),
+            'moderation' => $moderation,
         ]);
         if (null !== $templateBody) {
             $form->get('content')->setData($templateBody);
@@ -126,11 +136,13 @@ final class DocumentController extends AbstractController
         $form->handleRequest($request);
 
         if ($form->isSubmitted() && $form->isValid()) {
-            if (!$this->access->canManageSection($user, $document->getSection())) {
+            if (!$this->access->canContribute($user, $document->getSection())) {
                 $form->get('section')->addError(new FormError('У вас нет прав на выбранный раздел.'));
             } else {
                 /** @var UploadedFile|null $file */
                 $file = $form->get('file')->getData();
+                $needsModeration = $this->access->needsModeration($user, $document->getSection());
+                $publish = (bool) $form->get('publish')->getData();
                 try {
                     $this->manager->create(
                         $document,
@@ -138,15 +150,19 @@ final class DocumentController extends AbstractController
                         $form->get('content')->getData(),
                         $form->get('changeNote')->getData(),
                         $user,
-                        // При обязательном согласовании новый документ всегда сохраняется черновиком.
-                        (bool) $form->get('publish')->getData() && !$this->approvals->isRequired(),
+                        // При обязательном согласовании и у помощника маркетолога новый документ сохраняется черновиком.
+                        $publish && !$this->approvals->isRequired() && !$needsModeration,
                         $request->getClientIp(),
                     );
-                    $this->addFlash('success', $document->isPublished()
-                        ? 'Документ опубликован.'
-                        : ($this->approvals->isRequired() && (bool) $form->get('publish')->getData()
-                            ? 'Документ сохранён как черновик: по настройкам портала публикация возможна только после согласования.'
-                            : 'Документ сохранён как черновик.'));
+                    if ($needsModeration) {
+                        $this->flashModeration($document, $publish, $user);
+                    } else {
+                        $this->addFlash('success', $document->isPublished()
+                            ? 'Документ опубликован.'
+                            : ($this->approvals->isRequired() && $publish
+                                ? 'Документ сохранён как черновик: по настройкам портала публикация возможна только после согласования.'
+                                : 'Документ сохранён как черновик.'));
+                    }
                     $this->autoDescribe($document, $user, $request);
 
                     return $this->redirectToRoute('app_document_show', ['id' => $document->getId()]);
@@ -163,7 +179,48 @@ final class DocumentController extends AbstractController
             'storage' => $this->manager->getStorage(),
             'template' => $template,
             'templates' => $this->templateRepository->findForSection($document->getSection()),
+            'moderation' => $moderation,
+            'card_locked' => false,
         ]);
+    }
+
+    /** Отправляет материал помощника маркетолога на модерацию (если он попросил) и сообщает, что дальше. */
+    private function flashModeration(Document $document, bool $submit, User $user): void
+    {
+        if (null !== $this->approvalRepository->findPending($document)) {
+            $this->addFlash('success', 'Изменения сохранены. Материал уже на модерации — решение примет маркетолог.');
+
+            return;
+        }
+        if (!$submit) {
+            $this->addFlash('success', 'Материал сохранён как черновик. Когда он будет готов, нажмите в карточке «Отправить на модерацию».');
+
+            return;
+        }
+        try {
+            $this->approvals->submitForModeration($document, null, $user);
+            $this->addFlash('success', $document->isPublished()
+                ? 'Новая редакция отправлена на модерацию: она вступит в силу после одобрения маркетологом, до этого сотрудники видят прежнюю.'
+                : 'Материал отправлен на модерацию: сотрудники увидят его после одобрения маркетологом.');
+        } catch (\DomainException $e) {
+            $this->addFlash('warning', 'Сохранено, но на модерацию не отправлено: '.$e->getMessage());
+        }
+    }
+
+    /** Помощник маркетолога отправляет черновик или новую редакцию на модерацию. */
+    #[Route('/{id}/moderation', name: 'app_document_moderation_submit', requirements: ['id' => '\d+'], methods: ['POST'])]
+    #[IsGranted(PortalVoter::DOCUMENT_CONTRIBUTE, subject: 'document')]
+    public function submitModeration(Document $document, Request $request, #[CurrentUser] User $user): Response
+    {
+        $this->checkToken($request, $document);
+        try {
+            $this->approvals->submitForModeration($document, (string) $request->request->get('note'), $user);
+            $this->addFlash('success', 'Материал отправлен на модерацию. Маркетологи получили уведомление.');
+        } catch (\DomainException $e) {
+            $this->addFlash('danger', $e->getMessage());
+        }
+
+        return $this->redirectToRoute('app_document_show', ['id' => $document->getId()]);
     }
 
     #[Route('/{id}', name: 'app_document_show', requirements: ['id' => '\d+'], methods: ['GET'])]
@@ -172,7 +229,10 @@ final class DocumentController extends AbstractController
     {
         $this->trackView($document, $request, $user);
         $canManage = $this->access->canEditDocument($user, $document);
+        $canContribute = $this->access->canContributeToDocument($user, $document);
         $current = $document->getCurrentVersion();
+        $approval = $this->approvalRepository->findPending($document);
+        $pendingVersion = $canContribute || $this->access->isPendingApprover($user, $document) ? $document->getPendingVersion() : null;
         $comments = $this->comments->isEnabled() ? $this->comments->forDocument($document) : [];
         $editable = $deletable = [];
         foreach ($comments as $comment) {
@@ -183,16 +243,31 @@ final class DocumentController extends AbstractController
         return $this->render('document/show.html.twig', [
             'document' => $document,
             'current' => $current,
-            'versions' => $document->getVersions(),
+            // Новая редакция, ждущая согласования, видна только модераторам раздела и согласующему.
+            'versions' => array_values(array_filter($document->getVersions()->toArray(), fn (DocumentVersion $v): bool => $this->access->canViewVersion($user, $document, $v))),
+            'pending_version' => $pendingVersion,
+            'pending_decision' => null !== $pendingVersion ? $this->approvalRepository->findDecided($document, $pendingVersion->getNumber()) : null,
+            'can_promote' => null !== $pendingVersion && $canManage && $this->approvals->canPromote($document, $pendingVersion),
             'can_manage' => $canManage,
             'inline' => null !== $current && $current->isFile() && FileStorage::isInlineViewable($current->getMimeType(), $current->getExtension()),
+            // Водяной знак поверх страницы портала (у PDF он ставится в сам файл).
+            'page_watermark' => null !== $current && $current->isPage() && null !== $this->watermarker && $this->watermarker->needsMark($document, $user)
+                ? $this->watermarker->svgDataUri($this->watermarker->texts($user, $request->getClientIp())['main']) : null,
             'file_exists' => null !== $current && $current->isFile() ? $this->manager->getStorage()->exists($current) : true,
             // Офисные файлы показываем через конвертацию в PDF (LibreOffice) — по кнопке, чтобы не ждать в карточке.
             'previewable' => null !== $current && $this->previewer->isAvailable() && $this->previewer->supports($current),
             'preview_ready' => null !== $current && $this->previewer->isAvailable() && $this->previewer->supports($current) && $this->previewer->isReady($current),
+            'preview_failed' => null !== $current && $this->previewer->isAvailable() && $this->previewer->supports($current) && $this->previewer->hasFailed($current),
             'preview_extensions' => $this->previewer->isAvailable() ? DocumentPreviewer::CONVERTIBLE : [],
-            // Согласование: текущий запрос, решение по текущей редакции и правило публикации.
-            'approval' => $this->approvalRepository->findPending($document),
+            // Согласование и модерация: текущий запрос, решение по текущей редакции и правило публикации.
+            'approval' => $approval,
+            'can_decide' => null !== $approval && $this->approvals->canDecide($approval, $user),
+            'can_contribute' => $canContribute,
+            'can_edit_card' => $this->access->canEditCard($user, $document),
+            'needs_moderation' => $this->access->needsModeration($user, $document->getSection()),
+            // Помощник отправляет на модерацию черновик или новую редакцию опубликованного документа.
+            'can_submit_moderation' => null === $approval && !$canManage && $canContribute && null !== $current
+                && (!$document->isPublished() || null !== $document->getPendingVersion()),
             'approval_decided' => null !== $current ? $this->approvalRepository->findDecided($document, $current->getNumber()) : null,
             'approval_required' => $this->approvals->isRequired(),
             'can_publish' => $canManage && $this->approvals->canPublish($document),
@@ -215,7 +290,9 @@ final class DocumentController extends AbstractController
             'subscribed' => $this->subscriptions->isSubscribedToDocument($user, $document),
             'subscribed_section' => $this->subscriptions->coveringSection($user, $document),
             // Связи с другими документами.
-            'links' => $this->links->forDocument($document),
+            // Связанные документы, которые пользователь не видит (черновики, ограниченный доступ, внутренние
+            // для гостя), не показываются — даже их названия.
+            'links' => array_values(array_filter($this->links->forDocument($document), fn (array $row): bool => $this->isGranted(PortalVoter::DOCUMENT_VIEW, $row['document']))),
             'link_types' => DocumentLink::LABELS,
             // Строки таблиц материалов, из которых загружен документ.
             'material_rows' => $canManage ? $this->materialRows($document, $user) : [],
@@ -269,19 +346,23 @@ final class DocumentController extends AbstractController
     }
 
     #[Route('/{id}/edit', name: 'app_document_edit', requirements: ['id' => '\d+'], methods: ['GET', 'POST'])]
-    #[IsGranted(PortalVoter::DOCUMENT_EDIT, subject: 'document')]
+    #[IsGranted(PortalVoter::DOCUMENT_CONTRIBUTE, subject: 'document')]
     public function edit(Document $document, Request $request, #[CurrentUser] User $user): Response
     {
         $previousSection = $document->getSection();
+        $moderation = $this->access->needsModeration($user, $document->getSection());
+        $cardLocked = !$this->access->canEditCard($user, $document);
         $form = $this->createForm(DocumentType::class, $document, [
-            'section_choices' => $this->access->managedSections($user),
+            'section_choices' => $this->access->contributableSections($user),
             'is_new' => false,
             'accept' => $this->acceptList(),
+            'moderation' => $moderation,
+            'card_locked' => $cardLocked,
         ]);
         $form->handleRequest($request);
 
         if ($form->isSubmitted() && $form->isValid()) {
-            if (!$this->access->canManageSection($user, $document->getSection())) {
+            if (!$this->access->canContribute($user, $document->getSection())) {
                 $form->get('section')->addError(new FormError('У вас нет прав на выбранный раздел.'));
             } else {
                 try {
@@ -297,13 +378,25 @@ final class DocumentController extends AbstractController
                     } else {
                         $newVersion = $this->manager->addPageVersion($document, $form->get('content')->getData(), $note, $user, $ip);
                     }
-                    $this->manager->updateMetadata($document, $previousSection, $user, $ip);
-                    // Название и тип документа — это название и тип строки таблицы материалов.
-                    $this->materials->syncFromDocument($document);
-                    $this->addFlash('success', null !== $newVersion ? \sprintf('Сохранена версия %d.', $newVersion->getNumber()) : 'Карточка документа сохранена.');
+                    if (!$cardLocked) {
+                        $this->manager->updateMetadata($document, $previousSection, $user, $ip);
+                        // Название и тип документа — это название и тип строки таблицы материалов.
+                        $this->materials->syncFromDocument($document, $user);
+                    }
+                    if ($moderation) {
+                        if (null === $newVersion && $cardLocked) {
+                            $this->addFlash('info', 'Новая редакция не загружена — изменений нет.');
+                        } else {
+                            $this->flashModeration($document, (bool) $form->get('submitModeration')->getData(), $user);
+                        }
+                    } elseif (null !== $newVersion && !$document->isVersionReleased($newVersion)) {
+                        $this->addFlash('warning', \sprintf('Сохранена редакция %d. По настройкам портала она вступит в силу после согласования — отправьте её на согласование; до решения сотрудники видят редакцию %d.', $newVersion->getNumber(), $document->getCurrentVersion()?->getNumber() ?? 0));
+                    } else {
+                        $this->addFlash('success', null !== $newVersion ? \sprintf('Сохранена версия %d.', $newVersion->getNumber()) : 'Карточка документа сохранена.');
+                    }
 
                     return $this->redirectToRoute('app_document_show', ['id' => $document->getId()]);
-                } catch (\InvalidArgumentException|\RuntimeException $e) {
+                } catch (\InvalidArgumentException|\RuntimeException|\DomainException $e) {
                     $form->get($document->isFile() ? 'file' : 'content')->addError(new FormError($e->getMessage()));
                 }
             }
@@ -316,6 +409,8 @@ final class DocumentController extends AbstractController
             'storage' => $this->manager->getStorage(),
             'template' => null,
             'templates' => [],
+            'moderation' => $moderation,
+            'card_locked' => $cardLocked,
         ]);
     }
 
@@ -335,7 +430,7 @@ final class DocumentController extends AbstractController
     #[IsGranted(PortalVoter::DOCUMENT_VIEW, subject: 'document')]
     public function downloadVersion(Document $document, int $number, Request $request, #[CurrentUser] ?User $user): Response
     {
-        $version = $document->findVersion($number) ?? throw $this->createNotFoundException('Версия не найдена.');
+        $version = $this->visibleVersion($document, $number, $user);
 
         return $this->serveVersion($document, $version, $request, $user);
     }
@@ -343,27 +438,27 @@ final class DocumentController extends AbstractController
     /** Предпросмотр офисного файла в браузере: LibreOffice переводит его в PDF (результат кэшируется). */
     #[Route('/{id}/preview', name: 'app_document_preview', requirements: ['id' => '\d+'], methods: ['GET'])]
     #[IsGranted(PortalVoter::DOCUMENT_VIEW, subject: 'document')]
-    public function preview(Document $document): Response
+    public function preview(Document $document, Request $request, #[CurrentUser] ?User $user): Response
     {
         $version = $document->getCurrentVersion() ?? throw $this->createNotFoundException('У документа нет версий.');
 
-        return $this->servePreview($document, $version);
+        return $this->servePreview($document, $version, $request, $user);
     }
 
     #[Route('/{id}/versions/{number}/preview', name: 'app_document_version_preview', requirements: ['id' => '\d+', 'number' => '\d+'], methods: ['GET'])]
     #[IsGranted(PortalVoter::DOCUMENT_VIEW, subject: 'document')]
-    public function previewVersion(Document $document, int $number): Response
+    public function previewVersion(Document $document, int $number, Request $request, #[CurrentUser] ?User $user): Response
     {
-        $version = $document->findVersion($number) ?? throw $this->createNotFoundException('Версия не найдена.');
+        $version = $this->visibleVersion($document, $number, $user);
 
-        return $this->servePreview($document, $version);
+        return $this->servePreview($document, $version, $request, $user);
     }
 
     #[Route('/{id}/versions/{number}', name: 'app_document_version', requirements: ['id' => '\d+', 'number' => '\d+'], methods: ['GET'])]
     #[IsGranted(PortalVoter::DOCUMENT_VIEW, subject: 'document')]
     public function version(Document $document, int $number, #[CurrentUser] ?User $user): Response
     {
-        $version = $document->findVersion($number) ?? throw $this->createNotFoundException('Версия не найдена.');
+        $version = $this->visibleVersion($document, $number, $user);
         if ($version->isFile()) {
             return $this->redirectToRoute('app_document_version_download', ['id' => $document->getId(), 'number' => $number]);
         }
@@ -377,10 +472,10 @@ final class DocumentController extends AbstractController
 
     #[Route('/{id}/versions/{a}/compare/{b}', name: 'app_document_compare', requirements: ['id' => '\d+', 'a' => '\d+', 'b' => '\d+'], methods: ['GET'])]
     #[IsGranted(PortalVoter::DOCUMENT_VIEW, subject: 'document')]
-    public function compare(Document $document, int $a, int $b): Response
+    public function compare(Document $document, int $a, int $b, #[CurrentUser] ?User $user): Response
     {
-        $va = $document->findVersion($a) ?? throw $this->createNotFoundException('Версия не найдена.');
-        $vb = $document->findVersion($b) ?? throw $this->createNotFoundException('Версия не найдена.');
+        $va = $this->visibleVersion($document, $a, $user);
+        $vb = $this->visibleVersion($document, $b, $user);
         $lines = ($va->isPage() && $vb->isPage()) ? $this->diff->compare($va, $vb) : [];
 
         return $this->render('document/compare.html.twig', [
@@ -403,6 +498,28 @@ final class DocumentController extends AbstractController
             $new = $this->manager->restoreVersion($document, $version, $user, $request->getClientIp());
             $this->addFlash('success', \sprintf('Версия %d восстановлена как версия %d.', $number, $new->getNumber()));
         } catch (\DomainException|\RuntimeException|\InvalidArgumentException $e) {
+            $this->addFlash('danger', $e->getMessage());
+        }
+
+        return $this->redirectToRoute('app_document_show', ['id' => $document->getId()]);
+    }
+
+    /** Новая редакция становится текущей (после согласования или у неопубликованного документа). */
+    #[Route('/{id}/versions/{number}/promote', name: 'app_document_version_promote', requirements: ['id' => '\d+', 'number' => '\d+'], methods: ['POST'])]
+    #[IsGranted(PortalVoter::DOCUMENT_EDIT, subject: 'document')]
+    public function promote(Document $document, int $number, Request $request, #[CurrentUser] User $user): Response
+    {
+        $this->checkToken($request, $document);
+        $version = $document->findVersion($number) ?? throw $this->createNotFoundException('Версия не найдена.');
+        if (!$this->approvals->canPromote($document, $version)) {
+            $this->addFlash('danger', 'По настройкам портала новая редакция опубликованного документа вступает в силу только после согласования. Отправьте её на согласование.');
+
+            return $this->redirectToRoute('app_document_show', ['id' => $document->getId()]);
+        }
+        try {
+            $this->manager->promoteVersion($document, $version, $user, $request->getClientIp());
+            $this->addFlash('success', \sprintf('Редакция %d стала текущей%s.', $number, $document->isPublished() ? ' — сотрудники видят её' : ''));
+        } catch (\DomainException $e) {
             $this->addFlash('danger', $e->getMessage());
         }
 
@@ -477,7 +594,7 @@ final class DocumentController extends AbstractController
         ]);
     }
 
-    private function servePreview(Document $document, DocumentVersion $version): Response
+    private function servePreview(Document $document, DocumentVersion $version, Request $request, ?User $user): Response
     {
         if (!$this->previewer->isAvailable()) {
             throw $this->createNotFoundException('Предпросмотр офисных файлов не настроен: на сервере нет LibreOffice.');
@@ -492,12 +609,16 @@ final class DocumentController extends AbstractController
 
             return $this->redirectToRoute('app_document_show', ['id' => $document->getId()]);
         }
-        $response = new BinaryFileResponse($pdf);
+        $marked = $this->watermarked($document, $pdf, $request, $user);
+        $response = new BinaryFileResponse($marked ?? $pdf);
         $response->headers->set('Content-Type', 'application/pdf');
         $response->headers->set('X-Content-Type-Options', 'nosniff');
         $name = pathinfo($version->getOriginalName() ?? 'document', \PATHINFO_FILENAME).'.pdf';
         $response->setContentDisposition(ResponseHeaderBag::DISPOSITION_INLINE, $name, self::asciiName($name));
         $response->setPrivate();
+        if (null !== $marked) {
+            self::markedResponse($response, $request);
+        }
 
         return $response;
     }
@@ -510,6 +631,8 @@ final class DocumentController extends AbstractController
             $this->manager->recordDownload($document, $version, $user, $request->getClientIp());
             $response = new Response($html, 200, ['Content-Type' => 'text/html; charset=UTF-8']);
             $response->headers->set('Content-Disposition', HeaderUtils::makeDisposition(ResponseHeaderBag::DISPOSITION_ATTACHMENT, self::asciiName($document->getTitle()).'.html', 'document.html'));
+            $response->headers->set('X-Content-Type-Options', 'nosniff');
+            $response->headers->set('Content-Security-Policy', FileStorage::SANDBOX_CSP);
 
             return $response;
         }
@@ -521,14 +644,49 @@ final class DocumentController extends AbstractController
         if (!$inline) {
             $this->manager->recordDownload($document, $version, $user, $request->getClientIp());
         }
-        $response = new BinaryFileResponse($path);
-        $response->headers->set('Content-Type', $version->getMimeType() ?: 'application/octet-stream');
+        $marked = 'pdf' === strtolower((string) $version->getExtension()) ? $this->watermarked($document, $path, $request, $user) : null;
+        $response = new BinaryFileResponse($marked ?? $path);
+        if (null !== $marked) {
+            self::markedResponse($response, $request);
+        }
+        $inlineType = $inline ? FileStorage::inlineContentType($version->getExtension()) : null;
+        // В браузере файл открывается с типом по расширению из белого списка; при скачивании — с исходным типом.
+        $response->headers->set('Content-Type', $inlineType ?? ($version->getMimeType() ?: 'application/octet-stream'));
         $response->headers->set('X-Content-Type-Options', 'nosniff');
+        if ('application/pdf' !== $inlineType) {
+            // Скрипты в SVG, HTML и т. п. не выполняются даже при прямом открытии ссылки.
+            $response->headers->set('Content-Security-Policy', FileStorage::SANDBOX_CSP);
+        }
         $name = $version->getOriginalName() ?? ('document.'.$version->getExtension());
         $response->setContentDisposition($inline ? ResponseHeaderBag::DISPOSITION_INLINE : ResponseHeaderBag::DISPOSITION_ATTACHMENT, $name, self::asciiName($name));
         $response->setPrivate();
 
         return $response;
+    }
+
+    /**
+     * Копия PDF с водяным знаком (ФИО, логин, время), если он нужен этому сотруднику для этого документа;
+     * null — отдать файл как есть (знак выключен, не нужен или не наложился — тогда причина в журнале).
+     */
+    private function watermarked(Document $document, string $pdf, Request $request, ?User $user): ?string
+    {
+        if (null === $this->watermarker || !$this->watermarker->needsMark($document, $user)) {
+            return null;
+        }
+
+        return $this->watermarker->apply($pdf, $this->watermarker->texts($user, $request->getClientIp(), null, $document->getTitle()));
+    }
+
+    /**
+     * Копия со знаком своя у каждого запроса: она удаляется после отправки, не кэшируется, и докачка частями
+     * не поддерживается (иначе части взялись бы из разных копий).
+     */
+    private static function markedResponse(BinaryFileResponse $response, Request $request): void
+    {
+        $response->deleteFileAfterSend(true);
+        $response->headers->set('Cache-Control', 'private, no-store');
+        $response->headers->set('Accept-Ranges', 'none');
+        $request->headers->remove('Range');
     }
 
     private function trackView(Document $document, Request $request, ?User $user): void
@@ -541,6 +699,17 @@ final class DocumentController extends AbstractController
         }
         $session->set($key, time());
         $this->manager->recordView($document, $user, $request->getClientIp());
+    }
+
+    /** Версия документа, если пользователь может её видеть (новую редакцию до согласования — только модераторы и согласующий). */
+    private function visibleVersion(Document $document, int $number, ?User $user): DocumentVersion
+    {
+        $version = $document->findVersion($number);
+        if (null === $version || !$this->access->canViewVersion($user, $document, $version)) {
+            throw $this->createNotFoundException('Версия не найдена.');
+        }
+
+        return $version;
     }
 
     private function checkToken(Request $request, Document $document): void

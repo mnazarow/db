@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="30">
+<meta name="robots" content="noindex">
+<title>Идёт обновление портала</title>
+<style>
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px;
+        font: 16px/1.55 -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color: #1b2733; background: #f3f6f9; }
+    .box { max-width: 560px; background: #fff; border-radius: 18px; padding: 36px 32px; box-shadow: 0 10px 30px rgba(20, 52, 84, .08); }
+    h1 { margin: 0 0 12px; font-size: 26px; line-height: 1.2; color: #143454; }
+    p { margin: 0 0 10px; }
+    .note { margin: 16px 0; padding: 12px 16px; border-radius: 12px; background: #eef4fa; color: #143454; overflow-wrap: anywhere; }
+    .muted { color: #5b6b7a; font-size: 14px; }
+    .spinner { width: 34px; height: 34px; border-radius: 50%; border: 4px solid #d7e3ee; border-top-color: #3e739a; margin-bottom: 18px;
+        animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+</style>
+</head>
+<body>
+<main class="box" role="main">
+    <div class="spinner" aria-hidden="true"></div>
+    <h1>Идёт обновление портала</h1>
+    <p>Портал документации временно недоступен: выполняется обновление или обслуживание. Обычно это занимает несколько минут.</p>
+<!--MESSAGE-->
+    <p class="muted">Страница обновится сама. Если вы отправляли форму, повторите действие после окончания работ.</p>
+<!--SINCE-->
+</main>
+</body>
+</html>

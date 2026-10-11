@@ -164,14 +164,15 @@ final class ApiController extends AbstractController
     {
         $this->assertVisible($document, $principal);
         $data = $this->presenter->document($document);
-        $versions = $document->getVersions()->toArray();
+        // Новая редакция, ждущая согласования, ещё не действует — внешним системам её не отдаём.
+        $versions = array_values(array_filter($document->getVersions()->toArray(), static fn (DocumentVersion $v): bool => $document->isVersionReleased($v)));
         usort($versions, static fn ($a, $b) => $a->getNumber() <=> $b->getNumber());
         $data['versions'] = array_map($this->presenter->version(...), $versions);
         // Связи с другими документами: индексатору RAG важно знать, какой документ заменён и чем.
         $data['related'] = [];
         foreach ($this->links->forDocument($document) as $row) {
             $other = $row['document'];
-            if (!$other->isDraft() && ($principal->includesInternal() || $other->isPublic())) {
+            if ($this->isVisibleTo($other, $principal)) {
                 $data['related'][] = [
                     'relation' => $row['label'],
                     'type' => $row['link']->getType(),
@@ -226,6 +227,7 @@ final class ApiController extends AbstractController
                 'Content-Type' => 'text/html; charset=UTF-8',
                 'Content-Disposition' => HeaderUtils::makeDisposition(ResponseHeaderBag::DISPOSITION_ATTACHMENT, DocumentController::asciiName($document->getTitle()).'.html', 'document.html'),
                 'X-Content-Type-Options' => 'nosniff',
+                'Content-Security-Policy' => FileStorage::SANDBOX_CSP,
                 'X-Document-Version' => (string) $version->getNumber(),
             ]);
         }
@@ -236,6 +238,7 @@ final class ApiController extends AbstractController
         $response = new BinaryFileResponse($absolute);
         $response->headers->set('Content-Type', $version->getMimeType() ?: 'application/octet-stream');
         $response->headers->set('X-Content-Type-Options', 'nosniff');
+        $response->headers->set('Content-Security-Policy', FileStorage::SANDBOX_CSP);
         $response->headers->set('X-Document-Version', (string) $version->getNumber());
         if (null !== $version->getChecksum()) {
             $response->headers->set('ETag', '"'.$version->getChecksum().'"');
@@ -249,51 +252,132 @@ final class ApiController extends AbstractController
 
     /**
      * Изменения с момента since (ISO 8601): изменившиеся видимые документы, документы, ставшие невидимыми
-     * (removed), и удалённые (deleted). Значение next_since передаётся в следующий запрос.
+     * (removed), и удалённые (deleted).
+     *
+     * Все три списка — одна лента, упорядоченная по (время, список, id). Если изменений больше limit, ответ
+     * содержит next_cursor: следующий запрос с cursor=… продолжает ровно с того места (даже если сотни
+     * документов изменились в одну секунду). next_since остаётся для простых клиентов.
      */
     #[Route('/changes', name: 'changes', methods: ['GET'])]
     public function changes(Request $request, #[CurrentUser] ApiPrincipal $principal): ApiResponse
     {
-        $since = self::parseDate((string) $request->query->get('since', ''), 'since');
+        $cursor = self::decodeCursor((string) $request->query->get('cursor', ''));
+        $since = $cursor['at'] ?? self::parseDate((string) $request->query->get('since', ''), 'since');
         if (null === $since) {
-            throw new BadRequestHttpException('Укажите параметр since (дата и время в формате ISO 8601, например 2026-09-01T00:00:00+03:00).');
+            throw new BadRequestHttpException('Укажите параметр since (дата и время в формате ISO 8601, например 2026-09-01T00:00:00+03:00) или cursor из предыдущего ответа.');
         }
         $now = new \DateTimeImmutable();
         $limit = min(1000, max(1, (int) $request->query->get('limit', 500)));
         $filters = $this->filters($request, $principal);
-        $filters['updated_since'] = $since;
-        $this->preloadSections();
-        $changed = $this->documents->findForApi($filters, 1, $limit);
         $includeArchived = \in_array(Document::STATUS_ARCHIVED, $filters['statuses'], true);
         $publicOnly = !$principal->includesInternal();
-        $hidden = $this->documents->findHiddenSinceForApi($since, $publicOnly, $includeArchived, $limit);
+        $this->preloadSections();
+
+        // Порог для каждого списка: записи строго после (время, список, id) курсора; без курсора — после since.
+        $afterIn = static function (int $list) use ($cursor): int {
+            if (null === $cursor) {
+                return \PHP_INT_MAX;
+            }
+
+            return $list > $cursor['list'] ? 0 : ($list === $cursor['list'] ? $cursor['id'] : \PHP_INT_MAX);
+        };
+        $stream = [];
+        foreach ($this->documents->findChangedForApiAfter($filters, $since, $afterIn(0), $limit) as $d) {
+            $stream[] = [$d->getUpdatedAt()->format('Y-m-d H:i:s'), 0, (int) $d->getId(), $d];
+        }
+        foreach ($this->documents->findHiddenForApiAfter($since, $afterIn(1), $publicOnly, $includeArchived, $limit) as $d) {
+            $stream[] = [$d->getUpdatedAt()->format('Y-m-d H:i:s'), 1, (int) $d->getId(), $d];
+        }
         $deletions = $this->em->getRepository(DocumentDeletion::class)->createQueryBuilder('x')
-            ->andWhere('x.deletedAt > :since')->setParameter('since', $since)
-            ->orderBy('x.deletedAt', 'ASC')->setMaxResults($limit)->getQuery()->getResult();
-        // Следующий запрос делаем с небольшим перекрытием: у времени изменения точность до секунды,
-        // и документ, изменённый в ту же секунду, иначе потерялся бы.
-        $nextSince = $now->modify('-'.self::OVERLAP_SECONDS.' seconds');
+            ->andWhere('x.deletedAt > :at OR (x.deletedAt = :at AND x.documentId > :after)')
+            ->setParameter('at', $since)->setParameter('after', $afterIn(2))
+            ->orderBy('x.deletedAt', 'ASC')->addOrderBy('x.documentId', 'ASC')->setMaxResults($limit + 1)
+            ->getQuery()->getResult();
+        foreach ($deletions as $x) {
+            $stream[] = [$x->getDeletedAt()->format('Y-m-d H:i:s'), 2, $x->getDocumentId(), $x];
+        }
+        usort($stream, static fn (array $a, array $b): int => [$a[0], $a[1], $a[2]] <=> [$b[0], $b[1], $b[2]]);
+        $truncated = \count($stream) > $limit;
+        $page = \array_slice($stream, 0, $limit);
+
+        $changed = $hidden = $deleted = [];
+        foreach ($page as [, $list, , $item]) {
+            match ($list) {
+                0 => $changed[] = $item,
+                1 => $hidden[] = $item,
+                default => $deleted[] = $item,
+            };
+        }
+        $last = [] !== $page ? $page[array_key_last($page)] : null;
+        if ($truncated && null !== $last) {
+            $nextCursor = self::encodeCursor($last[0], $last[1], $last[2]);
+            // Для клиентов без курсора: с перекрытием, чтобы не потерять записи той же секунды (повтор безвреден),
+            // но обязательно дальше since — иначе при сотнях изменений за пару секунд клиент получал бы одну и
+            // ту же страницу бесконечно. Точный постраничный проход — только по курсору.
+            $nextSince = (new \DateTimeImmutable($last[0]))->modify('-'.self::OVERLAP_SECONDS.' seconds');
+            $minimum = $since->modify('+1 second');
+            if ($nextSince < $minimum) {
+                $nextSince = $minimum;
+            }
+        } else {
+            $nextCursor = null;
+            // Следующий запрос делаем с небольшим перекрытием: у времени изменения точность до секунды,
+            // и документ, изменённый в ту же секунду, иначе потерялся бы.
+            $nextSince = $now->modify('-'.self::OVERLAP_SECONDS.' seconds');
+        }
 
         return new ApiResponse([
             'since' => $since->format(\DATE_ATOM),
             'until' => $now->format(\DATE_ATOM),
             'next_since' => $nextSince->format(\DATE_ATOM),
+            'next_cursor' => $nextCursor,
             // Скрытые документы отдаём без названий: ключ «только открытые» не должен видеть
             // содержимое внутренних документов и черновиков — индексатору достаточно id и причины.
-            'changed' => array_map($this->presenter->document(...), $changed['items']),
-            'changed_total' => $changed['total'],
+            'changed' => array_map($this->presenter->document(...), $changed),
+            // Сколько видимых документов изменилось после since (всего, без учёта страниц курсора).
+            'changed_total' => $this->documents->findForApi(['updated_since' => $since] + $filters, 1, 1)['total'],
             'removed' => array_map(static fn (Document $d): array => [
                 'id' => $d->getId(),
                 'reason' => match (true) {
-                    $d->isDraft() => 'draft',
+                    $d->isUnpublished() => 'draft',
                     $d->isArchived() && !$includeArchived => 'archived',
                     default => 'internal',
                 },
                 'updated_at' => $d->getUpdatedAt()->format(\DATE_ATOM),
             ], $hidden),
-            'deleted' => array_map(fn (DocumentDeletion $d): array => $this->presenter->deletion($d, !$publicOnly), $deletions),
-            'truncated' => $changed['total'] > $limit || \count($hidden) >= $limit || \count($deletions) >= $limit,
+            'deleted' => array_map(fn (DocumentDeletion $d): array => $this->presenter->deletion($d, !$publicOnly), $deleted),
+            'truncated' => $truncated,
         ]);
+    }
+
+    /** Курсор ленты изменений: время, номер списка (0 — changed, 1 — removed, 2 — deleted) и id. */
+    private static function encodeCursor(string $at, int $list, int $id): string
+    {
+        return rtrim(strtr(base64_encode(\sprintf('%s|%d|%d', $at, $list, $id)), '+/', '-_'), '=');
+    }
+
+    /** @return array{at: \DateTimeImmutable, list: int, id: int}|null */
+    private static function decodeCursor(string $cursor): ?array
+    {
+        $cursor = trim($cursor);
+        if ('' === $cursor) {
+            return null;
+        }
+        $raw = base64_decode(strtr($cursor, '-_', '+/'), true);
+        $at = false;
+        if (false !== $raw && 1 === preg_match('/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\|([0-2])\|(\d{1,10})$/', $raw, $m)) {
+            // Строгий разбор: несуществующая дата («2026-13-40») — ошибка запроса, а не ответ 500.
+            $at = \DateTimeImmutable::createFromFormat('!Y-m-d H:i:s', $m[1]);
+            $errors = \DateTimeImmutable::getLastErrors();
+            if (false !== $at && false !== $errors && ($errors['warning_count'] > 0 || $errors['error_count'] > 0)) {
+                $at = false;
+            }
+        }
+        if (false === $at) {
+            throw new BadRequestHttpException('Некорректный параметр cursor: передайте значение next_cursor из предыдущего ответа.');
+        }
+
+        return ['at' => $at, 'list' => (int) $m[2], 'id' => (int) $m[3]];
     }
 
     /**
@@ -360,15 +444,29 @@ final class ApiController extends AbstractController
             return (new \DateTimeImmutable())->setTimestamp((int) $value);
         }
         try {
-            return new \DateTimeImmutable($value);
+            // Время в базе хранится в часовом поясе портала: «2026-09-01T00:00:00Z» переводится в него,
+            // иначе сравнение шло бы по «голым» часам и минутам и часть изменений терялась бы.
+            return (new \DateTimeImmutable($value))->setTimezone(new \DateTimeZone(date_default_timezone_get()));
         } catch (\Exception) {
             throw new BadRequestHttpException(\sprintf('Параметр %s должен быть датой в формате ISO 8601.', $param));
         }
     }
 
+    /**
+     * Видимость документа для ключа API — те же правила, что у списков (findForApi): только опубликованные
+     * и архивные, без документов с ограниченным доступом (они видны лишь указанным сотрудникам), внутренние —
+     * только ключам с доступом к ним. Черновики и документы на согласовании через API не отдаются.
+     */
+    private function isVisibleTo(Document $document, ApiPrincipal $principal): bool
+    {
+        return ($document->isPublished() || $document->isArchived())
+            && !$document->isRestricted()
+            && ($principal->includesInternal() || $document->isPublic());
+    }
+
     private function assertVisible(Document $document, ApiPrincipal $principal): void
     {
-        if ($document->isDraft() || (!$principal->includesInternal() && !$document->isPublic())) {
+        if (!$this->isVisibleTo($document, $principal)) {
             throw new NotFoundHttpException(\sprintf('Документ %d не найден.', (int) $document->getId()));
         }
     }
@@ -377,7 +475,12 @@ final class ApiController extends AbstractController
     {
         $number = (int) $request->query->get('version');
         if ($number > 0) {
-            return $document->findVersion($number) ?? throw new NotFoundHttpException(\sprintf('Версия %d не найдена.', $number));
+            $version = $document->findVersion($number);
+            if (null === $version || !$document->isVersionReleased($version)) {
+                throw new NotFoundHttpException(\sprintf('Версия %d не найдена.', $number));
+            }
+
+            return $version;
         }
 
         return $document->getCurrentVersion() ?? throw new NotFoundHttpException('У документа нет версий.');

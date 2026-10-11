@@ -1,0 +1,99 @@
+{% extends 'admin/_layout.html.twig' %}
+
+{% block title %}Вопросы к ИИ{% endblock %}
+{% block admin_title %}Вопросы к ИИ{% endblock %}
+{% block admin_actions %}
+    <a class="btn btn--ghost" href="{{ path('admin_integrations') }}#semantic">Настройки ИИ</a>
+    <a class="btn btn--ghost" href="{{ path('admin_ai_questions_csv', {view: view, period: period}) }}">Выгрузить CSV</a>
+{% endblock %}
+
+{% block admin_body %}
+{% set s = stats %}
+{% if not answers_enabled %}
+    <div class="alert alert--info">Ответы ИИ на странице поиска сейчас выключены («Интеграции → Языковая модель»). Ниже — вопросы, заданные раньше.</div>
+{% endif %}
+{% if log_days == 0 %}
+    <div class="alert alert--warning">Журнал вопросов выключен («Хранить вопросы к ИИ: 0 дней») — новые вопросы не сохраняются и оценить ответ нельзя.</div>
+{% endif %}
+
+<div class="grid grid--stats grid--ai-stats">
+    <div class="card"><div class="stat__label">Вопросов</div><div class="stat__value">{{ s.total }}</div><div class="stat__hint">сотрудников: {{ s.users }}</div></div>
+    <div class="card"><div class="stat__label">Ответ дан</div><div class="stat__value">{{ s.total > 0 ? (s.answered * 100 / s.total)|round ~ '%' : '—' }}</div><div class="stat__hint">{{ s.answered }} из {{ s.total }}{% if s.semantic > 0 %}; с поиском по смыслу — {{ s.semantic }}{% endif %}</div></div>
+    <div class="card"><div class="stat__label">Без ответа</div><div class="stat__value {{ s.not_found + s.no_sources > 0 ? 'text-warning' }}">{{ s.not_found + s.no_sources }}</div><div class="stat__hint">в документах нет ответа — {{ s.not_found }}, ничего не найдено — {{ s.no_sources }}{% if s.error > 0 %}, ошибок модели — {{ s.error }}{% endif %}</div></div>
+    <div class="card"><div class="stat__label">Оценки</div><div class="stat__value stat__value--text">{{ s.helpful }} / {{ s.unhelpful }}</div><div class="stat__hint">помог / не помог{% if s.helpful + s.unhelpful > 0 %} — {{ (s.helpful * 100 / (s.helpful + s.unhelpful))|round }}% полезных{% endif %}</div></div>
+</div>
+
+<nav class="tabs tabs--links" aria-label="Вопросы к ИИ">
+    {% for key, label in views %}
+        <a class="tab {{ view == key ? 'is-active' }}" href="{{ path('admin_ai_questions', {view: key, period: period}) }}"{% if view == key %} aria-current="page"{% endif %}>{{ label }}{% if key == 'unhelpful' and s.unhelpful > 0 %} ({{ s.unhelpful }}){% endif %}</a>
+    {% endfor %}
+</nav>
+<div class="card toolbar">
+    <form method="get" class="toolbar__row">
+        <input type="hidden" name="view" value="{{ view }}">
+        <label class="form-label form-label--inline" for="ai-period">Период</label>
+        <select class="form-control form-control--inline" id="ai-period" name="period" onchange="this.form.submit()">
+            {% for key, label in periods %}<option value="{{ key }}" {{ period == key ? 'selected' }}>{{ label }}</option>{% endfor %}
+        </select>
+        <noscript><button class="btn btn--ghost btn--small" type="submit">Показать</button></noscript>
+        <span class="toolbar__summary">Вопросы хранятся {{ log_days > 0 ? log_days ~ ' дн.' : '— не хранятся' }}; имена сотрудников не показываются.</span>
+    </form>
+</div>
+
+{% if view == 'unanswered' %}
+<div class="card table-card">
+    <div class="card__head card__head--padded"><h2 class="h-section">На что в документах нет ответа</h2>
+        <span class="text-muted">похожие формулировки собраны в одну тему; сверху — о чём спрашивают чаще</span></div>
+    {% if topics is empty %}
+        <div class="table-card__empty">За этот период на все вопросы нашёлся ответ.</div>
+    {% else %}
+    <div class="table-scroll"><table class="admin-table ai-topics">
+        <thead><tr><th>Вопрос</th><th class="col-num">Спрашивали</th><th class="col-num">Сотрудников</th><th>Последний раз</th><th class="col-actions"></th></tr></thead>
+        <tbody>
+        {% for t in topics %}
+            <tr class="{{ t.resolved ? 'is-muted' }}">
+                <td>{{ t.question }}{% if t.resolved %}<div class="hints"><span class="badge badge--done"><span class="badge__dot"></span>позже ответ нашёлся</span></div>{% endif %}</td>
+                <td class="col-num">{{ t.asked }}</td>
+                <td class="col-num">{{ t.users }}</td>
+                <td class="col-nowrap">{{ t.last_at|date('d.m.Y H:i') }}</td>
+                <td class="col-actions"><a class="btn btn--ghost btn--small" href="{{ path('app_document_new', {type: 'page', title: t.question|trim('?')}) }}" title="Новый документ-страница с этим вопросом в названии">Создать документ</a>
+                    <a class="btn btn--ghost btn--small" href="{{ path('app_search', {q: t.question}) }}">Поиск</a></td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table></div>
+    <p class="form-help card__padded">«В документах нет ответа» — модель прочла найденные документы и ответа в них не увидела; «ничего не найдено» — по словам и смыслу вопроса документов нет. Напишите документ (или дополните существующий) — следующий такой вопрос получит ответ; тема отметится «позже ответ нашёлся».</p>
+    {% endif %}
+</div>
+{% else %}
+<div class="card table-card">
+    <div class="card__head card__head--padded"><h2 class="h-section">{{ view == 'unhelpful' ? 'Ответы, которые не помогли' : 'Все вопросы' }}</h2></div>
+    {% if rows is empty %}
+        <div class="table-card__empty">{{ view == 'unhelpful' ? 'Неполезных ответов за этот период нет.' : 'Вопросов за этот период нет.' }}</div>
+    {% else %}
+    <div class="table-scroll"><table class="admin-table ai-questions">
+        <thead><tr><th>Дата</th><th>Вопрос и ответ</th><th>Итог</th><th>Оценка</th></tr></thead>
+        <tbody>
+        {% for q in rows %}
+            <tr>
+                <td class="col-nowrap">{{ q.createdAt|date('d.m.Y H:i') }}</td>
+                <td>
+                    <b>{{ q.question }}</b>
+                    {% if q.comment %}<div class="ai-questions__comment">«{{ q.comment }}»</div>{% endif %}
+                    {% if q.answer %}
+                        <details class="ai-questions__answer"><summary>Ответ{% if q.sources is not empty %} и источники ({{ q.sources|length }}){% endif %}</summary>
+                            <div class="ai-questions__text">{{ q.answer|nl2br }}</div>
+                            {% if q.sources is not empty %}<ol class="ai-answer__sources">{% for src in q.sources %}<li><span class="tag">{{ src.type == 'video' ? 'видео' : 'документ' }}</span> <a href="{{ src.url }}">{{ src.title }}</a></li>{% endfor %}</ol>{% endif %}
+                        </details>
+                    {% endif %}
+                </td>
+                <td class="col-nowrap">{{ q.statusLabel }}{% if q.semantic %}<div class="hints">по словам и смыслу</div>{% endif %}<div class="hints">{{ (q.durationMs / 1000)|number_format(1, ',') }} с</div></td>
+                <td class="col-nowrap">{% if q.rating == 1 %}<span class="badge badge--done"><span class="badge__dot"></span>помог</span>{% elseif q.rating == -1 %}<span class="badge badge--overdue"><span class="badge__dot"></span>не помог</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table></div>
+    {% endif %}
+</div>
+{% endif %}
+{% endblock %}

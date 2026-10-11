@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Controller\Admin;
 
+use App\Service\Csv;
 use App\Entity\Document;
 use App\Repository\DocumentRepository;
 use App\Repository\SectionRepository;
@@ -88,7 +89,7 @@ final class DocumentAdminController extends AbstractController
             fwrite($out, "\xEF\xBB\xBF"); // BOM для Excel
             fputcsv($out, ['ID', 'Обозначение', 'Название', 'Раздел', 'Вид', 'Тип файла', 'Статус', 'Доступ', 'Версия', 'Актуален до', 'Состояние', 'Владелец', 'Создан', 'Обновлён', 'Просмотры', 'Скачивания', 'Теги'], ';');
             foreach ($documents as $d) {
-                fputcsv($out, [
+                Csv::put($out, [
                     $d->getId(), $d->getCode(), $d->getTitle(), $d->getSection()->getFullName(),
                     AppExtension::TYPE_LABELS[$d->getType()] ?? $d->getType(), $d->getKind()?->getName(), AppExtension::STATUS_LABELS[$d->getStatus()] ?? $d->getStatus(),
                     $d->isPublic() ? 'открытый' : 'внутренний',
@@ -96,7 +97,7 @@ final class DocumentAdminController extends AbstractController
                     Validity::LABELS[$this->validity->stateOf($d)], $d->getOwner()?->getDisplayName(),
                     $d->getCreatedAt()->format('d.m.Y H:i'), $d->getUpdatedAt()->format('d.m.Y H:i'),
                     $d->getViewCount(), $d->getDownloadCount(), $d->getTagsString(),
-                ], ';');
+                ]);
             }
             fclose($out);
         });

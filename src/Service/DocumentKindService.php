@@ -120,19 +120,19 @@ final class DocumentKindService implements ResetInterface
      */
     public function match(?string $name): ?DocumentKind
     {
-        $name = DocumentKind::normalizeName($name);
-        if ('' === $name) {
+        // Сравнение без учёта регистра и «ё»/«е»: «Отчеты» — тот же тип, что «Отчёты».
+        $lower = DocumentKind::foldName($name);
+        if ('' === $lower) {
             return null;
         }
-        $lower = mb_strtolower($name);
         foreach ($this->all() as $kind) {
-            if (mb_strtolower($kind->getName()) === $lower) {
+            if (DocumentKind::foldName($kind->getName()) === $lower) {
                 return $kind;
             }
         }
         if (mb_strlen($lower) >= 6) {
             foreach ($this->all() as $kind) {
-                $candidate = mb_strtolower($kind->getName());
+                $candidate = DocumentKind::foldName($kind->getName());
                 if (str_starts_with($candidate, $lower) || str_starts_with($lower, $candidate)) {
                     return $kind;
                 }
@@ -140,7 +140,7 @@ final class DocumentKindService implements ResetInterface
         }
         $stem = self::stem($lower);
         foreach ($this->all() as $kind) {
-            if (self::stem(mb_strtolower($kind->getName())) === $stem) {
+            if (self::stem(DocumentKind::foldName($kind->getName())) === $stem) {
                 return $kind;
             }
         }

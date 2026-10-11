@@ -27,7 +27,7 @@ final class TelegramNotifier
     /** Сколько живёт код привязки. */
     public const CODE_TTL_MINUTES = 30;
 
-    /** Ограничение Telegram на длину сообщения. */
+    /** Ограничение Telegram на длину сообщения (с запасом: Bot API считает длину в символах UTF-16). */
     private const MAX_MESSAGE = 4000;
 
     public function __construct(
@@ -66,9 +66,13 @@ final class TelegramNotifier
     /**
      * Отправка сообщения в чат.
      *
+     * $html — текст размечен HTML в том виде, который принимает Bot API (спецсимволы экранированы);
+     * иначе текст уходит как есть, без разметки (например, произвольное сообщение из консоли —
+     * знак «<» в нём не должен ломать отправку).
+     *
      * @return array{ok: bool, message: string}
      */
-    public function send(string $chatId, string $text, bool $force = false): array
+    public function send(string $chatId, string $text, bool $force = false, bool $html = true): array
     {
         $telegram = $this->settings->telegram();
         if ('' === $telegram['token'] || (!$force && !$telegram['enabled'])) {
@@ -77,12 +81,17 @@ final class TelegramNotifier
         if ('' === trim($chatId)) {
             return ['ok' => false, 'message' => 'Не указан чат получателя.'];
         }
-        $response = $this->call('sendMessage', [
-            'chat_id' => $chatId,
-            'text' => mb_substr($text, 0, self::MAX_MESSAGE),
-            'parse_mode' => 'HTML',
-            'disable_web_page_preview' => true,
-        ], $force);
+        if ($html && self::length($text) > self::MAX_MESSAGE) {
+            // Разметку, обрезанную посередине тега или сущности (&amp;), Bot API не разбирает и
+            // отклоняет всё сообщение — длинный текст уходит без разметки.
+            $text = self::plain($text);
+            $html = false;
+        }
+        $response = $this->call('sendMessage', self::message($chatId, $text, $html), $force);
+        if (!$response['ok'] && $html && str_contains($response['message'], 'parse entities')) {
+            // Разметку не удалось разобрать — повторяем простым текстом, чтобы уведомление не потерялось.
+            $response = $this->call('sendMessage', self::message($chatId, self::plain($text), false), $force);
+        }
         if ($response['ok']) {
             return ['ok' => true, 'message' => 'Сообщение отправлено.'];
         }
@@ -133,17 +142,50 @@ final class TelegramNotifier
     /**
      * Разбор входящих сообщений: привязка чатов по коду и ответы на команды.
      *
-     * @return array{updates: int, linked: int, errors: int, messages: list<string>}
+     * skipped — почему разбор не выполнялся: disabled (уведомления выключены) или busy (сообщения
+     * уже разбирает другой процесс); messages — ошибки и пояснения.
+     *
+     * @return array{updates: int, linked: int, errors: int, skipped: ?string, messages: list<string>}
      */
     public function poll(int $limit = 50): array
     {
-        $stats = ['updates' => 0, 'linked' => 0, 'errors' => 0, 'messages' => []];
+        $stats = ['updates' => 0, 'linked' => 0, 'errors' => 0, 'skipped' => null, 'messages' => []];
         if (!$this->isEnabled()) {
+            $stats['skipped'] = 'disabled';
             $stats['messages'][] = 'Уведомления в Telegram выключены.';
 
             return $stats;
         }
-        $offset = (int) $this->settings->get(PortalSettings::TELEGRAM_OFFSET, 0);
+        // Разбор ведёт один процесс: cron запускает команду каждую минуту, и при медленном ответе Bot API
+        // (или одновременном нажатии кнопки в панели администратора) одни и те же сообщения разбирались бы
+        // дважды — с повторными ответами сотрудникам.
+        $lock = $this->acquireLock();
+        if (false === $lock) {
+            $stats['skipped'] = 'busy';
+            $stats['messages'][] = 'Сообщения бота уже разбирает другой процесс — повторите через минуту.';
+
+            return $stats;
+        }
+        try {
+            $this->pollUpdates(max(1, min(100, $limit)), $stats);
+        } finally {
+            if (true === $lock) {
+                $this->releaseLock();
+            }
+        }
+
+        return $stats;
+    }
+
+    /**
+     * @param array{updates: int, linked: int, errors: int, skipped: ?string, messages: list<string>} $stats
+     */
+    private function pollUpdates(int $limit, array &$stats): void
+    {
+        $bot = self::botId($this->settings->telegram()['token']);
+        // Позиция читается прямо из базы: кэш настроек мог быть прочитан до того, как её сдвинул
+        // предыдущий запуск.
+        $offset = self::storedOffset($this->settings->fresh(PortalSettings::TELEGRAM_OFFSET), $bot);
         $response = $this->call('getUpdates', array_filter([
             'offset' => $offset > 0 ? $offset : null,
             'limit' => $limit,
@@ -154,34 +196,97 @@ final class TelegramNotifier
             ++$stats['errors'];
             $stats['messages'][] = $response['message'];
 
-            return $stats;
+            return;
         }
         $updates = \is_array($response['result'] ?? null) ? $response['result'] : [];
         $maxId = $offset;
-        foreach ($updates as $update) {
-            ++$stats['updates'];
-            $maxId = max($maxId, (int) ($update['update_id'] ?? 0) + 1);
-            $message = $update['message'] ?? null;
-            if (!\is_array($message)) {
-                continue;
+        try {
+            foreach ($updates as $update) {
+                ++$stats['updates'];
+                // Позиция сдвигается до разбора: сообщение, на котором разбор упал, не будет повторяться
+                // при каждом запуске и не остановит очередь.
+                $maxId = max($maxId, (int) ($update['update_id'] ?? 0) + 1);
+                $message = $update['message'] ?? null;
+                if (!\is_array($message)) {
+                    continue;
+                }
+                $chatId = (string) ($message['chat']['id'] ?? '');
+                $text = trim((string) ($message['text'] ?? ''));
+                if ('' === $chatId || '' === $text) {
+                    continue;
+                }
+                $this->handleMessage($chatId, $text, $message, $stats);
             }
-            $chatId = (string) ($message['chat']['id'] ?? '');
-            $text = trim((string) ($message['text'] ?? ''));
-            if ('' === $chatId || '' === $text) {
-                continue;
+        } finally {
+            if ($maxId > $offset) {
+                $this->settings->set(PortalSettings::TELEGRAM_OFFSET, '' !== $bot ? $bot.':'.$maxId : $maxId);
             }
-            $this->handleMessage($chatId, $text, $message, $stats);
         }
-        if ($maxId > $offset) {
-            $this->settings->set(PortalSettings::TELEGRAM_OFFSET, $maxId);
-        }
-
-        return $stats;
     }
 
     /**
-     * @param array<string, mixed>                                                  $message
-     * @param array{updates: int, linked: int, errors: int, messages: list<string>} $stats
+     * Сохранённая позиция разбора сообщений: «идентификатор_бота:номер». Позиция другого бота (токен
+     * заменили) не годится: номера его сообщений другие, и с чужой позицией Telegram считал бы новые
+     * сообщения уже прочитанными — привязка чатов перестала бы работать.
+     */
+    private static function storedOffset(mixed $value, string $bot): int
+    {
+        $value = \is_scalar($value) ? trim((string) $value) : '';
+        if (1 === preg_match('/^(\d+):(\d+)$/', $value, $m)) {
+            return $m[1] === $bot ? (int) $m[2] : 0;
+        }
+
+        // Значение прежних версий — просто номер, без привязки к боту.
+        return ctype_digit($value) ? (int) $value : 0;
+    }
+
+    /** Идентификатор бота — числовая часть токена до двоеточия. */
+    private static function botId(string $token): string
+    {
+        $id = strstr($token, ':', true);
+
+        return false !== $id && ctype_digit($id) ? $id : '';
+    }
+
+    /**
+     * Блокировка разбора сообщений — в базе данных (GET_LOCK), а не файлом: в Docker кнопка в панели
+     * администратора и задание cron работают в разных контейнерах и файлов друг друга не видят.
+     * true — блокировка получена, false — разбор уже идёт в другом процессе, null — база не поддерживает
+     * блокировки (тогда разбор идёт без неё).
+     */
+    private function acquireLock(): ?bool
+    {
+        try {
+            return 1 === (int) $this->em->getConnection()->fetchOne('SELECT GET_LOCK(?, 0)', [$this->lockName()]);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private function releaseLock(): void
+    {
+        try {
+            $this->em->getConnection()->fetchOne('SELECT RELEASE_LOCK(?)', [$this->lockName()]);
+        } catch (\Throwable) {
+            // Блокировка снимется сама при закрытии соединения.
+        }
+    }
+
+    /** Имя блокировки: в нём имя базы — несколько порталов на одном сервере MySQL не мешают друг другу. */
+    public function lockName(): string
+    {
+        $database = '';
+        try {
+            $database = (string) $this->em->getConnection()->getDatabase();
+        } catch (\Throwable) {
+        }
+
+        return mb_substr('docportal:telegram:'.$database, 0, 64);
+    }
+
+    /**
+     * @param array<string, mixed>                                                                   $message
+     * @param array{updates: int, linked: int, errors: int, skipped: ?string, messages: list<string>} $stats
      */
     private function handleMessage(string $chatId, string $text, array $message, array &$stats): void
     {
@@ -222,6 +327,49 @@ final class TelegramNotifier
         $issued = $user->getTelegramCodeAt();
 
         return null !== $issued && $issued > new \DateTimeImmutable(\sprintf('-%d minutes', self::CODE_TTL_MINUTES));
+    }
+
+    /**
+     * Параметры sendMessage: текст укорачивается до ограничения Telegram.
+     *
+     * @return array<string, scalar>
+     */
+    private static function message(string $chatId, string $text, bool $html): array
+    {
+        $params = ['chat_id' => $chatId, 'text' => self::truncate($text), 'disable_web_page_preview' => true];
+        if ($html) {
+            $params['parse_mode'] = 'HTML';
+        }
+
+        return $params;
+    }
+
+    /** Текст без HTML-разметки (для отправки без parse_mode). */
+    private static function plain(string $html): string
+    {
+        return html_entity_decode(strip_tags($html), \ENT_QUOTES | \ENT_HTML5, 'UTF-8');
+    }
+
+    /** Укорачивает текст до MAX_MESSAGE символов UTF-16 (так длину считает Bot API) с многоточием в конце. */
+    private static function truncate(string $text): string
+    {
+        if (self::length($text) <= self::MAX_MESSAGE) {
+            return $text;
+        }
+        $limit = self::MAX_MESSAGE - 1;
+        $cut = mb_substr($text, 0, $limit);
+        while ('' !== $cut && ($excess = self::length($cut) - $limit) > 0) {
+            // Символ занимает одну или две единицы UTF-16: убираем не меньше половины лишнего.
+            $cut = mb_substr($cut, 0, mb_strlen($cut) - max(1, intdiv($excess + 1, 2)));
+        }
+
+        return rtrim($cut).'…';
+    }
+
+    /** Длина текста в единицах UTF-16. */
+    private static function length(string $text): int
+    {
+        return intdiv(\strlen((string) mb_convert_encoding($text, 'UTF-16LE', 'UTF-8')), 2);
     }
 
     /**

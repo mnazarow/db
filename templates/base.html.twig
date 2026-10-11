@@ -8,6 +8,11 @@
     <link rel="icon" href="{{ asset('img/favicon.svg') }}" type="image/svg+xml">
     <link rel="icon" href="{{ asset('favicon-32x32.png') }}" sizes="32x32" type="image/png">
     <link rel="apple-touch-icon" href="{{ asset('apple-touch-icon.png') }}" sizes="180x180">
+    {# Установка как приложения (PWA): манифест, цвет окна, иконки — см. PwaController и public/sw.js #}
+    <link rel="manifest" href="{{ path('app_manifest') }}">
+    <meta name="theme-color" content="#0F4382">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="{{ app_name }}">
     <link rel="preload" href="{{ asset('fonts/DINCondensed-Light.woff2') }}" as="font" type="font/woff2" crossorigin>
     <link rel="preload" href="{{ asset('fonts/DINCondensed-Regular.woff2') }}" as="font" type="font/woff2" crossorigin>
     <link rel="preload" href="{{ asset('fonts/roboto-cyrillic-400-normal.woff2') }}" as="font" type="font/woff2" crossorigin>
@@ -18,7 +23,7 @@
 <a class="skip-link" href="#content">К содержимому</a>
 
 <header class="site-header">
-    <div class="container site-header__inner{{ app.user ? (is_granted('ROLE_ADMIN') ? ' site-header__inner--admin' : (is_granted('MODERATOR') ? ' site-header__inner--moderator')) }}">
+    <div class="container site-header__inner{{ app.user ? (is_granted('ROLE_ADMIN') ? ' site-header__inner--admin' : (is_granted('CONTRIBUTOR') ? ' site-header__inner--moderator')) }}">
         <a class="brand brand--wordmark" href="{{ path('app_home') }}" aria-label="{{ app_company }} — {{ app_name }}">
             {# Штатный логотип vodokomfort.ru уже содержит надпись «ВОДОКОМФОРТ»; на узких экранах — компактный знак #}
             <picture>
@@ -33,14 +38,20 @@
 
         {% set route = app.request.attributes.get('_route') ?? '' %}
         {% if route != 'app_login' %}
-            <nav class="site-nav" aria-label="Основная навигация">
-                <a class="site-nav__link {{ route in ['app_home', 'app_section_show'] or route starts with 'app_document' ? 'is-active' }}" href="{{ path('app_home') }}">Документы</a>
-                {% if app.user and is_granted('MODERATOR') %}
+            <nav class="site-nav" id="site-nav" aria-label="Основная навигация">
+                <a class="site-nav__link {{ route in ['app_home', 'app_section_show'] or (route starts with 'app_document' and route != 'app_document_new') ? 'is-active' }}" href="{{ path('app_home') }}">Документы</a>
+                {% if video_enabled() %}
+                    <a class="site-nav__link" href="{{ video_url('/') }}">Видео</a>
+                {% endif %}
+                {% if app.user and is_granted('CONTRIBUTOR') %}
                     <a class="site-nav__link {{ route == 'app_document_new' ? 'is-active' }}" href="{{ path('app_document_new') }}">Добавить документ</a>
+                    <a class="site-nav__link {{ route == 'app_moderation' ? 'is-active' }}" href="{{ path('app_moderation') }}">Модерация</a>
                 {% endif %}
                 {% if app.user and is_granted('ROLE_ADMIN') %}
                     <a class="site-nav__link {{ route starts with 'admin_' ? 'is-active' }}" href="{{ path('admin_dashboard') }}">Панель администратора</a>
                 {% endif %}
+                {# На узких экранах поле поиска в шапке скрыто — поиск доступен ссылкой в меню. #}
+                <a class="site-nav__link site-nav__link--search {{ route == 'app_search' ? 'is-active' }}" href="{{ path('app_search') }}">Поиск</a>
             </nav>
 
             <form class="header-search" action="{{ path('app_search') }}" method="get" role="search">
@@ -57,6 +68,13 @@
                         <span class="ack-chip__text">на ознакомление</span>
                     </a>
                 {% endif %}
+                {% set moderation_total = moderation_pending() + video_moderation_pending() %}
+                {% if moderation_total > 0 %}
+                    <a class="ack-chip ack-chip--approval" href="{{ path('app_moderation') }}" title="Материалы и видео помощников маркетолога, которые ждут решения">
+                        <span class="ack-chip__count">{{ moderation_total }}</span>
+                        <span class="ack-chip__text">на модерации</span>
+                    </a>
+                {% endif %}
                 {% if approvals_pending() > 0 %}
                     <a class="ack-chip ack-chip--approval" href="{{ path('app_profile_approvals') }}" title="Документы, которые ждут вашего согласования">
                         <span class="ack-chip__count">{{ approvals_pending() }}</span>
@@ -70,7 +88,7 @@
                 {% endif %}
                     <span class="user-chip__avatar" aria-hidden="true">{{ app.user.initials }}</span>
                     <span class="user-chip__name">{{ app.user.displayName }}</span>
-                    <span class="user-chip__role">{{ is_granted('ROLE_ADMIN') ? 'администратор' : (is_granted('MODERATOR') ? 'модератор' : 'пользователь') }}</span>
+                    <span class="user-chip__role">{{ role_label() }}</span>
                 {% if app.user.local %}</a>{% else %}</span>{% endif %}
                 <form method="post" action="{{ path('app_logout') }}" class="inline-form">
                     <input type="hidden" name="_csrf_token" value="{{ csrf_token('logout') }}">
@@ -89,7 +107,7 @@
             </div>
         {% endif %}
         {% if route != 'app_login' %}
-            <button class="nav-toggle" type="button" aria-label="Открыть меню" aria-expanded="false" data-nav-toggle>
+            <button class="nav-toggle" type="button" aria-label="Меню" aria-controls="site-nav" aria-expanded="false" data-nav-toggle>
                 <span></span><span></span><span></span>
             </button>
         {% endif %}
@@ -114,7 +132,10 @@
                 <a href="{{ path('app_home') }}">Разделы и документы</a>
                 <a href="{{ path('app_search') }}">Поиск</a>
                 <a href="{{ path('app_profile_acknowledgements') }}">Мои ознакомления</a>
+                {% if has_team() %}<a href="{{ path('app_profile_team') }}">Мои сотрудники</a>{% endif %}
                 {% if approvals_pending() > 0 %}<a href="{{ path('app_profile_approvals') }}">Мне на согласование</a>{% endif %}
+                {% if is_contributor() %}<a href="{{ path('app_moderation') }}">Модерация материалов</a>{% endif %}
+                {% if video_enabled() %}<a href="{{ video_url('/') }}">Видео</a>{% endif %}
                 <a href="{{ path('app_profile_subscriptions') }}">Подписки и уведомления</a>
                 {% if app.user.local %}<a href="{{ path('app_password_change') }}">Сменить пароль</a>{% endif %}
                 <a href="{{ path('app_2fa_setup') }}">Двухфакторная аутентификация</a>

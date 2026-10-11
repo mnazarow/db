@@ -54,6 +54,15 @@ class DocumentKind
         $this->createdAt = new \DateTimeImmutable();
     }
 
+    /**
+     * Ключ для сравнения названий: без учёта регистра и различия «ё» и «е» — так же сравнивает база
+     * (сопоставление utf8mb4_unicode_ci), и уникальный индекс не пустил бы «Отчеты» рядом с «Отчётами».
+     */
+    public static function foldName(?string $name): string
+    {
+        return str_replace('ё', 'е', mb_strtolower(self::normalizeName($name)));
+    }
+
     /** Название в едином виде: пробелы по краям и повторные пробелы убираются, первая буква — прописная. */
     public static function normalizeName(?string $name): string
     {

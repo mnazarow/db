@@ -20,7 +20,7 @@
                         <td><a class="doc-table__title" href="{{ path('app_document_show', {id: a.document.id}) }}">{{ a.document.title }}</a>{% if a.document.code %}<div class="hints">{{ a.document.code }}</div>{% endif %}</td>
                         <td>{{ a.document.section.fullName }}</td>
                         <td>v{{ a.versionNumber }}</td>
-                        <td>{{ a.approver.displayName }}{% if a.approver.department %}<div class="hints">{{ a.approver.department }}</div>{% endif %}</td>
+                        <td>{{ a.approverLabel }}{% if a.approver and a.approver.department %}<div class="hints">{{ a.approver.department }}</div>{% endif %}</td>
                         <td>{{ a.requestedBy ? a.requestedBy.displayName : '—' }}</td>
                         <td class="col-nowrap">{{ a.requestedAt|date('d.m.Y H:i') }}<div class="hints">{{ (date().timestamp - a.requestedAt.timestamp) // 86400 }} дн. назад</div></td>
                         <td class="col-comment">{{ a.requestNote ?: '—' }}</td>

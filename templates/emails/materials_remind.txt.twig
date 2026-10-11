@@ -1,0 +1,19 @@
+Здравствуйте, {{ user.displayName }}!
+
+Еженедельная сводка по таблицам материалов: {{ total|plural(['материал требует', 'материала требуют', 'материалов требуют']) }} внимания ({{ states|join(', ')|lower }}).
+{% for entry in entries %}
+
+{{ entry.section.name }} ({% for state, count in entry.counts %}{{ state|lower }} — {{ count }}{{ not loop.last ? ', ' }}{% endfor %}): {{ entry.url }}
+{% for item in entry.rows|slice(0, max_rows) %}
+- [{{ item.state }}] {{ item.row.title ?: 'без названия' }}{% if item.row.kind %} ({{ item.row.kind.name }}){% endif %}{% if item.comment %} — {{ item.comment|length > 200 ? item.comment|slice(0, 199) ~ '…' : item.comment }}{% endif %}
+
+{% endfor %}
+{% if entry.rows|length > max_rows %}…и ещё {{ entry.rows|length - max_rows }} — в таблице раздела.
+{% endif %}
+{% endfor %}
+
+Откройте таблицу раздела, чтобы обновить материалы и отметки «Требования PM» и «Дизайн-требования».
+
+--
+Письмо отправлено автоматически порталом «{{ app_name }}», потому что вы отвечаете за раздел.
+Рассылку настраивает администратор: панель администратора → Материалы. Отвечать на письмо не нужно.

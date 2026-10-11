@@ -74,6 +74,15 @@
                     <label class="form-label" for="sso-admin-value">Значение для администратора</label>
                     <input class="form-control" id="sso-admin-value" name="admin_value" value="{{ sso.admin_value }}" placeholder="docportal-admins">
                 </div>
+                <div class="form-row">
+                    <label class="form-label" for="sso-marketer-value">Значение для маркетолога</label>
+                    <input class="form-control" id="sso-marketer-value" name="marketer_value" value="{{ sso.marketer_value|default('') }}" placeholder="marketing">
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="sso-assistant-value">Значение для помощника маркетолога</label>
+                    <input class="form-control" id="sso-assistant-value" name="assistant_value" value="{{ sso.assistant_value|default('') }}" placeholder="marketing-assistants">
+                    <p class="form-help">Если задано значение для маркетолога или помощника, роль сотрудника при каждом входе через SSO берётся из утверждения с ролями (иначе роли назначаются в карточке пользователя).</p>
+                </div>
             </div>
             <div class="form-actions">
                 <button type="submit" class="btn btn--pill btn--small">Сохранить</button>
@@ -104,6 +113,95 @@
         <p class="form-help">Каждый сотрудник включает второй фактор сам: «Двухфакторная аутентификация» в подвале страницы.
             Портал показывает QR-код для приложения-аутентификатора и восемь резервных кодов на случай утери телефона.
             Если политика включена, администратор без второго фактора при входе попадёт на страницу настройки.</p>
+    </div>
+
+    <div class="card card--form" id="kerberos">
+        <div class="card__head"><h2 class="h-section">Вход через Windows (Kerberos)</h2>
+            {% if kerberos.enabled %}<span class="badge badge--done"><span class="badge__dot"></span>включён</span>
+            {% else %}<span class="badge"><span class="badge__dot"></span>выключен</span>{% endif %}</div>
+        <p class="form-help">Сотрудники с компьютеров в домене входят без пароля — под учётной записью Windows. Проверяет её веб-сервер:
+            nginx с модулем SPNEGO (на сервере портала его настраивает команда
+            <code>docportal kerberos on --keytab /путь/http.keytab --service HTTP/{{ app.request.host }}</code>)
+            или прокси перед порталом (Apache с mod_auth_gssapi, IIS), который передаёт учётную запись заголовком.
+            Адрес входа: <code>{{ kerberos_url }}</code>.</p>
+        <form method="post" action="{{ path('admin_security_kerberos') }}" class="form">
+            <input type="hidden" name="_token" value="{{ csrf_token('security') }}">
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="enabled" value="1" {{ kerberos.enabled ? 'checked' }}><span>Разрешить вход через Windows</span></label>
+            </div>
+            <div class="form-row">
+                <span class="form-label">Откуда портал берёт учётную запись</span>
+                <div class="radio-stack">
+                    <label class="form-check form-check--radio"><input type="radio" name="source" value="remote_user" {{ kerberos.source == 'remote_user' ? 'checked' }}><span>От nginx этого сервера (переменная REMOTE_USER, модуль SPNEGO)</span></label>
+                    <label class="form-check form-check--radio"><input type="radio" name="source" value="header" {{ kerberos.source == 'header' ? 'checked' }}><span>Из заголовка от прокси перед порталом (Apache, IIS)</span></label>
+                </div>
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="krb-header">Заголовок с учётной записью</label>
+                <input class="form-control" id="krb-header" name="header" value="{{ kerberos.header }}" maxlength="64" placeholder="X-Remote-User">
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="krb-proxies">Адреса доверенных прокси</label>
+                <input class="form-control" id="krb-proxies" name="trusted_proxies" value="{{ kerberos.trusted_proxies }}" placeholder="10.0.0.5, 10.0.1.0/24">
+                <p class="form-help">Только для заголовка: с других адресов заголовок не принимается, иначе его мог бы подставить кто угодно.</p>
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="krb-realms">Допустимые домены (области Kerberos)</label>
+                <input class="form-control" id="krb-realms" name="realms" value="{{ kerberos.realms }}" placeholder="CORP.LOCAL, CORP">
+                <p class="form-help">Пусто — любые, которым доверяет веб-сервер. Учётная запись «ivanov@CORP.LOCAL» или «CORP\ivanov» становится логином «ivanov».</p>
+            </div>
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="auto" value="1" {{ kerberos.auto ? 'checked' }}><span>Входить через Windows сразу, без нажатия кнопки (после выхода и при неудаче — форма с паролем)</span></label>
+            </div>
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="create_users" value="1" {{ kerberos.create_users ? 'checked' }}><span>Заводить учётную запись при первом входе (данные — из Active Directory, если настроен LDAP)</span></label>
+            </div>
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="allow_local" value="1" {{ kerberos.allow_local ? 'checked' }}><span>Пускать и в локальные учётные записи портала с тем же логином (не рекомендуется: доменный «admin» вошёл бы в локального администратора)</span></label>
+            </div>
+            <div class="form-actions"><button type="submit" class="btn btn--pill btn--small">Сохранить</button></div>
+        </form>
+        <p class="form-help">В браузерах сотрудников адрес портала должен быть в зоне «Местная интрасеть» (групповая политика
+            «Список назначений зоны для веб-сайтов»); для Chrome и Edge — политика AuthServerAllowlist, для Firefox —
+            network.negotiate-auth.trusted-uris. Вход через Windows проходит и двухфакторную проверку, если она включена у сотрудника.</p>
+    </div>
+
+    <div class="card card--form" id="watermark">
+        <div class="card__head"><h2 class="h-section">Водяной знак на PDF</h2>
+            {% if watermark.mode == 'off' %}<span class="badge"><span class="badge__dot"></span>выключен</span>
+            {% elseif watermark_available %}<span class="badge badge--done"><span class="badge__dot"></span>включён</span>
+            {% else %}<span class="badge badge--overdue"><span class="badge__dot"></span>нет qpdf</span>{% endif %}</div>
+        <p class="form-help">При просмотре и скачивании PDF (и предпросмотре офисных файлов) поверх страниц ставится полупрозрачная
+            надпись с ФИО и логином сотрудника, датой и временем, а внизу страницы — строка «Выдано: …» с адресом компьютера.
+            Файл в хранилище не меняется: копия со знаком готовится для каждого скачивания.</p>
+        {% if not watermark_available %}
+            <div class="alert alert--warning">На сервере нет программы <code>qpdf</code>. Установите пакет: <code>apt install qpdf</code> (Debian, Ubuntu, Astra) или <code>dnf install qpdf</code> (RHEL, РЕД ОС); при обновлении портала скрипт ставит его сам. Без qpdf файлы отдаются без знака, в «Мониторинге» — предупреждение.</div>
+        {% endif %}
+        <form method="post" action="{{ path('admin_security_watermark') }}" class="form">
+            <input type="hidden" name="_token" value="{{ csrf_token('security') }}">
+            <div class="form-row">
+                <label class="form-label" for="wm-mode">Ставить знак</label>
+                <select class="form-control" id="wm-mode" name="mode">
+                    {% for value, label in watermark_modes %}<option value="{{ value }}" {{ watermark.mode == value ? 'selected' }}>{{ label }}</option>{% endfor %}
+                </select>
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="wm-text">Текст перед ФИО</label>
+                <input class="form-control" id="wm-text" name="text" maxlength="60" value="{{ watermark.text }}" placeholder="Для служебного пользования">
+                <p class="form-help">Необязательно. Например, «Для служебного пользования» или «Копия, не подлежит распространению».</p>
+            </div>
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="skip_editors" value="1" {{ watermark.skip_editors ? 'checked' }}><span>Не ставить знак тем, кто может править документ (модераторы раздела, администраторы) — им нужен чистый файл для новой редакции</span></label>
+            </div>
+            <div class="form-actions"><button type="submit" class="btn btn--pill btn--small">Сохранить</button></div>
+        </form>
+        <dl class="meta meta--stack meta--spaced">
+            <div><dt>Так будет выглядеть надпись</dt><dd>{{ watermark_sample.main }}</dd></div>
+            <div><dt>Строка внизу страницы</dt><dd>{{ watermark_sample.footer }}</dd></div>
+        </dl>
+        <p class="form-help">Знак ставится на файлы PDF и на предпросмотр офисных файлов. Исходные Word, Excel и другие файлы скачиваются как есть;
+            страницы портала показываются в браузере. Сборники разделов получают знак в режимах «закрытые от гостей» и «все»,
+            если знак ставится и модераторам. Файлы крупнее 200 МБ отдаются без знака.</p>
     </div>
 </div>
 {% endblock %}

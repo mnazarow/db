@@ -71,7 +71,7 @@ final class DocumentTemplateService
             return null;
         }
         $today ??= new \DateTimeImmutable();
-        $year = (int) $today->format('Y');
+        $year = $this->counterYear($template, $pattern, $today);
         for ($attempt = 0; $attempt < self::MAX_ATTEMPTS; ++$attempt) {
             $code = $this->render($pattern, $today, $template->takeNumber($year));
             if (null === $this->documents->findOneBy(['code' => $code])) {
@@ -83,6 +83,20 @@ final class DocumentTemplateService
         $this->em->flush();
 
         return null;
+    }
+
+    /**
+     * Год, к которому относится счётчик. Нумерация начинается заново с нового года, только если год есть
+     * в образце («ПР-{ГОД}-{NNN}»). Без года («ПР-{NNN}») счётчик продолжается, иначе 1 января номера
+     * совпали бы с прошлогодними.
+     */
+    private function counterYear(DocumentTemplate $template, string $pattern, \DateTimeImmutable $today): int
+    {
+        if (1 !== preg_match('/\{(ГОД|YYYY|ГГ|YY)\}/u', $pattern) && $template->getCounterYear() > 0) {
+            return $template->getCounterYear();
+        }
+
+        return (int) $today->format('Y');
     }
 
     /** Подставляет год, месяц и номер в образец. */
@@ -117,7 +131,7 @@ final class DocumentTemplateService
             return null;
         }
         $today ??= new \DateTimeImmutable();
-        $year = (int) $today->format('Y');
+        $year = $this->counterYear($template, $pattern, $today);
         $next = $template->getCounterYear() === $year ? $template->getCounter() + 1 : 1;
 
         return $this->render($pattern, $today, $next);

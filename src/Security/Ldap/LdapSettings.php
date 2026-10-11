@@ -24,7 +24,15 @@ final class LdapSettings
         public readonly string $mailAttr,
         public readonly string $adminGroup,
         public readonly string $userGroup,
+        public readonly string $marketerGroup = '',
+        public readonly string $assistantGroup = '',
     ) {
+    }
+
+    /** Заданы ли группы ролей «Маркетолог» / «Помощник маркетолога»: тогда роль берётся из каталога. */
+    public function rolesFromGroups(): bool
+    {
+        return '' !== trim($this->marketerGroup) || '' !== trim($this->assistantGroup);
     }
 
     public function isExtensionLoaded(): bool
@@ -76,6 +84,8 @@ final class LdapSettings
             'name_attr' => $this->nameAttr,
             'mail_attr' => $this->mailAttr,
             'admin_group' => $this->adminGroup,
+            'marketer_group' => $this->marketerGroup,
+            'assistant_group' => $this->assistantGroup,
             'user_group' => $this->userGroup,
         ];
     }

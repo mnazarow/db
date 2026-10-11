@@ -63,7 +63,13 @@ parameters:
     app.ldap.name_attr: '%env(LDAP_NAME_ATTR)%'
     app.ldap.mail_attr: '%env(LDAP_MAIL_ATTR)%'
     app.ldap.admin_group: '%env(LDAP_ADMIN_GROUP)%'
+    app.ldap.marketer_group: '%env(LDAP_MARKETER_GROUP)%'
+    app.ldap.assistant_group: '%env(LDAP_ASSISTANT_GROUP)%'
     app.ldap.user_group: '%env(LDAP_USER_GROUP)%'
+    # Раздел «Видео» (встроенный видеопортал по адресу /video, общий вход с порталом).
+    app.video.enabled: '%env(bool:VIDEO_ENABLED)%'
+    app.video.base_path: '%env(VIDEO_BASE_PATH)%'
+    app.video.shared_secret: '%env(VIDEO_SHARED_SECRET)%'
 
 services:
     _defaults:
@@ -111,6 +117,14 @@ services:
             $mailAttr: '%app.ldap.mail_attr%'
             $adminGroup: '%app.ldap.admin_group%'
             $userGroup: '%app.ldap.user_group%'
+            $marketerGroup: '%app.ldap.marketer_group%'
+            $assistantGroup: '%app.ldap.assistant_group%'
+
+    App\Service\Video\VideoIntegration:
+        arguments:
+            $enabled: '%app.video.enabled%'
+            $basePath: '%app.video.base_path%'
+            $sharedSecret: '%app.video.shared_secret%'
 
     # Извлечение текста из файлов документов (API для RAG, описания через LLM); кэш — в var/cache/<env>/doc-text.
     App\Service\Text\TextExtractor:

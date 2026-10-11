@@ -1,0 +1,16 @@
+# зависимости и сборка
+node_modules/
+web/dist/
+# данные и секреты
+server/data/
+server/.env
+.env
+deploy/mediamtx/mediamtx.yml
+# ВАЖНО: только каталог в корне (скачанный бинарник MediaMTX). Без ведущей косой черты
+# шаблон исключал бы и deploy/mediamtx/ вместе с mediamtx.yml.template.
+/mediamtx/
+# служебные
+*.log
+.DS_Store
+Thumbs.db
+/docs/*.docx~

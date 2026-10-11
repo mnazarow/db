@@ -1,5 +1,20 @@
 Здравствуйте, {{ user.displayName }}!
-{% if kind == 'requested' %}
+{% set moderation = moderation|default(approval.moderation) %}
+{% if kind == 'requested' and moderation %}
+
+{{ approval.requestedBy ? approval.requestedBy.displayName : 'Помощник маркетолога' }} отправил материал на модерацию:
+
+- {{ document.title }}{% if document.code %} ({{ document.code }}){% endif %} — {{ document.section.fullName }}, редакция {{ approval.versionNumber }}
+  {{ url }}
+{% if approval.requestNote %}
+
+Комментарий: {{ approval.requestNote }}
+{% endif %}
+
+Откройте материал, проверьте его и примите решение — «Одобрить и опубликовать» или
+«Вернуть на доработку» — в карточке документа или на странице «На модерации».
+Решает первый ответивший маркетолог.
+{% elseif kind == 'requested' %}
 
 Вам отправили документ на согласование:
 
@@ -14,8 +29,8 @@
 в карточке документа или в разделе «Мне на согласование».
 {% elseif kind == 'approved' %}
 
-Документ согласован: {{ document.title }}{% if document.code %} ({{ document.code }}){% endif %},
-редакция {{ approval.versionNumber }}. Согласующий: {{ approval.approver.displayName }}.
+{{ moderation ? 'Материал одобрен и опубликован' : 'Документ согласован' }}: {{ document.title }}{% if document.code %} ({{ document.code }}){% endif %},
+редакция {{ approval.versionNumber }}. {{ moderation ? 'Решение принял' : 'Согласующий' }}: {{ approval.deciderName }}.
 {% if approval.decisionNote %}
 Комментарий: {{ approval.decisionNote }}
 {% endif %}
@@ -23,13 +38,13 @@
 {{ url }}
 {% else %}
 
-Документ отклонён при согласовании: {{ document.title }}{% if document.code %} ({{ document.code }}){% endif %},
-редакция {{ approval.versionNumber }}. Согласующий: {{ approval.approver.displayName }}.
+{{ moderation ? 'Материал возвращён на доработку' : 'Документ отклонён при согласовании' }}: {{ document.title }}{% if document.code %} ({{ document.code }}){% endif %},
+редакция {{ approval.versionNumber }}. {{ moderation ? 'Решение принял' : 'Согласующий' }}: {{ approval.deciderName }}.
 {% if approval.decisionNote %}
 Причина: {{ approval.decisionNote }}
 {% endif %}
 
-Внесите правки и отправьте документ на согласование заново: {{ url }}
+Внесите правки и отправьте {{ moderation ? 'материал на модерацию' : 'документ на согласование' }} заново: {{ url }}
 {% endif %}
 
 --

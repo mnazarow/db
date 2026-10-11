@@ -1,0 +1,76 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}Мои сотрудники{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        <div class="eyebrow">{{ own ? 'Личный кабинет' : 'Руководитель: ' ~ manager.displayName }}</div>
+        <h1 class="h-display">{{ own ? 'Мои сотрудники' : 'Сотрудники руководителя' }}</h1>
+        <p class="hero__meta">Ознакомление с документами{{ video_on ? ' и обязательные просмотры видео' }} — по оргструктуре: прямые подчинённые и их сотрудники.</p>
+    </div>
+</section>
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+    {% set t = report.totals %}
+    {% if report.people is empty %}
+        <div class="card"><div class="table-card__empty">{{ own ? 'У вас нет подчинённых в оргструктуре портала.' : 'У этого руководителя нет подчинённых.' }}
+            Руководителей назначает администратор — в карточке пользователя или загрузкой оргструктуры из 1С.</div></div>
+    {% else %}
+    <div class="grid grid--stats grid--team">
+        <div class="card"><div class="stat__label">Сотрудников</div><div class="stat__value">{{ t.people }}</div></div>
+        <div class="card"><div class="stat__label">Ознакомления</div><div class="stat__value stat__value--text">{{ t.docs_confirmed }} из {{ t.docs_assigned }}</div><div class="stat__hint">выполнено</div></div>
+        {% if report.video_available %}<div class="card"><div class="stat__label">Обязательные видео</div><div class="stat__value stat__value--text">{{ t.video_completed }} из {{ t.video_assigned }}</div><div class="stat__hint">просмотрено</div></div>{% endif %}
+        <div class="card"><div class="stat__label">Просрочено</div><div class="stat__value {{ t.overdue > 0 ? 'text-danger' }}">{{ t.overdue }}</div></div>
+    </div>
+    {% if video_on and not report.video_available %}
+        <div class="alert alert--warning">Раздел «Видео» сейчас не ответил — показаны только документы.</div>
+    {% endif %}
+    <div class="card table-card">
+        <div class="card__head card__head--padded"><h2 class="h-section">Сотрудники</h2>
+            <a class="btn btn--ghost btn--small" href="{{ path('app_profile_team_csv', own ? {} : {manager: manager.username}) }}">Выгрузить CSV</a></div>
+        <div class="table-scroll"><table class="admin-table team-table">
+            <thead><tr><th>Сотрудник</th><th>Документы</th>{% if report.video_available %}<th>Видео</th>{% endif %}<th>Не выполнено</th></tr></thead>
+            <tbody>
+            {% for row in report.people %}
+                {% set u = row.user %}
+                <tr class="{{ row.overdue > 0 ? 'is-expired' }}">
+                    <td>
+                        <div class="team-table__person" style="--depth: {{ row.depth - 1 }}">
+                            <b>{{ u.displayName }}</b>
+                            <div class="hints">{{ [u.jobTitle, u.department]|filter(v => v)|join(', ') ?: u.username }}{% if row.depth > 1 and u.manager %} · руководитель: {{ u.manager.displayName }}{% endif %}</div>
+                        </div>
+                    </td>
+                    <td class="col-nowrap" data-label="Документы">
+                        {% if row.docs.assigned > 0 %}{{ row.docs.confirmed }} из {{ row.docs.assigned }}{% if row.docs.overdue > 0 %} <span class="text-danger">просрочено {{ row.docs.overdue }}</span>{% endif %}{% else %}<span class="text-muted">—</span>{% endif %}
+                    </td>
+                    {% if report.video_available %}
+                    <td class="col-nowrap" data-label="Видео">
+                        {% if row.video.assigned > 0 %}{{ row.video.completed }} из {{ row.video.assigned }}{% if row.video.overdue > 0 %} <span class="text-danger">просрочено {{ row.video.overdue }}</span>{% endif %}{% else %}<span class="text-muted">—</span>{% endif %}
+                    </td>
+                    {% endif %}
+                    <td data-label="Не выполнено">
+                        {% if row.pending == 0 %}<span class="badge badge--done"><span class="badge__dot"></span>всё выполнено</span>
+                        {% else %}
+                            <details class="team-table__details">
+                                <summary title="Показать, что не выполнено"><span class="badge {{ row.overdue > 0 ? 'badge--overdue' : 'badge--soon' }}"><span class="badge__dot"></span>{{ row.pending }}{{ row.overdue > 0 ? ', просрочено ' ~ row.overdue }}</span> <span class="team-table__more">подробнее</span></summary>
+                                {% if row.documents is not empty %}
+                                <ul class="mini-list">
+                                    {% for d in row.documents %}
+                                        <li>{% if d.title %}<a href="{{ path('app_document_show', {id: d.url_id}) }}">{{ d.title }}</a>{% else %}<span class="text-muted">документ с ограниченным доступом</span>{% endif %}
+                                            {% if d.due %}<span class="{{ d.overdue ? 'text-danger' : 'text-muted' }}"> · до {{ d.due|date('d.m.Y') }}</span>{% endif %}</li>
+                                    {% endfor %}
+                                </ul>
+                                {% endif %}
+                                {% if row.video.assigned > row.video.completed %}<div class="hints">Видео не просмотрено: {{ row.video.assigned - row.video.completed }}</div>{% endif %}
+                            </details>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table></div>
+    </div>
+    {% endif %}
+</section>
+{% endblock %}

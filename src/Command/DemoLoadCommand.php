@@ -87,6 +87,10 @@ final class DemoLoadCommand extends Command
         $sidorov = $this->ensureUser('sidorov', 'Сидоров Алексей Николаевич', false, 'sidorov@example.ru', 'Производство');
         $kuznetsova = $this->ensureUser('kuznetsova', 'Кузнецова Елена Викторовна', false, 'kuznetsova@example.ru', 'Отдел кадров');
         $smirnov = $this->ensureUser('smirnov', 'Смирнов Дмитрий Олегович', false, 'smirnov@example.ru', 'Отдел продаж');
+        // Роли маркетинга (1.8): маркетолог — модератор всех разделов и видео, помощник — публикует через модерацию.
+        $this->ensureUser('markova', 'Маркова Анна Викторовна', false, 'markova@example.ru', 'Отдел маркетинга')->setPosition(User::POSITION_MARKETER);
+        $this->ensureUser('belov', 'Белов Кирилл Андреевич', false, 'belov@example.ru', 'Отдел маркетинга')->setPosition(User::POSITION_ASSISTANT);
+        $this->em->flush();
         $readers = [$smirnov, $sidorov, $kuznetsova, $ivanov, $petrova, $smirnov];
 
         // --- Разделы ----------------------------------------------------------------------
@@ -290,6 +294,8 @@ HTML, true, [
             ['sidorov', 'модератор разделов «Производство» и «Насосные станции»', self::PASSWORD],
             ['kuznetsova', 'модератор раздела «Кадры»', self::PASSWORD],
             ['smirnov', 'обычный пользователь (только чтение)', self::PASSWORD],
+            ['markova', 'маркетолог (модератор всех разделов и видео)', self::PASSWORD],
+            ['belov', 'помощник маркетолога (публикует через модерацию)', self::PASSWORD],
         ]);
 
         return Command::SUCCESS;
@@ -571,7 +577,12 @@ HTML, true, [
         // document_deletion, document_text и document_acknowledgement тоже очищаем: иначе записи остались бы
         // от прежних демо-данных и относились бы к идентификаторам, которые после перезагрузки
         // принадлежат другим документам (TRUNCATE сбрасывает счётчик, и номера выдаются заново).
-        foreach (['document_event', 'document_version', 'document_text', 'document_acknowledgement', 'document_approval', 'document_question', 'document_comment', 'document_subscription', 'document_link', 'material_row', 'material_parameter', 'document', 'document_kind', 'document_deletion', 'document_template', 'section_moderator', 'section'] as $table) {
+        // document_allowed_user — списки допуска документов с ограниченным доступом: без очистки строки
+        // «привязались» бы к новым документам с теми же номерами.
+        foreach (['document_event', 'document_version', 'document_version_content', 'document_text', 'document_acknowledgement', 'document_approval', 'document_question', 'document_comment', 'document_subscription', 'document_link', 'document_allowed_user', 'material_row', 'material_parameter', 'document', 'document_kind', 'document_deletion', 'document_template', 'section_moderator', 'section'] as $table) {
+            if (!$this->connection->createSchemaManager()->tablesExist([$table])) {
+                continue;
+            }
             $this->connection->executeStatement('TRUNCATE TABLE '.$table);
         }
         $this->connection->executeStatement('SET FOREIGN_KEY_CHECKS = 1');

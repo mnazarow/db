@@ -1,0 +1,31 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}Проверка листа ознакомления{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        <div class="eyebrow">Проверка подлинности</div>
+        <h1 class="h-display">Проверка листа ознакомления</h1>
+        <p class="hero__meta">Введите код с листа ознакомления, выданного порталом, — или отсканируйте QR-код на листе.</p>
+    </div>
+</section>
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+    <div class="card card--form">
+        {% if not_found|default(false) %}
+            <div class="alert alert--danger" role="alert">Лист с кодом <b>{{ input }}</b> порталом не выдавался. Проверьте, что код набран без ошибок: перепутанные буквы O и 0, I и 1 исправляются сами, остальные — нет.</div>
+        {% elseif invalid %}
+            <div class="alert alert--danger" role="alert">Код набран неверно: в нём 16 букв и цифр, на листе они разделены дефисами по четыре (например, 7K2M-9QXD-4TRB-H8NA).</div>
+        {% endif %}
+        <form method="get" action="{{ path('app_verify_form') }}" class="form">
+            <div class="form-row">
+                <label class="form-label" for="verify-code">Код проверки</label>
+                <input class="form-control" type="text" id="verify-code" name="code" value="{{ input }}" required autofocus autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="40" placeholder="XXXX-XXXX-XXXX-XXXX" {% if invalid or not_found|default(false) %}aria-invalid="true"{% endif %}>
+                <div class="form-help">Код напечатан внизу каждой страницы листа и рядом с QR-кодом. Регистр букв и пробелы не важны.</div>
+            </div>
+            <button class="btn btn--pill" type="submit">Проверить</button>
+        </form>
+    </div>
+</section>
+{% endblock %}

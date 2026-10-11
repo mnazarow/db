@@ -33,7 +33,7 @@ final class ReindexTextCommand extends Command
     {
         $this
             ->addOption('all', null, InputOption::VALUE_NONE, 'Переиндексировать все документы, а не только изменившиеся')
-            ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Не больше N документов за запуск', '500')
+            ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Не больше N документов за запуск (с --all — размер партии: проходятся все документы)', '500')
             ->addOption('status', null, InputOption::VALUE_NONE, 'Только показать состояние индекса');
     }
 

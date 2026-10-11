@@ -11,7 +11,8 @@
             <h1 class="h-display">{{ document.title }}</h1>
             <div class="hero__actions">
                 <a class="btn btn--ghost" href="{{ path('app_document_show', {id: document.id}) }}">← К документу</a>
-                <a class="btn btn--ghost" href="{{ path('app_document_acknowledgements_sheet', {id: document.id, version: report.version}) }}" target="_blank" rel="noopener">Лист ознакомления</a>
+                <a class="btn btn--ghost" href="{{ path('app_document_acknowledgements_sheet', {id: document.id, version: report.version}) }}" target="_blank" rel="noopener">Лист для печати</a>
+                <a class="btn btn--ghost" href="{{ path('app_document_acknowledgements_pdf', {id: document.id, version: report.version}) }}" title="PDF с кодом проверки подлинности (QR)">Лист в PDF</a>
                 <a class="btn btn--ghost" href="{{ path('app_document_acknowledgements_csv', {id: document.id, version: report.version}) }}">Выгрузить CSV</a>
                 <a class="btn btn--pill" href="{{ path('app_document_acknowledge_assign', {id: document.id}) }}">Назначить ещё</a>
             </div>
@@ -62,7 +63,7 @@
         </table></div>
         {% endif %}
         <div class="card__padded">
-            <p class="form-help">Подтверждение относится к редакции {{ report.version }} документа. Электронное подтверждение в собственной информационной системе работодателя приравнивается к ознакомлению под подпись, если порядок закреплён приказом по предприятию (ст. 22.1–22.3 ТК РФ); при необходимости распечатайте «Лист ознакомления» и подшейте его.</p>
+            <p class="form-help">Подтверждение относится к редакции {{ report.version }} документа. Электронное подтверждение в собственной информационной системе работодателя приравнивается к ознакомлению под подпись, если порядок закреплён приказом по предприятию (ст. 22.1–22.3 ТК РФ); при необходимости распечатайте «Лист для печати» и подшейте его. «Лист в PDF» содержит код проверки с QR-кодом: по нему любой проверяющий на странице «Проверка листа» убедится, что лист выдан порталом и совпадает с текущими записями.</p>
         </div>
     </div>
 </section>

@@ -11,8 +11,10 @@ use App\Repository\DocumentAcknowledgementRepository;
 use App\Repository\DocumentRepository;
 use App\Repository\SectionRepository;
 use App\Security\Access;
+use App\Service\Llm\AnswerService;
 use App\Service\StatsService;
 use App\Service\Text\SearchQuery;
+use App\Service\Video\VideoApi;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -27,6 +29,8 @@ final class HomeController extends AbstractController
         private readonly DocumentAcknowledgementRepository $acknowledgements,
         private readonly Access $access,
         private readonly StatsService $stats,
+        private readonly ?VideoApi $videoApi = null,
+        private readonly ?AnswerService $answers = null,
     ) {
     }
 
@@ -43,18 +47,31 @@ final class HomeController extends AbstractController
         $counts = self::subtreeCounts($tree, $this->documents->countPerSection($guest, $viewer));
         $managedIds = $guest ? [] : $this->access->managedSectionIds($user);
         $isModerator = !$guest && $this->access->isModerator($user);
+        // Помощник маркетолога видит черновики всех разделов: он их готовит к модерации.
+        $isAssistant = !$guest && !$isModerator && $this->access->isAssistant($user);
+
+        // Подразделы берутся из уже загруженного дерева: обращение к $section->getChildren() в шаблоне
+        // догружало бы каждую коллекцию отдельным запросом.
+        $children = [];
+        foreach ($tree as $section) {
+            if (null !== $section->getParent()) {
+                $children[$section->getParent()->getId()][] = $section;
+            }
+        }
 
         return $this->render('home/index.html.twig', [
             'roots' => array_values(array_filter($tree, static fn (Section $s) => null === $s->getParent())),
+            'children' => $children,
             'tree' => $tree,
             'counts' => $counts,
             'recent' => $this->documents->findRecentPublished(8, $guest, $viewer),
             'expiring' => $isModerator ? $this->stats->expiring($managedIds, 8) : [],
-            'drafts' => $isModerator ? $this->documents->findDrafts($managedIds, 6) : [],
+            'drafts' => $isModerator ? $this->documents->findDrafts($managedIds, 6) : ($isAssistant ? $this->documents->findDrafts(null, 6) : []),
             'is_moderator' => $isModerator,
+            'is_assistant' => $isAssistant,
             'total_published' => $this->documents->countByStatus(null, $guest, $viewer)[Document::STATUS_PUBLISHED],
             // Что сотруднику нужно прочитать под подпись.
-            'to_acknowledge' => $guest ? [] : $this->acknowledgements->findPendingForUser($user, 6),
+            'to_acknowledge' => $guest ? [] : $this->acknowledgements->findPendingForUser($user, 6, $viewer),
             'today' => new \DateTimeImmutable('today'),
         ]);
     }
@@ -67,9 +84,10 @@ final class HomeController extends AbstractController
         $section = $sectionId > 0 ? $this->sections->find($sectionId) : null;
         $results = [];
         $content = [];
+        $videos = null;
         $query = SearchQuery::parse($q);
         if (mb_strlen($q) >= 2) {
-            $statuses = null !== $user && $this->access->isModerator($user) ? Document::STATUSES : [Document::STATUS_PUBLISHED];
+            $statuses = null !== $user && $this->access->isContributor($user) ? Document::STATUSES : [Document::STATUS_PUBLISHED];
             $viewer = $this->access->viewer($user);
             $results = $this->documents->search($q, $statuses, $section, 100, null === $user, $viewer);
             // Черновики и архив видны только тем, кто управляет разделом; гостям — только открытые документы.
@@ -83,6 +101,11 @@ final class HomeController extends AbstractController
                 }
                 $content[] = ['document' => $hit['document'], 'snippet' => $query->snippet($hit['text'])];
             }
+            // Раздел «Видео»: видео с этими словами в названии, описании, тегах или расшифровке речи (у видео
+            // нет разделов портала — при фильтре по разделу не ищем). Видеопортал не ответил — блока нет.
+            if (null === $section && null !== $this->videoApi) {
+                $videos = $this->videoApi->search($q, null !== $user && $user->isActive(), 6);
+            }
         }
 
         return $this->render('home/search.html.twig', [
@@ -91,6 +114,12 @@ final class HomeController extends AbstractController
             'tree' => $this->sections->findAllTree(),
             'results' => $results,
             'content_results' => $content,
+            'video_results' => $videos,
+            // Ответ ИИ — только вошедшим сотрудникам и только если ответы включены в «Интеграциях».
+            'ai_answers' => null !== $user && null !== $this->answers && $this->answers->isEnabled(),
+            'ai_auto' => (bool) preg_match('/\?\s*$|^(как|что|где|когда|кто|почему|зачем|сколько|можно ли|нужно ли|какой|какая|какие)\b/iu', $q),
+            // «Похоже по смыслу» — документы, близкие к запросу по смыслу (если включён смысловой индекс).
+            'semantic_search' => null !== $user && mb_strlen($q) >= 3 && null !== $this->answers && $this->answers->isSemanticReady(),
         ]);
     }
 
@@ -106,7 +135,14 @@ final class HomeController extends AbstractController
     {
         $out = [];
         foreach ($tree as $s) {
-            $out[$s->getId()] = ['published' => 0, 'total' => 0, 'children' => $s->getChildren()->count()];
+            $out[$s->getId()] = ['published' => 0, 'total' => 0, 'children' => 0];
+        }
+        // Число подразделов — по уже загруженному дереву (getChildren()->count() делал бы запрос на каждый раздел).
+        foreach ($tree as $s) {
+            $parentId = $s->getParent()?->getId();
+            if (null !== $parentId && isset($out[$parentId])) {
+                ++$out[$parentId]['children'];
+            }
         }
         foreach ($tree as $s) {
             $own = $perSection[$s->getId()] ?? [];

@@ -84,6 +84,10 @@ class MaterialParameter
     public const MAX_NAME = 100;
     public const MAX_TEXT = 2000;
     public const MAX_OPTIONS = 50;
+    public const MAX_OPTION = 200;
+
+    /** Больше знаков в числе не бывает (номера и артикулы — в текстовых столбцах). */
+    public const MAX_NUMBER = 30;
 
     #[ORM\Id]
     #[ORM\GeneratedValue]
@@ -207,7 +211,7 @@ class MaterialParameter
         }
         $clean = [];
         foreach ($options as $option) {
-            $option = mb_substr(trim(preg_replace('/\s+/u', ' ', (string) $option) ?? ''), 0, 200);
+            $option = self::cleanOption((string) $option);
             if ('' !== $option && !\in_array($option, $clean, true)) {
                 $clean[] = $option;
             }
@@ -215,6 +219,12 @@ class MaterialParameter
         $this->options = \array_slice($clean, 0, self::MAX_OPTIONS);
 
         return $this;
+    }
+
+    /** Значение списка в едином виде: без переводов строк и повторных пробелов, не длиннее MAX_OPTION. */
+    public static function cleanOption(string $option): string
+    {
+        return mb_substr(trim(preg_replace('/\s+/u', ' ', $option) ?? ''), 0, self::MAX_OPTION);
     }
 
     public function addOption(string $option): static
@@ -288,17 +298,23 @@ class MaterialParameter
 
         switch ($this->kind) {
             case self::KIND_NUMBER:
-                $number = str_replace([' ', "\u{00A0}", ','], ['', '', '.'], $value);
+                $number = str_replace([' ', "\u{00A0}", "\u{202F}", ','], ['', '', '', '.'], $value);
                 if (1 !== preg_match('/^-?\d+(\.\d+)?$/', $number)) {
                     throw new \DomainException(\sprintf('«%s»: нужно число.', $this->name));
+                }
+                if (\strlen($number) > self::MAX_NUMBER) {
+                    throw new \DomainException(\sprintf('«%s»: слишком длинное число — для номеров и артикулов нужен текстовый столбец.', $this->name));
                 }
 
                 return $number;
             case self::KIND_DATE:
                 return self::normalizeDate($value) ?? throw new \DomainException(\sprintf('«%s»: нужна дата (ДД.ММ.ГГГГ).', $this->name));
             case self::KIND_LIST:
+                // Значения из Excel бывают с переводом строки (Alt+Enter) или двойным пробелом — сравниваем
+                // в том же виде, в каком хранятся варианты списка.
+                $value = mb_strtolower(self::cleanOption($value));
                 foreach ($this->options as $option) {
-                    if (mb_strtolower($option) === mb_strtolower($value)) {
+                    if (mb_strtolower($option) === $value) {
                         return $option;
                     }
                 }

@@ -1,0 +1,67 @@
+# CorpVideo — конфигурация MediaMTX (сервер прямых трансляций).
+# Подстановки: ${API_HOST} (host:port API), ${HOOK_SECRET}, ${PUBLIC_HOST} (домен/IP для WebRTC),
+# ${RECORD_DIR} (каталог записей), ${BIND_LOCAL} (127.0.0.1 для нативной установки, пусто для Docker).
+logLevel: info
+logDestinations: [stdout]
+
+# --- API (только для нашего бэкенда) ---
+api: yes
+apiAddress: ${BIND_LOCAL}:9997
+metrics: no
+pprof: no
+# Сервер воспроизведения записей: перемотка эфира назад и просмотр с начала (1.9)
+playback: yes
+playbackAddress: ${BIND_LOCAL}:9996
+
+# --- Авторизация через HTTP-хук CorpVideo ---
+authMethod: http
+authHTTPAddress: http://${API_HOST}/api/live/hooks/auth?secret=${HOOK_SECRET}
+authHTTPExclude:
+  - action: api
+  - action: metrics
+  - action: pprof
+  - action: read
+  - action: playback
+
+# --- Приём от источников ---
+rtsp: no
+rtmp: yes
+rtmpAddress: :1935
+rtmpEncryption: "no"
+srt: yes
+srtAddress: :8890
+
+# --- WebRTC / WHIP (эфир из браузера) ---
+webrtc: yes
+webrtcAddress: ${BIND_LOCAL}:8889
+webrtcEncryption: no
+webrtcAllowOrigin: "*"
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: :8189
+webrtcIPsFromInterfaces: yes
+webrtcAdditionalHosts: [${PUBLIC_HOST}]
+webrtcICEServers2: []
+
+# --- HLS для зрителей (раздаётся через API CorpVideo) ---
+hls: yes
+hlsAddress: ${BIND_LOCAL}:8888
+hlsEncryption: no
+hlsAllowOrigin: "*"
+hlsAlwaysRemux: yes
+hlsVariant: lowLatency
+hlsSegmentCount: 7
+hlsSegmentDuration: 1s
+hlsPartDuration: 200ms
+hlsSegmentMaxSize: 50M
+
+# --- Запись эфиров ---
+pathDefaults:
+  record: yes
+  recordPath: ${RECORD_DIR}/%path/%Y-%m-%d_%H-%M-%S-%f
+  recordFormat: fmp4
+  recordPartDuration: 1s
+  recordSegmentDuration: 12h
+  recordDeleteAfter: 0s
+
+paths:
+  all_others:

@@ -18,7 +18,7 @@ use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
  */
 final class PasswordChangeRequiredSubscriber implements EventSubscriberInterface
 {
-    private const ALLOWED_ROUTES = ['app_password_change', 'app_logout', 'app_login', 'app_health'];
+    private const ALLOWED_ROUTES = ['app_password_change', 'app_logout', 'app_login', 'app_health', 'video_session'];
 
     public function __construct(
         private readonly Security $security,

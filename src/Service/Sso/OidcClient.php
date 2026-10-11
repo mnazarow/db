@@ -155,7 +155,13 @@ final class OidcClient
             'Accept' => 'application/json',
         ], 20);
         if ($info->ok()) {
-            $claims = array_merge($claims, $info->json() ?? []);
+            $userinfo = $info->json() ?? [];
+            // По спецификации OIDC sub из userinfo обязан совпадать с sub из id_token, иначе ответ не используется.
+            if (isset($userinfo['sub'], $claims['sub']) && (string) $userinfo['sub'] !== (string) $claims['sub']) {
+                throw new SsoException('Сведения о пользователе от провайдера не относятся к выданному токену.');
+            }
+            // Проверенные утверждения id_token (издатель, получатель, идентификатор) userinfo не переопределяет.
+            $claims = array_merge($userinfo, $claims, array_diff_key($userinfo, array_flip(['iss', 'sub', 'aud', 'nonce', 'exp', 'iat', 'azp'])));
         } else {
             $this->logger->info('SSO: userinfo недоступен, используем данные id_token', ['status' => $info->status]);
         }

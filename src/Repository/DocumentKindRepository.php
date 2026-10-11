@@ -31,8 +31,9 @@ final class DocumentKindRepository extends ServiceEntityRepository
         if ('' === $name) {
             return null;
         }
+        $key = DocumentKind::foldName($name);
         foreach ($this->findOrdered() as $kind) {
-            if (mb_strtolower($kind->getName()) === mb_strtolower($name)) {
+            if (DocumentKind::foldName($kind->getName()) === $key) {
                 return $kind;
             }
         }

@@ -44,6 +44,7 @@ final class BulkDocumentService
         private readonly DocumentManager $manager,
         private readonly Access $access,
         private readonly LoggerInterface $auditLogger,
+        private readonly ?ApprovalService $approvals = null,
     ) {
     }
 
@@ -121,6 +122,10 @@ final class BulkDocumentService
             case 'publish':
                 if ($document->isPublished()) {
                     return false;
+                }
+                // Массовая публикация подчиняется тем же правилам, что и кнопка «Опубликовать».
+                if (null !== $this->approvals && !$this->approvals->canPublish($document)) {
+                    throw new \DomainException('не согласован — по настройкам портала публикуются только согласованные документы');
                 }
                 $this->manager->publish($document, $by, $ip);
 

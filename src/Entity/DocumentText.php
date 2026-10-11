@@ -29,7 +29,7 @@ class DocumentText
     #[ORM\Column(name: 'version_number', type: Types::SMALLINT)]
     private int $versionNumber = 0;
 
-    /** Статус извлечения: ok | empty | unsupported | missing | error (см. TextExtractor). */
+    /** Статус извлечения: ok | empty | unsupported | missing | error | pending (см. TextExtractor). */
     #[ORM\Column(length: 12)]
     private string $status;
 

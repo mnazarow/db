@@ -6,13 +6,15 @@ namespace App\Service\Material;
 
 use App\Entity\MaterialParameter;
 use App\Entity\Section;
+use App\Entity\User;
+use App\Security\Access;
 use App\Service\DocumentKindService;
+use App\Service\PortalUrl;
 use App\Service\Xlsx\XlsxSheet;
 use App\Service\Xlsx\XlsxWriter;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\HeaderUtils;
 use Symfony\Component\HttpFoundation\ResponseHeaderBag;
-use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
 
 /**
  * Выгрузка таблиц материалов в Excel в том же виде, что исходная книга «Продуктовые материалы»:
@@ -24,6 +26,12 @@ final class MaterialExporter
 {
     public const SUMMARY_SHEET = 'Сводная по категориям';
     public const DOCUMENT_HEADER = 'Документ портала';
+
+    /**
+     * Метка служебного (скрытого) листа «название листа → id раздела»: по нему обратная загрузка
+     * находит раздел, даже если Excel укоротил или изменил название листа.
+     */
+    public const MAPPING_MARK = 'docportal:sections';
 
     /** Сколько категорий в одном ряду сводной (как в исходном файле). */
     private const PER_ROW = 4;
@@ -43,14 +51,16 @@ final class MaterialExporter
         private readonly MaterialService $materials,
         private readonly MaterialSummary $summary,
         private readonly DocumentKindService $kinds,
-        private readonly UrlGeneratorInterface $urls,
+        private readonly PortalUrl $portalUrl,
+        private readonly Access $access,
     ) {
     }
 
     /**
      * @param list<Section> $sections
+     * @param User|null     $viewer   кто выгружает: документы, которые ему не видны, в выгрузку не попадают
      */
-    public function build(array $sections, string $path, bool $withSummary = true): void
+    public function build(array $sections, string $path, bool $withSummary = true, ?User $viewer = null): void
     {
         $writer = new XlsxWriter();
         $summarySheet = $withSummary ? $writer->addSheet(self::SUMMARY_SHEET) : null;
@@ -58,23 +68,36 @@ final class MaterialExporter
         foreach ($sections as $section) {
             $sheet = $writer->addSheet($section->getName());
             $sheetNames[(int) $section->getId()] = $sheet->getName();
-            $this->category($sheet, $section);
+            $this->category($sheet, $section, $viewer);
         }
         if (null !== $summarySheet) {
             $this->summarySheet($summarySheet, $sections, $sheetNames);
+        }
+        if ([] !== $sections) {
+            $mapping = $writer->addSheet('Служебный — не изменять')->hide(true);
+            $mapping->set(1, 1, self::MAPPING_MARK)->set(1, 2, 'id раздела')->set(1, 3, 'Раздел');
+            $line = 1;
+            foreach ($sections as $section) {
+                $mapping->set(++$line, 1, $sheetNames[(int) $section->getId()])->set($line, 2, (int) $section->getId())->set($line, 3, $section->getName());
+            }
         }
         $writer->save($path);
     }
 
     /** @param list<Section> $sections */
-    public function response(array $sections, string $title, bool $withSummary = true): BinaryFileResponse
+    public function response(array $sections, string $title, bool $withSummary = true, ?User $viewer = null): BinaryFileResponse
     {
         $path = tempnam(sys_get_temp_dir(), 'materials-');
         if (false === $path) {
             throw new \RuntimeException('Не удалось создать временный файл.');
         }
-        $this->build($sections, $path, $withSummary);
-        $name = \sprintf('%s %s.xlsx', $title, date('Y-m-d'));
+        try {
+            $this->build($sections, $path, $withSummary, $viewer);
+        } catch (\Throwable $e) {
+            @unlink($path);
+            throw $e;
+        }
+        $name = \sprintf('%s %s.xlsx', self::fileName($title), date('Y-m-d'));
         $response = new BinaryFileResponse($path);
         $response->headers->set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         $response->headers->set('Content-Disposition', HeaderUtils::makeDisposition(ResponseHeaderBag::DISPOSITION_ATTACHMENT, $name, 'materials-'.date('Y-m-d').'.xlsx'));
@@ -83,7 +106,19 @@ final class MaterialExporter
         return $response;
     }
 
-    private function category(XlsxSheet $sheet, Section $section): void
+    /**
+     * Название файла выгрузки: без символов, недопустимых в именах файлов («/» в названии раздела
+     * иначе ломал выгрузку), и не длиннее разумного.
+     */
+    public static function fileName(string $title): string
+    {
+        $title = preg_replace('~[\\\\/:*?"<>|\x00-\x1F\x7F]+~u', ' ', $title) ?? '';
+        $title = trim(preg_replace('/\s+/u', ' ', $title) ?? '', ' .');
+
+        return '' !== $title ? mb_substr($title, 0, 120) : 'Материалы';
+    }
+
+    private function category(XlsxSheet $sheet, Section $section, ?User $viewer = null): void
     {
         $parameters = $this->materials->parameters($section);
         $rows = $this->materials->rows($section);
@@ -130,7 +165,9 @@ final class MaterialExporter
                         $sheet->set($line, $col, false !== $date ? $date : $value, XlsxWriter::STYLE_DATE);
                         break;
                     case MaterialParameter::KIND_NUMBER:
-                        $sheet->set($line, $col, is_numeric($value) ? $value + 0 : $value);
+                        // Числом — только то, что Excel сохранит без потерь (до 15 значащих цифр);
+                        // длинные значения остаются текстом, иначе они исказились бы или испортили файл.
+                        $sheet->set($line, $col, self::isExcelNumber($value) ? $value + 0 : $value);
                         break;
                     case MaterialParameter::KIND_LINK:
                         $sheet->set($line, $col, $value, XlsxWriter::STYLE_LINK)->link($line, $col, $value);
@@ -140,8 +177,8 @@ final class MaterialExporter
                 }
             }
             $document = $row->getDocument();
-            if (null !== $document) {
-                $url = $this->urls->generate('app_document_show', ['id' => $document->getId()], UrlGeneratorInterface::ABSOLUTE_URL);
+            if (null !== $document && (null === $viewer || $this->access->canViewDocument($viewer, $document))) {
+                $url = $this->portalUrl->absolute('app_document_show', ['id' => $document->getId()]);
                 $version = $document->getCurrentVersion()?->getNumber();
                 $sheet->set($line, \count($headers), $document->getTitle().(null !== $version ? ' (v'.$version.')' : ''), XlsxWriter::STYLE_LINK)->link($line, \count($headers), $url);
             }
@@ -244,6 +281,13 @@ final class MaterialExporter
         }
 
         return 0;
+    }
+
+    private static function isExcelNumber(string $value): bool
+    {
+        return 1 === preg_match('/^-?\d+(\.\d+)?$/', $value)
+            && \strlen(ltrim(str_replace(['-', '.'], '', $value), '0')) <= 15
+            && is_finite((float) $value);
     }
 
     /** Формула состояния — та же, что в исходной книге. */

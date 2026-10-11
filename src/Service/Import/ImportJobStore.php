@@ -80,6 +80,17 @@ final class ImportJobStore
             return false;
         }
         try {
+            // Состояние перечитывается уже под блокировкой: запрос, загрузивший задание до того, как
+            // предыдущая порция сохранилась, иначе обработал бы те же элементы ещё раз и затёр бы прогресс.
+            $fresh = $this->load($job->id);
+            if (null !== $fresh) {
+                $job->state = $fresh->state;
+                $job->error = $fresh->error;
+                $job->finishedAt = $fresh->finishedAt;
+            }
+            if ($job->isFinished()) {
+                return true;
+            }
             $started = microtime(true);
             $done = 0;
             try {

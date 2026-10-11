@@ -1,0 +1,14 @@
+# Не попадает в контекст сборки образа видеопортала (контекст — каталог video/).
+# server/node_modules и web/dist остаются: в архиве дистрибутива они готовые, и сборка обходится без npm.
+.git
+**/.git
+web/node_modules
+server/data
+server/test
+server/.env
+.env
+docs/
+img/
+deploy/mediamtx/mediamtx.yml
+*.log
+*.tar.gz

@@ -32,7 +32,9 @@ final class DocumentLinkController extends AbstractController
     {
         $this->checkToken($request, $document);
         $target = $this->links->resolve((string) $request->request->get('target'));
-        if (null === $target) {
+        // Связать можно только с документом, который пользователь видит: иначе по связи раскрывались бы
+        // названия черновиков и документов с ограниченным доступом.
+        if (null === $target || !$this->isGranted(PortalVoter::DOCUMENT_VIEW, $target)) {
             $this->addFlash('error', 'Документ не найден. Укажите обозначение, идентификатор или точное название.');
 
             return $this->back($document);
@@ -41,7 +43,7 @@ final class DocumentLinkController extends AbstractController
             $link = $this->links->link($document, $target, (string) $request->request->get('type', DocumentLink::RELATED), $user, (string) $request->request->get('note'));
             $this->addFlash('success', \sprintf('Связь добавлена: %s «%s».', $link->labelFor($document), $target->getTitle()));
             if ($request->request->getBoolean('archive_target') && !$target->isArchived() && $this->isGranted(PortalVoter::DOCUMENT_EDIT, $target)) {
-                $archived = $this->links->archiveSuperseded($document, $user, $request->getClientIp());
+                $archived = $this->links->archiveSuperseded($document, $user, $request->getClientIp(), fn (Document $old): bool => $this->isGranted(PortalVoter::DOCUMENT_EDIT, $old));
                 if ([] !== $archived) {
                     $this->addFlash('success', 'Перенесены в архив: '.implode(', ', $archived).'.');
                 }

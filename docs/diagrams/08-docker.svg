@@ -48,4 +48,5 @@
 <line x1="890" y1="160" x2="860" y2="160" stroke="#0F4382" stroke-width="1.8" marker-end="url(#arrow)" stroke-dasharray="6 4"/>
 <text x="40" y="350" font-size="12" fill="#6E7480" text-anchor="start" font-weight="normal" xml:space="preserve">Настройки — docker/.env (пароли БД, APP_SECRET, ADMIN_USER/ADMIN_PASSWORD, порты, образы, LDAP, почта, расписание EXPIRY_CRON).</text>
 <text x="40" y="370" font-size="12" fill="#6E7480" text-anchor="start" font-weight="normal" xml:space="preserve">Если Docker Hub недоступен, укажите зеркало: --docker-mirror https://mirror.gcr.io или образы из другого реестра в .env.</text>
+<text x="40" y="390" font-size="12" fill="#6E7480" text-anchor="start" font-weight="normal" xml:space="preserve">Раздел «Видео» (docportal video enable): профили video — video-db, video-api, video-worker и video-live — mediamtx; web отдаёт /video/.</text>
 </svg>

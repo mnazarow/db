@@ -316,7 +316,7 @@ final class IntegrationsTest extends PortalTestCase
         $crawler = $this->client->request('GET', '/admin/integrations');
         self::assertResponseIsSuccessful();
         self::assertStringContainsString('Ключи REST API', $crawler->text());
-        self::assertStringContainsString('Описания документов через LLM', $crawler->text());
+        self::assertStringContainsString('Языковая модель (LLM): описания и ответы', $crawler->text());
         $token = $crawler->filter('input[name=_token]')->first()->attr('value');
 
         // Ключ API: создание (токен показывается один раз), отключение, удаление.

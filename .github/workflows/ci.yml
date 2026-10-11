@@ -1,0 +1,153 @@
+# Проверки портала на каждое изменение: синтаксис конфигурации и шаблонов, соответствие миграций
+# схеме, автотесты PHPUnit на MariaDB, раздел «Видео» (тесты связки с порталом на PostgreSQL, сборка
+# интерфейса, тесты API видеопортала) и проверка скриптов развёртывания shellcheck. Установка на чистый
+# сервер — .github/workflows/e2e.yml, выпуск версии — .github/workflows/release.yml.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  php:
+    name: PHPUnit и проверки Symfony (PHP ${{ matrix.php }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.2', '8.4']
+    services:
+      mariadb:
+        image: mariadb:10.11
+        env:
+          MARIADB_ROOT_PASSWORD: root
+          MARIADB_DATABASE: docportal_test
+          MARIADB_USER: docportal
+          MARIADB_PASSWORD: docportal
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      APP_ENV: test
+      DATABASE_URL: mysql://docportal:docportal@127.0.0.1:3306/docportal?serverVersion=10.11.14-MariaDB&charset=utf8mb4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: intl, pdo_mysql, zip, gd, ldap, mbstring, xml, curl, fileinfo
+          tools: composer:v2
+          coverage: none
+      - name: Инструменты для проверок извлечения текста
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends poppler-utils fonts-dejavu-core
+      - name: Зависимости
+        run: composer install --no-interaction --no-progress --prefer-dist
+      - name: Конфигурация, шаблоны, YAML
+        run: |
+          php bin/console lint:container
+          php bin/console lint:twig templates
+          php bin/console lint:yaml config translations --parse-tags
+      - name: Миграции дают ту же схему, что и сущности
+        run: |
+          php bin/console doctrine:migrations:migrate --no-interaction --allow-no-migration
+          php bin/console doctrine:schema:validate
+      - name: Автотесты
+        run: |
+          rm -rf var/cache/test
+          vendor/bin/phpunit
+
+  video:
+    name: Раздел «Видео» (Node.js, PostgreSQL)
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: corpvideo
+          POSTGRES_PASSWORD: corpvideo
+          POSTGRES_DB: corpvideo_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd="pg_isready -U corpvideo" --health-interval=5s --health-timeout=5s --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Сервер видеопортала — общий вход, справочник сотрудников, уведомления, сведения для портала
+        working-directory: video/server
+        env:
+          TEST_DATABASE_URL: postgres://corpvideo:corpvideo@127.0.0.1:5432/corpvideo_test
+        run: |
+          npm ci --no-audit --no-fund
+          for f in $(find src -name '*.js'); do node --check "$f"; done
+          npm run test:portal
+      - name: Веб-интерфейс видеопортала — сборка для /video/
+        working-directory: video/web
+        run: |
+          npm ci --no-audit --no-fund
+          VITE_BASE=/video/ npm run build
+
+  # Интеграционные тесты API видеопортала (около сотни): запущенные API и обработчик видео, ffmpeg,
+  # отдельная база. Видеопортал здесь работает сам по себе (без портала) — так проверяются его функции.
+  video-api:
+    name: Раздел «Видео» — тесты API
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: corpvideo
+          POSTGRES_PASSWORD: corpvideo
+          POSTGRES_DB: corpvideo
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd="pg_isready -U corpvideo" --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      DATABASE_URL: postgres://corpvideo:corpvideo@127.0.0.1:5432/corpvideo
+      SECRET_KEY: ci-secret-key-0123456789abcdef0123456789
+      BASE_URL: http://localhost:3000
+      DATA_DIR: ${{ github.workspace }}/video-data
+      PORT: '3000'
+      HOST: 127.0.0.1
+      WORKER_CONCURRENCY: '2'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: ffmpeg
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg
+      - name: Зависимости, база, администратор
+        working-directory: video/server
+        run: |
+          npm ci --no-audit --no-fund
+          node src/cli.js migrate
+          ADMIN_PASSWORD=Admin12345 node src/cli.js create-admin --email admin@vodokomfort.ru --password-env ADMIN_PASSWORD --name Администратор
+      - name: API и обработчик видео
+        working-directory: video/server
+        run: |
+          nohup node src/index.js > "$RUNNER_TEMP/api.log" 2>&1 &
+          nohup node src/worker.js > "$RUNNER_TEMP/worker.log" 2>&1 &
+          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:3000/api/health && break; sleep 1; done
+      - name: Тесты API
+        working-directory: video/server
+        run: BASE=http://127.0.0.1:3000 node --test test/api.test.js
+      - name: Журналы API и обработчика
+        if: failure()
+        run: tail -n 200 "$RUNNER_TEMP/api.log" "$RUNNER_TEMP/worker.log"
+
+  shell:
+    name: Скрипты развёртывания (shellcheck)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q shellcheck
+          shellcheck -x -S warning -e SC2034 deploy/*.sh docker/entrypoint.sh scripts/*.sh
+          shellcheck -S warning video/deploy/docker/entrypoint.sh
+      - name: Синтаксис bash
+        run: for f in deploy/*.sh docker/entrypoint.sh scripts/*.sh; do bash -n "$f"; done

@@ -89,6 +89,12 @@ final class UserRepository extends ServiceEntityRepository
         return $count;
     }
 
+    /** @return list<User> активные маркетологи (модераторы всех разделов) — получатели материалов на модерации */
+    public function findActiveMarketers(): array
+    {
+        return array_values(array_filter($this->findBy(['active' => true], ['displayName' => 'ASC']), static fn (User $u) => $u->isMarketer() && !$u->isAdmin()));
+    }
+
     /** @return list<User> активные администраторы (для уведомлений) */
     public function findActiveAdmins(): array
     {
@@ -110,5 +116,45 @@ final class UserRepository extends ServiceEntityRepository
         }
 
         return $out;
+    }
+
+    /**
+     * Подчинённые руководителя — прямые и их подчинённые (до $maxDepth уровней), только активные; depth 1 — прямые.
+     *
+     * @return list<array{user: User, depth: int}>
+     */
+    public function findSubordinates(User $manager, int $maxDepth = 10): array
+    {
+        $byManager = [];
+        foreach ($this->createQueryBuilder('u')->andWhere('u.active = true')->andWhere('u.manager IS NOT NULL')->orderBy('u.displayName', 'ASC')->getQuery()->getResult() as $user) {
+            $byManager[(int) $user->getManager()->getId()][] = $user;
+        }
+        $out = [];
+        $seen = [(int) $manager->getId() => true];
+        $walk = static function (int $id, int $depth) use (&$walk, &$out, &$seen, $byManager, $maxDepth): void {
+            foreach ($byManager[$id] ?? [] as $user) {
+                $uid = (int) $user->getId();
+                if (isset($seen[$uid])) {
+                    continue;
+                }
+                $seen[$uid] = true;
+                $out[] = ['user' => $user, 'depth' => $depth];
+                if ($depth < $maxDepth) {
+                    $walk($uid, $depth + 1);
+                }
+            }
+        };
+        $walk((int) $manager->getId(), 1);
+
+        return $out;
+    }
+
+    /** Есть ли у сотрудника активные подчинённые (ссылка «Мои сотрудники»). */
+    public function hasSubordinates(User $manager): bool
+    {
+        return (int) $this->createQueryBuilder('u')->select('COUNT(u.id)')
+            ->andWhere('u.manager = :m')->setParameter('m', $manager)
+            ->andWhere('u.active = true')
+            ->getQuery()->getSingleScalarResult() > 0;
     }
 }

@@ -12,13 +12,124 @@
         if (document.readyState !== 'loading') { fn(); } else { document.addEventListener('DOMContentLoaded', fn); }
     }
 
+    /* Установка портала как приложения: service worker (только оформление в кэше и страница «Нет связи») */
+    if ('serviceWorker' in navigator && window.isSecureContext) {
+        window.addEventListener('load', function () {
+            navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () { /* не критично */ });
+        });
+    }
+
+    /* Ответ ИИ на странице поиска: вопрос уходит на сервер, ответ — с пронумерованными ссылками на источники */
+    function setupAiAnswer(box) {
+        var body = box.querySelector('[data-ai-body]');
+        var button = box.querySelector('[data-ai-ask]');
+        box.hidden = false;
+        function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+        function ask() {
+            if (button) { button.disabled = true; }
+            body.innerHTML = '<p class="text-muted ai-answer__wait">Ищу ответ в документах…</p>';
+            var data = new FormData();
+            data.append('q', box.getAttribute('data-q') || '');
+            data.append('_token', box.getAttribute('data-token') || '');
+            fetch(box.getAttribute('data-url'), { method: 'POST', body: data, credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+                .then(function (r) { return r.json().catch(function () { return { error: 'Сервер ответил ошибкой (' + r.status + ').' }; }); })
+                .then(function (res) {
+                    var html = '';
+                    if (res.html) { html += '<div class="ai-answer__text">' + res.html + '</div>'; }
+                    if (res.error) { html += '<p class="' + (res.html ? 'text-muted' : 'alert alert--info') + '">' + esc(res.error) + '</p>'; }
+                    if (res.sources && res.sources.length) {
+                        html += '<ol class="ai-answer__sources">' + res.sources.map(function (s) {
+                            return '<li value="' + s.n + '"><span class="tag">' + (s.type === 'video' ? 'видео' : 'документ') + '</span> <a href="' + esc(s.url) + '">' + esc(s.title) + '</a>' + (s.meta ? ' <span class="text-muted">' + esc(s.meta) + '</span>' : '') + '</li>';
+                        }).join('') + '</ol>';
+                    }
+                    if (res.rate_url) {
+                        html += '<div class="ai-answer__rate" data-ai-rate><span class="ai-answer__rate-label">Ответ помог?</span>'
+                            + '<button class="btn btn--ghost btn--small" type="button" data-rate="1">Да</button>'
+                            + '<button class="btn btn--ghost btn--small" type="button" data-rate="-1">Нет</button></div>';
+                    }
+                    body.innerHTML = html || '<p class="text-muted">Ответа нет.</p>';
+                    if (res.rate_url) { setupRating(body.querySelector('[data-ai-rate]'), res.rate_url); }
+                })
+                .catch(function () { body.innerHTML = '<p class="alert alert--info">Нет связи с сервером — повторите позже.</p>'; })
+                .then(function () { if (button) { button.disabled = false; button.textContent = 'Ответить ещё раз'; } });
+        }
+        function send(url, rating, comment) {
+            var data = new FormData();
+            data.append('rating', String(rating));
+            data.append('comment', comment || '');
+            data.append('_token', box.getAttribute('data-token') || '');
+            return fetch(url, { method: 'POST', body: data, credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+                .then(function (r) { return r.json().catch(function () { return { error: 'Сервер ответил ошибкой (' + r.status + ').' }; }); });
+        }
+        /* «Ответ помог?»: «Да» — спасибо; «Нет» — оценка сразу и необязательное поле «чего не хватило». */
+        function setupRating(rate, url) {
+            if (!rate) { return; }
+            rate.addEventListener('click', function (e) {
+                var b = e.target.closest ? e.target.closest('[data-rate]') : null;
+                if (!b) { return; }
+                var rating = parseInt(b.getAttribute('data-rate'), 10);
+                Array.prototype.forEach.call(rate.querySelectorAll('[data-rate]'), function (x) { x.disabled = true; });
+                send(url, rating, '').then(function (res) {
+                    if (res.error) { rate.innerHTML = '<span class="text-muted">' + esc(res.error) + '</span>'; return; }
+                    if (rating > 0) { rate.innerHTML = '<span class="ai-answer__thanks">Спасибо за оценку!</span>'; return; }
+                    rate.innerHTML = '<form class="ai-answer__feedback" data-ai-feedback><label class="form-label" for="ai-feedback-text">Чего не хватило в ответе? (необязательно)</label>'
+                        + '<textarea class="form-control" id="ai-feedback-text" rows="2" maxlength="500" placeholder="Например: нужен порядок для филиалов"></textarea>'
+                        + '<div class="form-actions"><button class="btn btn--pill btn--small" type="submit">Отправить</button><span class="text-muted">Оценка учтена — администратор увидит, каких документов не хватает.</span></div></form>';
+                    var form = rate.querySelector('[data-ai-feedback]');
+                    form.addEventListener('submit', function (ev) {
+                        ev.preventDefault();
+                        var text = form.querySelector('textarea').value;
+                        form.querySelector('button').disabled = true;
+                        send(url, -1, text).then(function (r2) {
+                            rate.innerHTML = '<span class="ai-answer__thanks">' + (r2.error ? esc(r2.error) : 'Спасибо, комментарий передан.') + '</span>';
+                        });
+                    });
+                }).catch(function () { rate.innerHTML = '<span class="text-muted">Нет связи с сервером — оценка не сохранена.</span>'; });
+            });
+        }
+        if (button) { button.addEventListener('click', ask); }
+        if (box.hasAttribute('data-auto')) { ask(); }
+    }
+
+    /* «Похоже по смыслу»: документы, близкие к запросу по смыслу, которых нет среди найденных по словам. */
+    function setupSemantic(box) {
+        var list = box.querySelector('[data-semantic-list]');
+        function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+        var shown = {};
+        Array.prototype.forEach.call(document.querySelectorAll('.table-card a[href^="/documents/"]'), function (a) {
+            if (!box.contains(a)) { shown[a.getAttribute('href')] = true; }
+        });
+        var data = new FormData();
+        data.append('q', box.getAttribute('data-q') || '');
+        data.append('_token', box.getAttribute('data-token') || '');
+        fetch(box.getAttribute('data-url'), { method: 'POST', body: data, credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+            .then(function (r) { return r.json(); })
+            .then(function (res) {
+                var items = (res.items || []).filter(function (it) { return !shown[it.url]; });
+                if (!items.length) { return; }
+                list.innerHTML = items.map(function (it) {
+                    return '<li class="snippet"><div class="snippet__head"><a class="snippet__title" href="' + esc(it.url) + '">' + esc(it.title) + '</a></div>'
+                        + (it.meta ? '<div class="snippet__section">' + esc(it.meta) + '</div>' : '')
+                        + (it.snippet ? '<p class="snippet__text">' + esc(it.snippet) + '</p>' : '') + '</li>';
+                }).join('');
+                box.hidden = false;
+            })
+            .catch(function () { /* блок необязательный — без него страница работает */ });
+    }
+
     ready(function () {
-        /* Подтверждения */
+        var aiBox = document.querySelector('[data-ai-answer]');
+        if (aiBox && window.fetch && window.FormData) { setupAiAnswer(aiBox); }
+        var semanticBox = document.querySelector('[data-semantic]');
+        if (semanticBox && window.fetch && window.FormData) { setupSemantic(semanticBox); }
+
+        /* Подтверждения: data-confirm у формы или у нажатой кнопки (например, «Удалить» рядом с «Сохранить») */
         document.addEventListener('submit', function (e) {
             var form = e.target;
-            if (form && form.hasAttribute('data-confirm')) {
-                if (!window.confirm(form.getAttribute('data-confirm'))) { e.preventDefault(); }
-            }
+            if (!form || !form.getAttribute) { return; }
+            var button = e.submitter || null;
+            var message = (button && button.getAttribute('data-confirm')) || form.getAttribute('data-confirm');
+            if (message && !window.confirm(message)) { e.preventDefault(); }
         });
 
         /* Мобильное меню */
@@ -150,7 +261,137 @@
         /* Импорт из каталога: выполнение задания порциями с показом хода */
         var jobCard = document.querySelector('[data-import-job]');
         if (jobCard) { importJob(jobCard); }
+
+        /* PDF-сборник раздела: выбор документов и сборка порциями */
+        var bundleForm = document.querySelector('[data-bundle-form]');
+        if (bundleForm) { bundleChoice(bundleForm); }
+        var bundleCard = document.querySelector('[data-bundle-job]');
+        if (bundleCard) { bundleJob(bundleCard); }
     });
+
+    function pluralRu(n, forms) {
+        var a = Math.abs(n) % 100, b = a % 10;
+        var form = (a > 10 && a < 20) ? forms[2] : (b > 1 && b < 5) ? forms[1] : (b === 1 ? forms[0] : forms[2]);
+        return n + ' ' + form;
+    }
+
+    function bundleChoice(form) {
+        var boxes = function () { return form.querySelectorAll('input[name="documents[]"]'); };
+        var counter = form.querySelector('[data-bundle-counter]');
+        var syncGroups = function () {
+            Array.prototype.forEach.call(form.querySelectorAll('[data-bundle-group]'), function (g) {
+                var box = g.closest('.ack-people__group');
+                if (!box) { return; }
+                var all = box.querySelectorAll('input[name="documents[]"]');
+                var on = box.querySelectorAll('input[name="documents[]"]:checked');
+                g.checked = all.length > 0 && on.length === all.length;
+                g.indeterminate = on.length > 0 && on.length < all.length;
+            });
+        };
+        var recount = function () {
+            if (counter) { counter.textContent = 'отмечено: ' + form.querySelectorAll('input[name="documents[]"]:checked').length + ' из ' + boxes().length; }
+            syncGroups();
+        };
+        var setAll = function (value) {
+            Array.prototype.forEach.call(boxes(), function (b) { b.checked = value; });
+            recount();
+        };
+        var allBtn = form.querySelector('[data-bundle-all]');
+        var noneBtn = form.querySelector('[data-bundle-none]');
+        if (allBtn) { allBtn.addEventListener('click', function () { setAll(true); }); }
+        if (noneBtn) { noneBtn.addEventListener('click', function () { setAll(false); }); }
+        Array.prototype.forEach.call(form.querySelectorAll('[data-bundle-group]'), function (group) {
+            group.addEventListener('change', function () {
+                var box = group.closest('.ack-people__group');
+                if (!box) { return; }
+                Array.prototype.forEach.call(box.querySelectorAll('input[name="documents[]"]'), function (b) { b.checked = group.checked; });
+                recount();
+            });
+        });
+        form.addEventListener('change', function (e) {
+            if (e.target && e.target.name === 'documents[]') { recount(); }
+        });
+        recount();
+    }
+
+    function bundleJob(card) {
+        var url = card.getAttribute('data-bundle-job');
+        var token = card.getAttribute('data-token');
+        var finished = card.getAttribute('data-finished') === '1';
+        var running = false, failures = 0;
+        var q = function (selector) { return card.querySelector(selector); };
+        var bar = q('[data-job-bar]'), position = q('[data-job-position]'), percent = q('[data-job-percent]');
+        var phase = q('[data-job-phase]'), status = q('[data-job-status]'), errorBox = q('[data-job-error]');
+        var networkBox = q('[data-job-network]'), download = q('[data-job-download]'), size = q('[data-job-size]');
+        var removeForm = q('[data-job-delete]');
+        var rows = document.querySelectorAll('[data-job-items] [data-item]');
+
+        function badge(cls, text) {
+            return '<span class="badge badge--' + cls + '"><span class="badge__dot"></span>' + escapeHtml(text) + '</span>';
+        }
+        function render(data) {
+            if (bar) { bar.style.width = data.percent + '%'; bar.parentNode.setAttribute('aria-valuenow', data.percent); }
+            if (position) { position.textContent = data.position; }
+            if (percent) { percent.textContent = data.percent; }
+            if (phase) { phase.textContent = data.finished ? 'готово' : (data.phase === 'merge' ? 'объединение файлов' : 'документы'); }
+            Object.keys(data.counters || {}).forEach(function (key) {
+                var el = card.querySelector('[data-counter="' + key + '"]');
+                if (el) { el.textContent = data.counters[key]; }
+            });
+            (data.items || []).forEach(function (item, i) {
+                var cell = rows[i] ? rows[i].querySelector('[data-item-result]') : null;
+                if (!cell) { return; }
+                if (item.status === 'ok') { cell.innerHTML = badge('done', pluralRu(item.pages, ['страница', 'страницы', 'страниц'])); }
+                else if (item.status === 'note') { cell.innerHTML = badge('soon', 'Только реквизиты') + '<div class="hints">' + escapeHtml(item.note || '') + '</div>'; }
+            });
+            if (data.error) {
+                if (errorBox) { errorBox.textContent = data.error; errorBox.hidden = false; }
+                if (status) { status.innerHTML = badge('overdue', 'Ошибка'); }
+            }
+            if (data.download && download) {
+                download.setAttribute('href', data.download.url);
+                download.hidden = false;
+                if (size) { size.textContent = ' (' + pluralRu(data.download.pages || 0, ['страница', 'страницы', 'страниц']) + ', ' + data.download.size + ')'; }
+            }
+            if (data.finished) {
+                finished = true;
+                if (!data.error && status) { status.innerHTML = badge('done', 'Готов'); }
+                var removeLabel = removeForm ? removeForm.querySelector('[data-job-delete-label]') : null;
+                if (removeLabel) { removeLabel.textContent = 'Удалить сборник'; }
+            }
+        }
+        function tick() {
+            if (finished || running) { return; }
+            running = true;
+            var body = new FormData();
+            body.append('_token', token);
+            fetch(url, { method: 'POST', body: body, credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+                .then(function (r) {
+                    if (r.status === 409) { return { busy: true }; }
+                    if (!r.ok) { return r.json().catch(function () { return {}; }).then(function (d) { throw new Error(d.error || ('Ошибка сервера ' + r.status)); }); }
+                    return r.json();
+                })
+                .then(function (data) {
+                    running = false;
+                    failures = 0;
+                    if (networkBox) { networkBox.hidden = true; }
+                    if (data.busy) { setTimeout(tick, 2000); return; }
+                    render(data);
+                    if (!finished) { setTimeout(tick, 150); }
+                })
+                .catch(function (err) {
+                    running = false;
+                    failures++;
+                    if (failures >= 5) {
+                        if (errorBox) { errorBox.textContent = err.message + ' Обновите страницу, чтобы продолжить.'; errorBox.hidden = false; }
+                        return;
+                    }
+                    if (networkBox) { networkBox.hidden = false; }
+                    setTimeout(tick, 3000);
+                });
+        }
+        if (!finished) { tick(); }
+    }
 
     function importJob(card) {
         var url = card.getAttribute('data-import-job');

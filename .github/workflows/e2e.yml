@@ -1,0 +1,110 @@
+# Сквозная проверка скриптов развёртывания на чистых серверах: установка из архива дистрибутива,
+# проверки, резервная копия, автоматическое обновление, восстановление, удаление (scripts/e2e-install.sh).
+# Серверы — контейнеры с systemd (Debian и Ubuntu); режим Docker — на самой машине CI.
+# Запускается для main, веток release/*, тегов v* и вручную (Actions → «Установка на чистый сервер» → Run).
+name: Установка на чистый сервер
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'release/**']
+    tags: ['v*']
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Архив дистрибутива
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: intl, pdo_mysql, zip, gd, ldap, mbstring, xml, curl, fileinfo
+          tools: composer:v2
+          coverage: none
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Зависимости
+        run: composer install --no-interaction --no-progress --prefer-dist
+      - name: Сборка (scripts/build-release.sh)
+        run: ./scripts/build-release.sh
+      - name: Архив «следующей версии» для проверки обновления
+        run: |
+          version=$(tr -d ' \n\r' < VERSION)
+          next="${version}.1"
+          tmp=$(mktemp -d)
+          tar -xzf "dist/docportal-${version}.tar.gz" -C "${tmp}"
+          printf '%s\n' "${next}" > "${tmp}/docportal/VERSION"
+          mkdir -p dist/next
+          tar -C "${tmp}" --owner=0 --group=0 --numeric-owner -czf "dist/next/docportal-${next}.tar.gz" docportal
+          ls -la dist dist/next
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 3
+
+  native:
+    name: Сервер ${{ matrix.image }} (${{ matrix.video }})
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { image: 'debian:12', video: 'video' }
+          - { image: 'ubuntu:24.04', video: 'video' }
+          - { image: 'debian:13', video: 'no-video' }
+          - { image: 'ubuntu:22.04', video: 'no-video' }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Чистый сервер с systemd (${{ matrix.image }})
+        run: |
+          docker build -t e2e-server - <<EOF
+          FROM ${{ matrix.image }}
+          ENV container=docker DEBIAN_FRONTEND=noninteractive
+          RUN apt-get update && apt-get install -y --no-install-recommends systemd systemd-sysv dbus ca-certificates curl procps iproute2 \
+              && apt-get clean && rm -rf /var/lib/apt/lists/* \
+              && systemctl mask systemd-firstboot.service getty@tty1.service
+          STOPSIGNAL SIGRTMIN+3
+          CMD ["/sbin/init"]
+          EOF
+          docker run -d --name srv --privileged --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            --tmpfs /run --tmpfs /run/lock -v "$PWD/dist:/dist:ro" -v "$PWD/scripts:/e2e:ro" e2e-server
+          for i in $(seq 1 60); do
+            state=$(docker exec srv systemctl is-system-running 2>/dev/null || true)
+            case "$state" in running|degraded) echo "systemd: $state"; break ;; esac
+            sleep 2
+          done
+      - name: Установка, копия, обновление, восстановление, удаление
+        run: |
+          archive=$(ls dist/docportal-*.tar.gz | head -n1)
+          next=$(ls dist/next/docportal-*.tar.gz | head -n1)
+          docker exec srv bash /e2e/e2e-install.sh "/${archive}" "/${next}" native ${{ matrix.video }}
+
+  docker:
+    name: Режим Docker (машина CI)
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Установка, копия, обновление, восстановление, удаление
+        run: |
+          archive=$(ls "$PWD"/dist/docportal-*.tar.gz | head -n1)
+          next=$(ls "$PWD"/dist/next/docportal-*.tar.gz | head -n1)
+          sudo bash scripts/e2e-install.sh "${archive}" "${next}" docker video

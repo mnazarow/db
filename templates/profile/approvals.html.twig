@@ -12,6 +12,9 @@
 </section>
 <section class="container section">
     {% include '_flashes.html.twig' %}
+    {% if moderation_count|default(0) > 0 %}
+        <div class="alert alert--info">На модерации ждут решения материалы помощников маркетолога: {{ moderation_count }}. <a href="{{ path('app_moderation') }}">Открыть страницу «На модерации» →</a></div>
+    {% endif %}
 
     <div class="card table-card">
         <div class="card__head card__head--padded">

@@ -84,6 +84,14 @@ final class SectionManager
         if (null === $newParent) {
             return;
         }
+        // Таблица материалов ведётся только у разделов верхнего уровня: подраздел её не показывает,
+        // и строки «потерялись» бы вместе с загрузкой файлов из таблицы.
+        if (null === $section->getParent() && null !== $section->getId()) {
+            $rows = $this->materialRows?->countForSection($section) ?? 0;
+            if ($section->isMaterialsEnabled() || $rows > 0) {
+                throw new \DomainException(\sprintf('У раздела «%s» есть таблица материалов%s — его нельзя сделать подразделом. Перенесите нужные подразделы по отдельности или сначала удалите таблицу (страница «Таблица материалов» раздела → «Удалить таблицу», для администраторов).', $section->getName(), $rows > 0 ? \sprintf(' (строк: %d)', $rows) : ''));
+            }
+        }
         if ($newParent->getId() === $section->getId() || $newParent->isDescendantOf($section)) {
             throw new \DomainException('Нельзя переместить раздел внутрь самого себя или своего подраздела.');
         }
@@ -128,7 +136,7 @@ final class SectionManager
         }
         $rows = null !== $section->getId() ? ($this->materialRows?->countForSection($section) ?? 0) : 0;
         if ($rows > 0) {
-            throw new \DomainException(\sprintf('В разделе ведётся таблица материалов (строк: %d). Удалите строки таблицы, затем удалите раздел.', $rows));
+            throw new \DomainException(\sprintf('В разделе ведётся таблица материалов (строк: %d). Удалите таблицу (страница «Таблица материалов» раздела → «Удалить таблицу»), затем удалите раздел.', $rows));
         }
         $name = $section->getFullName();
         $this->em->remove($section);

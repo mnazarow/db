@@ -3,6 +3,7 @@
 {% block title %}Пользователи{% endblock %}
 {% block admin_title %}Пользователи{% endblock %}
 {% block admin_actions %}
+    <a class="btn btn--ghost" href="{{ path('admin_users_org_import') }}">Оргструктура из 1С</a>
     <a class="btn btn--pill" href="{{ path('admin_user_new') }}">Добавить пользователя</a>
 {% endblock %}
 
@@ -27,9 +28,9 @@
             {% for user in users %}
                 <tr class="{{ not user.active ? 'is-inactive' }}">
                     <td><b>{{ user.username }}</b>{% if user.id == app.user.id %} <span class="tag">это вы</span>{% endif %}</td>
-                    <td>{{ user.displayName }}{% if user.email %}<div class="hints">{{ user.email }}</div>{% endif %}{% if user.department %}<div class="hints">{{ user.department }}</div>{% endif %}</td>
+                    <td>{{ user.displayName }}{% if user.email %}<div class="hints">{{ user.email }}</div>{% endif %}{% if user.department or user.jobTitle %}<div class="hints">{{ [user.jobTitle, user.department]|filter(v => v)|join(', ') }}</div>{% endif %}{% if user.manager %}<div class="hints">Руководитель: {{ user.manager.displayName }}</div>{% endif %}</td>
                     <td>{% if user.ldap %}<span class="badge badge--progress"><span class="badge__dot"></span>Домен</span>{% else %}Локальная{% endif %}</td>
-                    <td>{% if user.admin %}<span class="badge badge--admin"><span class="badge__dot"></span>Администратор</span>{% else %}Пользователь{% endif %}</td>
+                    <td>{% if user.admin %}<span class="badge badge--admin"><span class="badge__dot"></span>Администратор</span>{% elseif user.marketer %}<span class="badge badge--done"><span class="badge__dot"></span>Маркетолог</span>{% elseif user.assistant %}<span class="badge badge--progress"><span class="badge__dot"></span>Помощник маркетолога</span>{% else %}Пользователь{% endif %}</td>
                     <td>{% for s in moderated[user.id]|default([]) %}<span class="chip chip--static chip--small">{{ s.name }}</span> {% else %}<span class="text-muted">—</span>{% endfor %}</td>
                     <td>
                         {% if user.active %}<span class="badge badge--done"><span class="badge__dot"></span>Активен</span>{% else %}<span class="badge badge--overdue"><span class="badge__dot"></span>Заблокирован</span>{% endif %}

@@ -5,9 +5,11 @@
 {% block admin_actions %}
     <a class="btn btn--ghost" href="#api-keys">Ключи API</a>
     <a class="btn btn--ghost" href="#webhook">Webhook</a>
-    <a class="btn btn--ghost" href="#llm">Описания через LLM</a>
+    <a class="btn btn--ghost" href="#llm">Языковая модель</a>
+    <a class="btn btn--ghost" href="#semantic">Поиск по смыслу</a>
     <a class="btn btn--ghost" href="#discussion">Обсуждение</a>
     <a class="btn btn--ghost" href="#telegram">Telegram</a>
+    <a class="btn btn--ghost" href="#onlyoffice">Редактор документов</a>
 {% endblock %}
 
 {% block admin_body %}
@@ -204,7 +206,7 @@
 
 <div class="grid grid--two" id="llm">
     <div class="card card--form">
-        <div class="card__head"><h2 class="h-section">Описания документов через LLM</h2>
+        <div class="card__head"><h2 class="h-section">Языковая модель (LLM): описания и ответы</h2>
             {% if llm.enabled %}<span class="badge badge--done"><span class="badge__dot"></span>Включено</span>{% else %}<span class="badge badge--none"><span class="badge__dot"></span>Выключено</span>{% endif %}</div>
         <p>Портал может формировать краткие описания документов через внешнюю языковую модель по OpenAI-совместимому API (OpenAI, OpenRouter, Ollama, LM Studio, vLLM, LocalAI и др.). Модель получает название, раздел, теги, имя файла и начало текста документа.</p>
         <form method="post" action="{{ path('admin_integrations_llm') }}" class="form">
@@ -214,6 +216,9 @@
             </div>
             <div class="form-row form-row--check">
                 <label class="form-check"><input type="checkbox" name="auto_describe" value="1" {{ llm.auto_describe ? 'checked' }}><span>Автоматически описывать новые документы (при создании и импорте), если описание не заполнено</span></label>
+            </div>
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="answers" value="1" {{ llm.answers ? 'checked' }}><span>Отвечать на вопросы сотрудников на странице поиска — по фрагментам доступных им документов и видео, со ссылками на источники</span></label>
             </div>
             <div class="form-grid">
                 <div class="form-row">
@@ -275,6 +280,152 @@
         <h3 class="h-sub">Массовая обработка</h3>
         <p>Для всех документов без описания: <code>docportal console app:documents:describe --missing</code> (порциями по <code>--limit=50</code>; в cron добавлен ежечасный запуск). Переформировать сгенерированные ранее: <code>--regenerate</code>; переписать и ручные: <code>--force</code>. Предпросмотр без записи: <code>--dry-run</code>.</p>
         <p>При импорте из каталога есть флажок «Сформировать описания через LLM» (в консоли — <code>--describe</code>). В карточке документа модераторам доступна кнопка «Описать через ИИ».</p>
+    </div>
+</div>
+
+{% set st = semantic_status %}
+<div class="grid grid--two" id="semantic">
+    <div class="card card--form">
+        <div class="card__head"><h2 class="h-section">Поиск по смыслу (эмбеддинги)</h2>
+            {% if embeddings.enabled %}<span class="badge badge--done"><span class="badge__dot"></span>Включён</span>{% else %}<span class="badge badge--none"><span class="badge__dot"></span>Выключен</span>{% endif %}</div>
+        <p>Ответы ИИ находят документы не только по словам вопроса, но и по смыслу: на «что делать при возгорании?» найдётся «Инструкция по пожарной безопасности».
+            Модель эмбеддингов превращает фрагменты документов и вопрос в векторы; векторы хранятся в базе портала — отдельная векторная база не нужна.
+            На странице поиска появляется и блок «Похоже по смыслу».</p>
+        <form method="post" action="{{ path('admin_integrations_semantic') }}" class="form">
+            <input type="hidden" name="_token" value="{{ csrf_token('integrations') }}">
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="enabled" value="1" {{ embeddings.enabled ? 'checked' }}><span>Включить поиск по смыслу</span></label>
+            </div>
+            <div class="form-grid">
+                <div class="form-row">
+                    <label class="form-label" for="emb-model">Модель эмбеддингов</label>
+                    <input class="form-control" id="emb-model" name="model" value="{{ embeddings.model }}" placeholder="text-embedding-3-small" required>
+                    <div class="form-help">OpenAI: <code>text-embedding-3-small</code>; Ollama: <code>bge-m3</code> или <code>nomic-embed-text</code> (сначала <code>ollama pull</code>).</div>
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="emb-dims">Длина вектора</label>
+                    <input class="form-control" id="emb-dims" name="dimensions" type="number" min="0" max="4096" value="{{ embeddings.dimensions }}">
+                    <div class="form-help">0 — как у модели. Для text-embedding-3 можно 512: индекс втрое меньше, качество почти то же.</div>
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="emb-url">Адрес API</label>
+                    <input class="form-control" id="emb-url" name="base_url" type="url" value="{{ embeddings.own_base_url }}" placeholder="тот же, что у языковой модели: {{ llm.base_url }}">
+                    <div class="form-help">Запрос идёт на <code>&lt;адрес&gt;/embeddings</code>.</div>
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="emb-key">Ключ API</label>
+                    <input class="form-control" id="emb-key" name="api_key" type="password" autocomplete="new-password" placeholder="{{ embeddings.own_api_key ? 'сохранён (' ~ embeddings.api_key_masked ~ ') — введите новый, чтобы заменить' : (embeddings.own_base_url ? 'не задан' : 'тот же, что у языковой модели') }}">
+                    {% if embeddings.own_api_key %}<div class="form-help"><label class="form-check form-check--inline"><input type="checkbox" name="clear_api_key" value="1"><span>удалить сохранённый ключ</span></label></div>{% endif %}
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="emb-min">Минимальное сходство</label>
+                    <input class="form-control" id="emb-min" name="min_score" type="number" min="0" max="0.99" step="0.01" value="{{ embeddings.min_score }}">
+                    <div class="form-help">0–1: ниже — документ не считается найденным по смыслу. Для OpenAI обычно 0,25–0,3, для bge-m3 и nomic-embed-text — 0,45–0,5. Подбирайте по «Вопросам к ИИ».</div>
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="emb-log">Хранить вопросы к ИИ, дней</label>
+                    <input class="form-control" id="emb-log" name="log_days" type="number" min="0" max="3650" value="{{ embeddings.log_days }}">
+                    <div class="form-help">Вопросы, итог и оценки ответов — для страницы «Вопросы к ИИ». 0 — не сохранять.</div>
+                </div>
+            </div>
+            <div class="form-actions"><button type="submit" class="btn btn--pill btn--small">Сохранить</button></div>
+        </form>
+        <div class="form-actions">
+            <form method="post" action="{{ path('admin_integrations_semantic_test') }}" class="inline-form">
+                <input type="hidden" name="_token" value="{{ csrf_token('integrations') }}">
+                <button type="submit" class="btn btn--ghost btn--small">Проверить модель</button>
+            </form>
+            <form method="post" action="{{ path('admin_integrations_semantic_build') }}" class="inline-form">
+                <input type="hidden" name="_token" value="{{ csrf_token('integrations') }}">
+                <button type="submit" class="btn btn--ghost btn--small" {{ not embeddings.enabled or (st and st.outdated == 0) ? 'disabled' }}>Построить индекс сейчас</button>
+            </form>
+        </div>
+    </div>
+    <div class="card">
+        <h2 class="h-section">Смысловой индекс</h2>
+        {% if st %}
+        <div class="grid grid--stats grid--stats-compact">
+            <div class="stat"><div class="stat__label">В индексе</div><div class="stat__value">{{ st.indexed }}</div><div class="stat__hint">из {{ st.published }} опубликованных</div></div>
+            <div class="stat"><div class="stat__label">Ждут</div><div class="stat__value {{ st.outdated > 0 ? 'text-warning' }}">{{ st.outdated }}</div></div>
+            <div class="stat"><div class="stat__label">Ошибки</div><div class="stat__value {{ st.errors > 0 ? 'text-danger' }}">{{ st.errors }}</div></div>
+        </div>
+        <dl class="meta meta--stack">
+            {% set model_parts = st.model|split('|') %}
+            <div><dt>Модель</dt><dd><code>{{ model_parts[0] }}</code>{% if (model_parts[1] ?? '0') != '0' %}, длина вектора {{ model_parts[1] }}{% endif %}{% if st.empty > 0 %}; без текста — {{ st.empty }} док.{% endif %}</dd></div>
+            <div><dt>Фрагментов</dt><dd>{{ st.chunks }} ({{ (st.bytes / 1048576)|number_format(1, ',') }} МБ векторов)</dd></div>
+            {% if st.last_error %}<div><dt>Последняя ошибка</dt><dd class="text-danger">{{ st.last_error }}</dd></div>{% endif %}
+        </dl>
+        {% else %}
+        <p class="text-muted">Состояние индекса недоступно.</p>
+        {% endif %}
+        <p class="form-help">Индекс обновляет задание cron раз в час (<code>docportal ai-index</code>, «Мониторинг» — «Смысловой индекс для ИИ»): новые и изменившиеся опубликованные документы, после распознавания текста и при смене модели. Документ — до 60 фрагментов по тысяче символов.</p>
+        <h3 class="h-sub">Вопросы к ИИ за 30 дней</h3>
+        <p>Вопросов: {{ ai_stats.total }}, без ответа: {{ ai_stats.not_found + ai_stats.no_sources }}, оценки «помог / не помог»: {{ ai_stats.helpful }} / {{ ai_stats.unhelpful }}.
+            <a href="{{ path('admin_ai_questions') }}">Вопросы к ИИ →</a> — на что в документах нет ответа и какие ответы не помогли.</p>
+    </div>
+</div>
+
+<div class="grid grid--two" id="onlyoffice">
+    <div class="card card--form">
+        <div class="card__head"><h2 class="h-section">Редактор документов (ONLYOFFICE / Р7-Офис)</h2>
+            {% if onlyoffice.enabled and onlyoffice.url and onlyoffice.secret %}<span class="badge badge--done"><span class="badge__dot"></span>Подключён</span>{% elseif onlyoffice.enabled %}<span class="badge badge--overdue"><span class="badge__dot"></span>Не настроен</span>{% else %}<span class="badge badge--none"><span class="badge__dot"></span>Выключен</span>{% endif %}</div>
+        {% if app.request.secure and onlyoffice.url starts with 'http://' %}
+            <div class="alert alert--warning">Портал открыт по HTTPS, а сервер документов указан с http:// — браузеры не загрузят редактор со страницы HTTPS. Нужен адрес сервера документов с https://.</div>
+        {% endif %}
+        <p>Правка файлов Word, Excel и PowerPoint прямо в браузере, в том числе вместе. Когда все закрыли редактор, портал сохраняет файл новой версией документа (при обязательном согласовании — редакцией, ждущей решения). Нужен установленный в компании ONLYOFFICE Docs или «Р7-Офис. Сервер документов».</p>
+        <form method="post" action="{{ path('admin_integrations_onlyoffice') }}" class="form">
+            <input type="hidden" name="_token" value="{{ csrf_token('integrations') }}">
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="enabled" value="1" {{ onlyoffice.enabled ? 'checked' }}><span>Включить редактирование онлайн</span></label>
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="oo-url">Адрес сервера документов</label>
+                <input class="form-control" id="oo-url" name="url" type="url" placeholder="https://office.example.local" value="{{ onlyoffice.url }}">
+                <div class="form-help">Адрес, по которому сервер документов открывается в браузерах сотрудников: с него загружается редактор.</div>
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="oo-secret">Секрет JWT (обязательно)</label>
+                <input class="form-control" id="oo-secret" name="secret" type="password" autocomplete="new-password" placeholder="{{ onlyoffice.secret ? 'сохранён (' ~ onlyoffice.secret_masked ~ ') — введите новый, чтобы заменить' : 'не задан' }}">
+                <div class="form-help">Тот же, что на сервере документов (<code>services.CoAuthoring.secret</code> в local.json; в Docker — переменная <code>JWT_SECRET</code>).{% if onlyoffice.secret %} <label class="form-check form-check--inline"><input type="checkbox" name="clear_secret" value="1"><span>удалить секрет</span></label>{% endif %}</div>
+            </div>
+            <details class="form-row">
+                <summary>Дополнительно: внутренние адреса, заголовок токена</summary>
+                <div class="form-row">
+                    <label class="form-label" for="oo-internal">Внутренний адрес сервера документов</label>
+                    <input class="form-control" id="oo-internal" name="internal_url" type="url" placeholder="http://onlyoffice:80" value="{{ onlyoffice.internal_url }}">
+                    <div class="form-help">Если сервер портала обращается к серверу документов не по внешнему адресу (другая сеть, Docker). Пусто — внешний адрес.</div>
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="oo-portal">Адрес портала для сервера документов</label>
+                    <input class="form-control" id="oo-portal" name="portal_url" type="url" placeholder="http://10.0.0.5" value="{{ onlyoffice.portal_url }}">
+                    <div class="form-help">По нему сервер документов скачивает файлы и присылает уведомления о сохранении (без пути, только схема, имя и порт). Пусто — обычный адрес портала.</div>
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="oo-header">Заголовок с токеном</label>
+                    <input class="form-control form-control--inline" id="oo-header" name="header" type="text" placeholder="Authorization" value="{{ onlyoffice.header != 'Authorization' ? onlyoffice.header : '' }}">
+                    <div class="form-help">Если на сервере документов изменён <code>services.CoAuthoring.token.inbox.header</code>. Обычно не меняется.</div>
+                </div>
+            </details>
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="view" value="1" {{ onlyoffice.view ? 'checked' }}><span>Открывать офисные файлы в редакторе и для просмотра <span class="hints">— кнопка «Открыть в редакторе» у всех, кто видит документ</span></span></label>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn--pill btn--small">Сохранить</button>
+            </div>
+        </form>
+        {% if onlyoffice.url %}
+        <form method="post" action="{{ path('admin_integrations_onlyoffice_test') }}" class="form-actions">
+            <input type="hidden" name="_token" value="{{ csrf_token('integrations') }}">
+            <button type="submit" class="btn btn--ghost btn--small">Проверить соединение</button>
+        </form>
+        {% endif %}
+    </div>
+    <div class="card card--info">
+        <h2 class="h-section">Как это работает</h2>
+        <p><b>Правка.</b> Модератор раздела нажимает в карточке документа «Редактировать онлайн». Открывается последняя редакция; несколько человек могут править её одновременно. Новая версия появляется в портале примерно через 10 секунд после того, как последний участник закрыл редактор, — с отметкой «Изменено в редакторе онлайн».</p>
+        <p><b>Форматы.</b> Правятся: {{ onlyoffice.editable|map(e => e|upper)|join(', ') }}. Только просмотр: {{ onlyoffice.view_only|map(e => e|upper)|join(', ') }}.</p>
+        <p><b>Сеть.</b> Браузеры сотрудников должны открывать адрес сервера документов, а сервер документов — адрес портала (для файлов и уведомлений, например <code>{{ onlyoffice.callback_example|split('/onlyoffice/')|first }}/onlyoffice/…</code>). Ссылки для сервера документов подписаны отдельным ключом портала (файл — сутки, уведомления — неделю); изменённый файл скачивается только с сервера документов.</p>
+        <p><b>Безопасность.</b> На сервере документов должен быть включён JWT (по умолчанию включён в ONLYOFFICE Docs 7.2+), здесь — тот же секрет: им подписывается редактор и проверяется каждое уведомление о сохранении. Без секрета редактирование не включается. Выключение интеграции, смена адреса или секрета сразу отзывают все выданные ссылки; редактор доступен только сотрудникам, вошедшим в портал.</p>
     </div>
 </div>
 {% endblock %}

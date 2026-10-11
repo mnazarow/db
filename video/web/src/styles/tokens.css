@@ -1,0 +1,110 @@
+/* Дизайн-токены в стиле vodokomfort.ru: фирменный синий, светло-голубой акцент, DIN Condensed/Oswald + Roboto,
+   pill-кнопки и панели с крупным скруглением. Светлая и тёмная темы. */
+
+/* Фирменный шрифт заголовков vodokomfort.ru — DIN Condensed (файлы в public/fonts/DINCondensed/).
+   Как и на сайте: 300 — Light, 400–800 — Regular (отдельного жирного начертания с кириллицей нет).
+   Пути от корня (/fonts/…) Vite при сборке сам дополняет префиксом портала (VITE_BASE) — url() не трогаем. */
+@font-face { font-family: 'DIN Condensed'; font-style: normal; font-weight: 300; font-display: swap; src: url('/fonts/DINCondensed/DINCondensed-Light.woff2') format('woff2'); }
+@font-face { font-family: 'DIN Condensed'; font-style: normal; font-weight: 400 800; font-display: swap; src: url('/fonts/DINCondensed/DINCondensed-Regular.woff2') format('woff2'); }
+
+:root {
+  --brand: #0F4382;
+  --brand-700: #0B3468;
+  --brand-600: #0D3C75;
+  --brand-500: #0F4382;
+  --brand-400: #2B67B5;
+  --brand-300: #79A7C6;
+  --brand-200: #C3D8E7;
+  --brand-100: #E4EFF6;
+  --brand-50: #F8FBFE;
+  --accent: #79A7C6;
+  --danger: #D00024;
+  --danger-bg: #FDECEE;
+  --success: #1E8E5A;
+  --success-bg: #E6F5EC;
+  --warning: #C77800;
+  --warning-bg: #FFF4E0;
+  --info-bg: var(--brand-100);
+
+  --bg: #FFFFFF;
+  --bg-2: #F5F7FA;
+  --bg-3: #EDF1F5;
+  --surface: #FFFFFF;
+  --surface-2: #F5F7FA;
+  --overlay: rgba(15, 67, 130, 0.55);
+  --text: #1D1E1E;
+  --text-2: #5A6270;
+  --text-3: #6B7280;     /* было #9B9B9B — контраст на белом не дотягивал до нормы */
+  --text-inverse: #FFFFFF;
+  --line: #DFDEDE;
+  --border: #DFDEDE;     /* синоним --line: используется в компонентах */
+  --muted: #6B7280;      /* синоним --text-3 */
+  --line-2: #EFEFEF;
+  --line-strong: #C7C7C7;
+  --shadow-sm: 0 1px 2px rgba(15, 67, 130, 0.06), 0 1px 6px rgba(15, 67, 130, 0.06);
+  --shadow: 0 4px 16px rgba(15, 67, 130, 0.12);
+  --shadow-lg: 0 12px 40px rgba(15, 67, 130, 0.18);
+
+  --font-head: 'DIN Condensed', 'Oswald', 'Roboto Condensed', 'Arial Narrow', sans-serif;
+  --font-body: 'Roboto', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  --radius-xl: 24px;
+  --radius-lg: 18px;
+  --radius: 14px;
+  --radius-sm: 8px;
+  --radius-xs: 5px;
+  --pill: 999px;
+
+  --header-h: 64px;
+  --sidebar-w: 240px;
+  --sidebar-w-mini: 76px;
+  --content-max: 1800px;
+  --gutter: 24px;
+  --thumb-ratio: 16 / 9;
+
+  --t-fast: 120ms ease;
+  --t: 200ms ease;
+
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --brand: #79A7C6;
+  --brand-700: #0B3468;
+  --brand-600: #1D4F8F;
+  --brand-500: #2B67B5;
+  --brand-400: #4A86CC;
+  --brand-300: #79A7C6;
+  --brand-200: #274866;
+  --brand-100: #1B3350;
+  --brand-50: #14263D;
+  --accent: #79A7C6;
+  --danger: #FF5C6C;
+  --danger-bg: #3A1A20;
+  --success: #4CC38A;
+  --success-bg: #163224;
+  --warning: #F0A830;
+  --warning-bg: #3A2C12;
+  --info-bg: #1B3350;
+
+  --bg: #0B1626;
+  --bg-2: #101E32;
+  --bg-3: #16263C;
+  --surface: #12213A;
+  --surface-2: #182B46;
+  --overlay: rgba(4, 12, 24, 0.7);
+  --text: #EAF0F7;
+  --text-2: #A9B7C9;
+  --text-3: #8A9BB2;
+  --text-inverse: #FFFFFF;
+  --line: #223350;
+  --border: #223350;
+  --muted: #8A9BB2;
+  --line-2: #1B2B45;
+  --line-strong: #2E4467;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.55);
+  color-scheme: dark;
+}

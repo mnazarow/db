@@ -19,6 +19,9 @@ final class XlsxReader
     private const MAX_PART_BYTES = 64 * 1024 * 1024;
     private const MAX_CELLS = 500000;
 
+    /** Последний столбец листа Excel (XFD). */
+    private const MAX_COLUMN = 16384;
+
     private const NS_MAIN = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
     private const NS_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
 
@@ -116,8 +119,9 @@ final class XlsxReader
                     default => (string) $cell->v,
                 };
                 if ('n' === $type && '' !== $value && is_numeric($value)) {
-                    if (isset($dateStyles[$style])) {
-                        $value = self::dateFromSerial((float) $value, $date1904);
+                    $date = isset($dateStyles[$style]) ? self::dateFromSerial((float) $value, $date1904) : null;
+                    if (null !== $date) {
+                        $value = $date;
                         $dates[$colIndex] = true;
                     } else {
                         $value = self::number($value);
@@ -149,9 +153,11 @@ final class XlsxReader
             }
             $options = array_values(array_filter(array_map('trim', explode(',', $m[1])), static fn (string $o): bool => '' !== $o));
             foreach (preg_split('/\s+/', trim($sqref)) ?: [] as $range) {
-                if (1 === preg_match('/^([A-Z]+)\d*(?::([A-Z]+)\d*)?$/', $range, $r)) {
-                    $from = self::columnIndex($r[1]);
-                    $to = isset($r[2]) && '' !== $r[2] ? self::columnIndex($r[2]) : $from;
+                // Не больше трёх букв (XFD — последний столбец Excel): диапазон из испорченного или
+                // специально собранного файла не должен превращаться в миллиарды итераций.
+                if (1 === preg_match('/^\$?([A-Z]{1,3})\$?\d*(?::\$?([A-Z]{1,3})\$?\d*)?$/', $range, $r)) {
+                    $from = min(self::columnIndex($r[1]), self::MAX_COLUMN);
+                    $to = isset($r[2]) && '' !== $r[2] ? min(self::columnIndex($r[2]), self::MAX_COLUMN) : $from;
                     for ($col = $from; $col <= $to; ++$col) {
                         $lists[$col] ??= $options;
                     }
@@ -231,11 +237,29 @@ final class XlsxReader
         return 1 === preg_match('/[dy]/i', $format);
     }
 
-    private static function dateFromSerial(float $serial, bool $date1904): string
+    /**
+     * Порядковый номер дня Excel → ГГГГ-ММ-ДД; null — это не дата (время без даты, отрицательное или
+     * слишком большое число), тогда значение остаётся числом.
+     */
+    private static function dateFromSerial(float $serial, bool $date1904): ?string
     {
-        $base = new \DateTimeImmutable($date1904 ? '1904-01-01' : '1899-12-30', new \DateTimeZone('UTC'));
+        if ($serial < 1 || $serial > 2958465) { // 2958465 — 31.12.9999
+            return null;
+        }
+        $days = (int) floor($serial);
+        if ($date1904) {
+            $base = '1904-01-01';
+        } elseif ($days < 61) {
+            // До 1 марта 1900 года Excel считает дни от 31.12.1899 (у него есть несуществующее 29.02.1900).
+            if (60 === $days) {
+                return '1900-02-28';
+            }
+            $base = '1899-12-31';
+        } else {
+            $base = '1899-12-30';
+        }
 
-        return $base->modify(\sprintf('+%d days', (int) floor($serial)))->format('Y-m-d');
+        return (new \DateTimeImmutable($base, new \DateTimeZone('UTC')))->modify(\sprintf('+%d days', $days))->format('Y-m-d');
     }
 
     /** Число без лишнего «.0» на конце: «46236.0» → «46236». */

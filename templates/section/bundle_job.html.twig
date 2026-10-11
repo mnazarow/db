@@ -1,0 +1,74 @@
+{% extends 'base.html.twig' %}
+{% import '_macros.html.twig' as m %}
+
+{% block title %}PDF-сборник — {{ section.name }}{% endblock %}
+
+{% block body %}
+{% set counters = job.counters %}
+<section class="hero hero--compact">
+    <div class="container">
+        {{ m.breadcrumbs(section, 'PDF-сборник') }}
+        <div class="hero__row">
+            <h1 class="h-display">PDF-сборник раздела</h1>
+            <div class="hero__actions">
+                <a class="btn btn--ghost" href="{{ path('app_section_bundle', {id: section.id}) }}">Новый сборник</a>
+                <a class="btn btn--ghost" href="{{ path('app_section_show', {id: section.id}) }}">← К разделу</a>
+            </div>
+        </div>
+        <p class="hero__meta">«{{ job.sectionName }}» · запущен {{ job.createdAt|date('d.m.Y H:i') }}, {{ job.actorName }} · {{ job.total|plural(['документ', 'документа', 'документов']) }}{{ job.titlePages ? ', с титульными страницами' }}.</p>
+    </div>
+</section>
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+    <div class="card" data-bundle-job="{{ path('app_section_bundle_run', {id: section.id, job: job.id}) }}" data-token="{{ csrf_token('bundle_' ~ section.id) }}" data-finished="{{ job.finished ? '1' : '0' }}">
+        <div class="card__head">
+            <h2 class="h-section">Ход сборки</h2>
+            <span data-job-status>
+                {% if job.error %}<span class="badge badge--overdue"><span class="badge__dot"></span>Ошибка</span>
+                {% elseif job.finished %}<span class="badge badge--done"><span class="badge__dot"></span>Готов</span>
+                {% else %}<span class="badge badge--progress"><span class="badge__dot"></span>Собирается</span>{% endif %}
+            </span>
+        </div>
+        <div class="progress" role="progressbar" aria-label="Ход сборки" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ job.progressPercent }}">
+            <div class="progress__bar" data-job-bar style="width: {{ job.progressPercent }}%"></div>
+        </div>
+        <div class="progress__text" aria-live="polite"><span data-job-phase>{{ job.phase == 'merge' ? 'объединение файлов' : (job.finished ? 'готово' : 'документы') }}</span> · <span data-job-position>{{ job.position }}</span> из {{ job.total }} · <span data-job-percent>{{ job.progressPercent }}</span>%</div>
+        <div class="alert alert--danger" data-job-error {% if not job.error %}hidden{% endif %}>{{ job.error }}</div>
+        <div class="alert alert--warning" data-job-network hidden>Нет связи с сервером — повторная попытка через несколько секунд…</div>
+        <dl class="meta import-counters">
+            <div><dt>Включено</dt><dd data-counter="ok">{{ counters.ok }}</dd></div>
+            <div><dt>Только реквизиты</dt><dd data-counter="note">{{ counters.note }}</dd></div>
+            <div><dt>Осталось</dt><dd data-counter="pending">{{ counters.pending }}</dd></div>
+        </dl>
+        <div class="form-actions">
+            <a class="btn btn--pill" data-job-download href="{{ ready ? path('app_section_bundle_download', {id: section.id, job: job.id}) : '#' }}" {% if not ready %}hidden{% endif %}>Скачать сборник<span data-job-size>{% if ready %} ({{ job.pages|plural(['страница', 'страницы', 'страниц']) }}, {{ job.bytes|filesize }}){% endif %}</span></a>
+            <form method="post" action="{{ path('app_section_bundle_delete', {id: section.id, job: job.id}) }}" class="inline-form" data-job-delete>
+                <input type="hidden" name="_token" value="{{ csrf_token('bundle_' ~ section.id) }}">
+                <button type="submit" class="btn btn--ghost" data-job-delete-label>{{ job.finished ? 'Удалить сборник' : 'Отменить сборку' }}</button>
+            </form>
+        </div>
+        <p class="form-help">Страницу можно не держать открытой до конца: сборка продолжится, когда вы вернётесь сюда (ссылка — в разделе «PDF-сборник»). Готовый файл хранится сутки.</p>
+    </div>
+
+    <div class="card table-card">
+        <div class="card__head card__head--padded"><h2 class="h-section">Документы</h2></div>
+        <div class="table-scroll"><table class="admin-table">
+            <thead><tr><th>№</th><th>Документ</th><th>Как включается</th><th>Итог</th></tr></thead>
+            <tbody data-job-items>
+            {% for item in job.items %}
+                <tr data-item="{{ loop.index0 }}">
+                    <td class="col-nowrap">{{ loop.index }}</td>
+                    <td><a href="{{ path('app_document_show', {id: item.document}) }}">{{ item.title }}</a>{% if item.code %} <span class="text-muted">· {{ item.code }}</span>{% endif %}<div class="hints">{{ item.section }} · версия {{ item.version }}</div></td>
+                    <td class="col-nowrap">{{ kind_labels[item.kind] ?? item.kind }}</td>
+                    <td data-item-result>
+                        {% if item.status == 'ok' %}<span class="badge badge--done"><span class="badge__dot"></span>{{ item.pages|plural(['страница', 'страницы', 'страниц']) }}</span>
+                        {% elseif item.status == 'note' %}<span class="badge badge--soon"><span class="badge__dot"></span>Только реквизиты</span><div class="hints">{{ item.note }}</div>
+                        {% else %}<span class="text-muted">ожидает</span>{% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table></div>
+    </div>
+</section>
+{% endblock %}

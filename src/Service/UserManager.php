@@ -111,14 +111,22 @@ final class UserManager
             ->setPassword('')
             ->setMustChangePassword(false)
             ->setDisplayName($info->displayName)
-            ->setLdapDn($info->dn)
-            ->setDepartment($info->department);
+            ->setLdapDn($info->dn);
+        // Пустое подразделение в каталоге не стирает заполненное в портале (например, загруженное из 1С:ЗУП).
+        if (null !== $info->department && '' !== trim($info->department)) {
+            $user->setDepartment($info->department);
+        }
         if (null !== $info->email) {
             $user->setEmail($info->email);
         }
-        // Права администратора синхронизируются с группой AD, только если группа задана в настройках.
-        if ($info->isAdmin) {
-            $user->setAdmin(true);
+        // Права администратора синхронизируются с группой AD, только если группа задана в настройках:
+        // вошёл в группу — права выдаются, исключён из группы — снимаются при следующем входе.
+        if ($info->adminGroupConfigured) {
+            $this->syncAdminFromDirectory($user, $info->isAdmin, 'AD');
+        }
+        // Роли «Маркетолог» и «Помощник маркетолога» — по группам AD, если они заданы.
+        if (null !== $info->position) {
+            $this->syncPositionFromDirectory($user, $info->position, 'AD');
         }
         if ($created) {
             $this->em->persist($user);
@@ -127,6 +135,38 @@ final class UserManager
         $this->auditLogger->info($created ? 'Создана учётная запись из домена' : 'Обновлена учётная запись из домена', ['user' => $user->getUsername(), 'admin' => $user->isAdmin()]);
 
         return $user;
+    }
+
+    /**
+     * Права администратора по данным каталога (группа AD, утверждение SSO). Последнего активного
+     * администратора не разжалует — иначе портал остался бы без управления; в журнал пишется предупреждение.
+     */
+    public function syncAdminFromDirectory(User $user, bool $isAdmin, string $source): void
+    {
+        if ($user->isAdmin() === $isAdmin) {
+            return;
+        }
+        if (!$isAdmin && null !== $user->getId() && $user->isActive() && $this->users->countActiveAdmins() <= 1) {
+            $this->auditLogger->warning('Права администратора не сняты: это последний активный администратор', ['user' => $user->getUsername(), 'source' => $source]);
+
+            return;
+        }
+        $user->setAdmin($isAdmin);
+        $this->auditLogger->info($isAdmin ? 'Выданы права администратора по данным каталога' : 'Сняты права администратора по данным каталога', ['user' => $user->getUsername(), 'source' => $source]);
+    }
+
+    /**
+     * Роль маркетолога или помощника по данным каталога (группы AD, утверждение SSO). Администратора не
+     * трогает: права администратора синхронизируются отдельно (syncAdminFromDirectory()).
+     */
+    public function syncPositionFromDirectory(User $user, string $position, string $source): void
+    {
+        if ($user->isAdmin() || !\in_array($position, [User::POSITION_USER, User::POSITION_ASSISTANT, User::POSITION_MARKETER], true) || $user->getPosition() === $position) {
+            return;
+        }
+        $previous = $user->getPosition();
+        $user->setPosition($position);
+        $this->auditLogger->info('Роль изменена по данным каталога', ['user' => $user->getUsername(), 'from' => $previous, 'to' => $position, 'source' => $source]);
     }
 
     public function save(User $user, ?User $actor = null): void
@@ -146,12 +186,39 @@ final class UserManager
             throw new \DomainException('Нельзя удалить собственную учётную запись.');
         }
         $this->assertNotLastAdmin($user);
+        // Записи об ознакомлении «под подпись» и решения по согласованию — юридически значимая история:
+        // при удалении учётной записи они удалились бы вместе с ней (каскадом). Такую учётную запись блокируют.
+        $history = $this->historyCounts($user);
+        if ($history['acknowledgements'] > 0 || $history['approvals'] > 0) {
+            throw new \DomainException(\sprintf(
+                'У сотрудника есть история, которую нужно сохранить: ознакомлений — %d, согласований — %d. Удаление стёрло бы эти записи. Заблокируйте учётную запись вместо удаления.',
+                $history['acknowledgements'],
+                $history['approvals'],
+            ));
+        }
 
         $username = $user->getUsername();
         $this->em->remove($user);
         $this->em->flush();
 
         $this->auditLogger->info('Удалён пользователь', ['user' => $username, 'by' => $actor?->getUsername()]);
+    }
+
+    /**
+     * Сколько записей, которые нельзя терять, связано с сотрудником.
+     *
+     * @return array{acknowledgements: int, approvals: int}
+     */
+    public function historyCounts(User $user): array
+    {
+        if (null === $user->getId()) {
+            return ['acknowledgements' => 0, 'approvals' => 0];
+        }
+
+        return [
+            'acknowledgements' => (int) $this->em->createQuery('SELECT COUNT(a.id) FROM App\Entity\DocumentAcknowledgement a WHERE a.user = :u')->setParameter('u', $user)->getSingleScalarResult(),
+            'approvals' => (int) $this->em->createQuery('SELECT COUNT(a.id) FROM App\Entity\DocumentApproval a WHERE a.approver = :u OR a.decidedBy = :u')->setParameter('u', $user)->getSingleScalarResult(),
+        ];
     }
 
     /**

@@ -13,7 +13,7 @@
                 <div class="doc-head__icon">{{ m.file_icon(document) }}</div>
                 <div>
                     <div class="doc-head__badges">
-                        {{ m.status_badge(document) }}
+                        {{ m.status_badge(document, approval is defined and approval and approval.moderation) }}
                         {% if app.user and not document.public %}{{ m.access_badge(document) }}{% endif %}
                         {{ m.restricted_badge(document) }}
                         {{ m.validity_badge(document, true) }}
@@ -35,8 +35,17 @@
                         <a class="btn btn--ghost" href="{{ path('app_document_download', {id: document.id}) }}">Скачать как HTML</a>
                     {% endif %}
                 {% endif %}
+                {% if document.file %}
+                    {% if office_edit(document) %}
+                        <a class="btn btn--ghost" href="{{ path('app_document_office', {id: document.id, mode: 'edit'}) }}" title="Открыть в редакторе документов: изменения сохранятся новой версией">Редактировать онлайн</a>
+                    {% elseif office_view(document) %}
+                        <a class="btn btn--ghost" href="{{ path('app_document_office', {id: document.id}) }}">Открыть в редакторе</a>
+                    {% endif %}
+                {% endif %}
                 {% if can_manage %}
                     <a class="btn btn--ghost" href="{{ path('app_document_edit', {id: document.id}) }}">{{ document.file ? 'Изменить / новая версия' : 'Редактировать' }}</a>
+                {% elseif can_contribute|default(false) and not (approval and not can_edit_card|default(false)) %}
+                    <a class="btn btn--ghost" href="{{ path('app_document_edit', {id: document.id}) }}">{{ can_edit_card|default(false) ? (document.file ? 'Изменить / новая версия' : 'Редактировать') : 'Предложить новую редакцию' }}</a>
                 {% endif %}
             </div>
         </div>
@@ -47,9 +56,10 @@
     {% include '_flashes.html.twig' %}
 
     {% if document.draft %}
-        <div class="alert alert--info">Это черновик: его видят только модераторы раздела и администраторы. {% if can_manage %}{{ approval_required ? 'Отправьте документ на согласование — после согласования его можно опубликовать.' : 'Опубликуйте документ, чтобы он стал доступен всем сотрудникам.' }}{% endif %}</div>
-    {% elseif document.onReview %}
-        <div class="alert alert--warning">Документ на согласовании{% if approval %} у {{ approval.approver.displayName }} (с {{ approval.requestedAt|date('d.m.Y H:i') }}){% endif %}: сотрудникам он пока не виден.</div>
+        <div class="alert alert--info">Это черновик: его видят только маркетологи, модераторы раздела, помощники маркетолога и администраторы. {% if can_manage %}{{ approval_required ? 'Отправьте документ на согласование — после согласования его можно опубликовать.' : 'Опубликуйте документ, чтобы он стал доступен всем сотрудникам.' }}{% elseif can_submit_moderation|default(false) %}Когда материал будет готов, отправьте его на модерацию — сотрудники увидят его после одобрения маркетологом.{% endif %}</div>
+    {% elseif document.onReview and not (approval and approval.moderation and approval.requestedBy and approval.requestedBy.id == app.user.id|default(0)) %}
+        {# Автору материала на модерации то же самое (с кнопкой «Отозвать») показывает блок ниже. #}
+        <div class="alert alert--warning">{% if approval and approval.moderation %}Материал на модерации{% if approval.requestedBy %} — отправил {{ approval.requestedBy.displayName }}{% endif %} {{ approval.requestedAt|date('d.m.Y H:i') }}{% else %}Документ на согласовании{% if approval %} у {{ approval.approverLabel }} (с {{ approval.requestedAt|date('d.m.Y H:i') }}){% endif %}{% endif %}: сотрудникам он пока не виден.</div>
     {% elseif document.archived %}
         <div class="alert alert--warning">Документ в архиве: он снят с публикации и сохранён для истории.</div>
     {% endif %}
@@ -72,23 +82,85 @@
             а также модераторы раздела и администраторы.</div>
     {% endif %}
 
-    {% if approval and approval.approver.id == app.user.id|default(0) %}
+    {% if approval and can_decide|default(false) %}
         <div class="ack-box">
-            <p class="ack-box__title">Требуется ваше согласование</p>
-            <p>Вам отправили на согласование редакцию {{ approval.versionNumber }} этого документа{% if approval.requestedBy %} — {{ approval.requestedBy.displayName }}, {{ approval.requestedAt|date('d.m.Y H:i') }}{% endif %}.
+            <p class="ack-box__title">{{ approval.moderation ? 'Материал ждёт модерации' : 'Требуется ваше согласование' }}</p>
+            <p>{{ approval.moderation ? 'На модерацию отправлена' : 'Вам отправили на согласование' }} редакция {{ approval.versionNumber }} этого документа{% if approval.requestedBy %} — {{ approval.requestedBy.displayName }}, {{ approval.requestedAt|date('d.m.Y H:i') }}{% endif %}.
+                {% if approval.moderation %}Одобренный материал сразу публикуется; возвращённый на доработку остаётся черновиком с вашим комментарием.{% endif %}
+                {% if current and approval.versionNumber != current.number %}Это новая редакция: сотрудники пока видят редакцию {{ current.number }}.
+                    <a href="{{ path(document.file ? 'app_document_version_download' : 'app_document_version', {id: document.id, number: approval.versionNumber}) }}">Открыть редакцию {{ approval.versionNumber }}</a>.{% endif %}
                 {% if approval.requestNote %}<br>Комментарий: «{{ approval.requestNote }}»{% endif %}</p>
             <form method="post" action="{{ path('app_approval_decide', {id: approval.id}) }}" class="form ack-decide">
                 <input type="hidden" name="_token" value="{{ csrf_token('approval_decide_' ~ approval.id) }}">
-                <input class="form-control form-control--inline" type="text" name="note" maxlength="2000" placeholder="Комментарий (обязателен при отклонении)">
-                <button type="submit" class="btn btn--pill" name="decision" value="approve">Согласовать</button>
-                <button type="submit" class="btn btn--ghost btn--danger" name="decision" value="reject">Отклонить</button>
+                <input class="form-control form-control--inline" type="text" name="note" maxlength="2000" placeholder="Комментарий (обязателен при {{ approval.moderation ? 'возврате' : 'отклонении' }})">
+                <button type="submit" class="btn btn--pill" name="decision" value="approve">{{ approval.moderation ? 'Одобрить и опубликовать' : 'Согласовать' }}</button>
+                <button type="submit" class="btn btn--ghost btn--danger" name="decision" value="reject">{{ approval.moderation ? 'Вернуть на доработку' : 'Отклонить' }}</button>
             </form>
         </div>
-    {% elseif approval_decided and can_manage and not document.published %}
+    {% elseif approval and approval.moderation and approval.requestedBy and approval.requestedBy.id == app.user.id|default(0) %}
+        <div class="ack-box ack-box--pending">
+            <p class="ack-box__title">Материал на модерации</p>
+            <p>Вы отправили редакцию {{ approval.versionNumber }} на модерацию {{ approval.requestedAt|date('d.m.Y H:i') }}. Решение примет маркетолог — вы получите письмо{% if app.user.hasTelegram() %} и сообщение в Telegram{% endif %}.</p>
+            <form method="post" action="{{ path('app_approval_cancel', {id: approval.id}) }}" class="inline-form" data-confirm="Отозвать материал с модерации? Он вернётся в черновики.">
+                <input type="hidden" name="_token" value="{{ csrf_token('approval_decide_' ~ approval.id) }}">
+                <button type="submit" class="btn btn--ghost btn--small">Отозвать с модерации</button>
+            </form>
+        </div>
+    {% elseif approval_decided and (can_manage or can_contribute|default(false)) and not document.published %}
         <div class="ack-box {{ approval_decided.approved ? 'ack-box--done' }}">
-            <p class="ack-box__title">{{ approval_decided.approved ? 'Редакция согласована' : 'Редакция отклонена при согласовании' }}</p>
-            <p>{{ approval_decided.approver.displayName }}, {{ approval_decided.decidedAt|date('d.m.Y H:i') }}{% if approval_decided.decisionNote %}: «{{ approval_decided.decisionNote }}»{% endif %}.
-                {% if approval_decided.approved %}Документ можно публиковать.{% else %}Внесите правки и отправьте документ на согласование заново.{% endif %}</p>
+            <p class="ack-box__title">{% if approval_decided.moderation %}{{ approval_decided.approved ? 'Материал одобрен' : 'Материал возвращён на доработку' }}{% else %}{{ approval_decided.approved ? 'Редакция согласована' : 'Редакция отклонена при согласовании' }}{% endif %}</p>
+            <p>{{ approval_decided.deciderName }}, {{ approval_decided.decidedAt|date('d.m.Y H:i') }}{% if approval_decided.decisionNote %}: «{{ approval_decided.decisionNote }}»{% endif %}.
+                {% if approval_decided.approved %}{{ can_manage ? 'Документ можно публиковать.' : 'Опубликовать его может маркетолог.' }}{% else %}Внесите правки и отправьте документ {{ approval_decided.moderation ? 'на модерацию' : 'на согласование' }} заново.{% endif %}</p>
+        </div>
+    {% endif %}
+
+    {% if can_submit_moderation|default(false) and not document.published %}
+        <div class="ack-box">
+            <p class="ack-box__title">Отправить на модерацию</p>
+            <p>Материал увидят сотрудники после того, как его одобрит маркетолог. Маркетологи получат уведомление.</p>
+            <form method="post" action="{{ path('app_document_moderation_submit', {id: document.id}) }}" class="form ack-decide">
+                <input type="hidden" name="_token" value="{{ csrf_token('document_' ~ document.id) }}">
+                <input class="form-control form-control--inline" type="text" name="note" maxlength="2000" placeholder="Комментарий для маркетолога (необязательно)">
+                <button type="submit" class="btn btn--pill">Отправить на модерацию</button>
+            </form>
+        </div>
+    {% endif %}
+
+    {% if pending_version and (can_manage or can_contribute|default(false)) %}
+        {# Новая редакция опубликованного документа при обязательном согласовании ждёт решения; сотрудники видят текущую. #}
+        <div class="ack-box ack-box--pending">
+            <p class="ack-box__title">Редакция {{ pending_version.number }} ещё не вступила в силу</p>
+            <p>Сотрудники видят редакцию {{ current ? current.number : '—' }}.
+                {% if approval %}
+                    Редакция {{ approval.versionNumber }} {{ approval.moderation ? 'на модерации' : 'на согласовании у ' ~ approval.approverLabel }} (с {{ approval.requestedAt|date('d.m.Y H:i') }}).
+                {% elseif pending_decision and pending_decision.approved %}
+                    Редакция {{ pending_decision.moderation ? 'одобрена' : 'согласована' }}: {{ pending_decision.deciderName }}, {{ pending_decision.decidedAt|date('d.m.Y H:i') }}{% if pending_decision.decisionNote %} — «{{ pending_decision.decisionNote }}»{% endif %}.
+                {% elseif pending_decision %}
+                    Редакция {{ pending_decision.moderation ? 'возвращена на доработку' : 'отклонена' }}: {{ pending_decision.deciderName }}{% if pending_decision.decisionNote %} — «{{ pending_decision.decisionNote }}»{% endif %}. Загрузите исправленную редакцию и отправьте её {{ pending_decision.moderation ? 'на модерацию' : 'на согласование' }}.
+                {% elseif can_promote %}
+                    Сделайте её текущей, когда будете готовы.
+                {% elseif not can_manage %}
+                    Она вступит в силу после одобрения маркетологом — отправьте её на модерацию.
+                {% else %}
+                    По настройкам портала она вступит в силу после согласования.
+                {% endif %}
+            </p>
+            <div class="actions">
+                <a class="btn btn--ghost btn--small" href="{{ path(document.file ? 'app_document_version_download' : 'app_document_version', {id: document.id, number: pending_version.number}) }}">Открыть редакцию {{ pending_version.number }}</a>
+                {% if can_promote %}
+                    <form method="post" action="{{ path('app_document_version_promote', {id: document.id, number: pending_version.number}) }}" class="inline-form" data-confirm="Сделать редакцию {{ pending_version.number }} текущей? {{ document.published ? 'Её сразу увидят сотрудники.' : '' }}">
+                        <input type="hidden" name="_token" value="{{ csrf_token('document_' ~ document.id) }}">
+                        <button type="submit" class="btn btn--pill btn--small">Сделать редакцию {{ pending_version.number }} текущей</button>
+                    </form>
+                {% elseif can_submit_moderation|default(false) %}
+                    <form method="post" action="{{ path('app_document_moderation_submit', {id: document.id}) }}" class="inline-form">
+                        <input type="hidden" name="_token" value="{{ csrf_token('document_' ~ document.id) }}">
+                        <button type="submit" class="btn btn--pill btn--small">Отправить на модерацию</button>
+                    </form>
+                {% elseif can_manage and not approval and not (pending_decision and pending_decision.approved) %}
+                    <a class="btn btn--pill btn--small" href="{{ path('app_document_approval_request', {id: document.id}) }}">Отправить на согласование</a>
+                {% endif %}
+            </div>
         </div>
     {% endif %}
 
@@ -113,7 +185,7 @@
             {% if document.description %}
                 <div class="card">
                     <div class="card__head"><h2 class="h-section">Описание</h2>{% if document.descriptionGenerated %}<span class="ai-badge" title="Сформировано языковой моделью {{ document.descriptionGeneratedAt ? document.descriptionGeneratedAt|date('d.m.Y H:i') }}">ИИ</span>{% endif %}</div>
-                    <p class="doc-description">{{ document.description|nl2br }}</p>
+                    <p class="doc-description">{{ document.description }}</p>
                     {% if document.descriptionGenerated %}<p class="form-help">Описание сформировано языковой моделью{% if document.descriptionGeneratedAt %} {{ document.descriptionGeneratedAt|date('d.m.Y') }}{% endif %} и может содержать неточности.{% if can_manage %} Отредактируйте его в карточке, если нужно — тогда пометка снимется.{% endif %}</p>{% endif %}
                 </div>
             {% elseif llm_enabled|default(false) %}
@@ -126,15 +198,16 @@
             {% if current and document.page %}
                 <div class="card">
                     <h2 class="h-section">Содержание</h2>
-                    <div class="page-content">{{ current.content|raw }}</div>
+                    <div class="page-content{{ page_watermark ? ' page-content--watermark' }}"{% if page_watermark %} style="--watermark: url('{{ page_watermark }}')"{% endif %}>{{ current.content|raw }}</div>
                 </div>
             {% elseif current and inline and file_exists %}
                 <div class="card card--preview">
                     <div class="card__head"><h2 class="h-section">Предпросмотр</h2><a class="link-action" href="{{ path('app_document_download', {id: document.id, inline: 1}) }}" target="_blank" rel="noopener">Открыть на весь экран</a></div>
-                    {% if current.extension in ['png', 'jpg', 'jpeg', 'gif', 'svg'] %}
+                    {% if current.extension|lower in ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] %}
                         <img class="preview-image" src="{{ path('app_document_download', {id: document.id, inline: 1}) }}" alt="{{ document.title }}">
                     {% else %}
-                        <iframe class="preview-frame__iframe" src="{{ path('app_document_download', {id: document.id, inline: 1}) }}" title="Предпросмотр: {{ document.title }}" loading="lazy"></iframe>
+                        {# Текстовые файлы — в песочнице без скриптов; PDF — без неё (иначе Chrome не покажет PDF). #}
+                        <iframe class="preview-frame__iframe" src="{{ path('app_document_download', {id: document.id, inline: 1}) }}" title="Предпросмотр: {{ document.title }}" loading="lazy"{% if current.extension|lower != 'pdf' %} sandbox{% endif %}></iframe>
                     {% endif %}
                 </div>
             {% elseif current and previewable and file_exists %}
@@ -145,6 +218,8 @@
                     </div>
                     {% if preview_ready %}
                         <iframe class="preview-frame__iframe" src="{{ path('app_document_preview', {id: document.id}) }}" title="Предпросмотр: {{ document.title }}" loading="lazy"></iframe>
+                    {% elseif preview_failed|default(false) %}
+                        <p class="text-muted">Показать этот файл в браузере не получилось (возможно, он повреждён или защищён паролем) — скачайте его, чтобы открыть.</p>
                     {% else %}
                         <p class="text-muted">Файл {{ current.extension|upper }} можно посмотреть прямо в браузере — портал переведёт его в PDF (первый раз это занимает несколько секунд).</p>
                         <p><a class="btn btn--pill" href="{{ path('app_document_preview', {id: document.id}) }}" target="_blank" rel="noopener">Посмотреть в браузере</a></p>
@@ -165,8 +240,9 @@
                         <thead><tr><th>Версия</th><th>Дата</th><th>Автор</th><th>Что изменилось</th><th>{{ document.file ? 'Файл' : 'Размер' }}</th><th class="col-num">Скач.</th><th class="col-actions"></th></tr></thead>
                         <tbody>
                         {% for v in versions %}
-                            <tr class="{{ v.current ? 'is-published' }}">
-                                <td><b>v{{ v.number }}</b>{% if v.current %} <span class="tag">текущая</span>{% endif %}</td>
+                            {% set is_pending = pending_version and v.number == pending_version.number %}
+                            <tr class="{{ v.current ? 'is-published' }}{{ is_pending ? ' is-pending' }}">
+                                <td><b>v{{ v.number }}</b>{% if v.current %} <span class="tag">текущая</span>{% elseif is_pending %} <span class="tag tag--warning">ещё не действует</span>{% endif %}</td>
                                 <td class="col-nowrap">{{ v.createdAt|date('d.m.Y H:i') }}</td>
                                 <td>{{ v.createdBy ? v.createdBy.displayName : '—' }}</td>
                                 <td class="col-comment">{{ v.changeNote ?: '—' }}</td>
@@ -181,7 +257,7 @@
                                             <a class="btn btn--ghost btn--small" href="{{ path('app_document_version', {id: document.id, number: v.number}) }}">Открыть</a>
                                             {% if not v.current and current %}<a class="btn btn--ghost btn--small" href="{{ path('app_document_compare', {id: document.id, a: v.number, b: current.number}) }}">Сравнить с текущей</a>{% endif %}
                                         {% endif %}
-                                        {% if can_manage and not v.current %}
+                                        {% if can_manage and not v.current and not is_pending and (not current or v.number < current.number) %}
                                             <form method="post" action="{{ path('app_document_restore', {id: document.id, number: v.number}) }}" class="inline-form" data-confirm="Сделать версию {{ v.number }} текущей? Она будет скопирована как новая версия.">
                                                 <input type="hidden" name="_token" value="{{ csrf_token('document_' ~ document.id) }}">
                                                 <button type="submit" class="btn btn--ghost btn--small">Восстановить</button>
@@ -256,13 +332,19 @@
                                 {% if approval %}
                                     <form method="post" action="{{ path('app_approval_cancel', {id: approval.id}) }}" class="inline-form" data-confirm="Отозвать запрос согласования?">
                                         <input type="hidden" name="_token" value="{{ csrf_token('approval_decide_' ~ approval.id) }}">
-                                        <button type="submit" class="btn btn--ghost btn--block">Отозвать согласование</button>
+                                        <button type="submit" class="btn btn--ghost btn--block">{{ approval.moderation ? 'Снять с модерации' : 'Отозвать согласование' }}</button>
                                     </form>
                                 {% else %}
                                     <a class="btn btn--ghost btn--block" href="{{ path('app_document_approval_request', {id: document.id}) }}">Отправить на согласование</a>
                                 {% endif %}
                             {% endif %}
                         {% else %}
+                            {% if approval %}
+                                <form method="post" action="{{ path('app_approval_cancel', {id: approval.id}) }}" class="inline-form" data-confirm="Отозвать запрос согласования?">
+                                    <input type="hidden" name="_token" value="{{ csrf_token('approval_decide_' ~ approval.id) }}">
+                                    <button type="submit" class="btn btn--ghost btn--block">{{ approval.moderation ? 'Снять с модерации' : 'Отозвать согласование' }}</button>
+                                </form>
+                            {% endif %}
                             <form method="post" action="{{ path('app_document_unpublish', {id: document.id}) }}" class="inline-form" data-confirm="Снять документ с публикации? Он станет черновиком и пропадёт из списков для сотрудников.">
                                 <input type="hidden" name="_token" value="{{ csrf_token('document_' ~ document.id) }}">
                                 <button type="submit" class="btn btn--ghost btn--block">Снять с публикации</button>

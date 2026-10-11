@@ -74,7 +74,13 @@ final class MaterialsImportCommand extends Command
         if (null === $user && !$dryRun) {
             $io->warning(\sprintf('Пользователь «%s» не найден — изменения запишутся в журнал без автора.', (string) $input->getOption('user')));
         }
-        $report = $dryRun ? $this->importer->plan($sheets, $deleteMissing) : $this->importer->apply($sheets, $deleteMissing, $user);
+        try {
+            $report = $dryRun ? $this->importer->plan($sheets, $deleteMissing) : $this->importer->apply($sheets, $deleteMissing, $user);
+        } catch (\Throwable $e) {
+            $io->error('Импорт не выполнен, изменения отменены: '.$e->getMessage());
+
+            return Command::FAILURE;
+        }
 
         $io->title($dryRun ? 'План импорта (ничего не сохранено)' : 'Импорт выполнен');
         $headers = $dryRun

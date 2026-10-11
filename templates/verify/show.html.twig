@@ -1,0 +1,89 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}Проверка листа {{ sheet.code }}{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        <div class="eyebrow">Проверка подлинности · код {{ sheet.code }}</div>
+        <div class="hero__row">
+            <h1 class="h-display">Лист выдан порталом</h1>
+            <div class="hero__actions">
+                <a class="btn btn--ghost" href="{{ path('app_verify_form') }}">Проверить другой код</a>
+            </div>
+        </div>
+        <p class="hero__meta">Лист ознакомления с кодом {{ sheet.code }} сформирован в портале {{ sheet.createdAt|date('d.m.Y в H:i') }}.</p>
+    </div>
+</section>
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+    {% if document is null %}
+        <div class="alert alert--warning" role="alert">Документ удалён из портала. Лист был выдан порталом, но сверить его записи с текущими уже нельзя.</div>
+    {% elseif file_matches is same as(false) %}
+        <div class="alert alert--danger" role="alert">Контрольная сумма файла редакции в портале не совпадает с указанной на листе. Сообщите администратору портала.</div>
+    {% elseif matches %}
+        <div class="alert alert--success" role="status"><b>Лист актуален.</b> Всё, что на нём напечатано, — реквизиты документа, назначения, отметки об ознакомлении и решения согласования — совпадает с текущими данными портала.</div>
+    {% else %}
+        <div class="alert alert--warning" role="alert"><b>После формирования листа данные изменились</b> — например, ознакомились ещё сотрудники, назначение отменено или изменены реквизиты документа. На {{ sheet.createdAt|date('d.m.Y H:i') }} лист был верен; актуальные данные — в новом листе.</div>
+    {% endif %}
+
+    <div class="card">
+        <dl class="meta meta--stack">
+            <div><dt>Документ</dt><dd>
+                {% if document and is_granted('DOCUMENT_VIEW', document) %}<a href="{{ path('app_document_show', {id: document.id}) }}">{{ sheet.documentTitle }}</a>{% else %}{{ sheet.documentTitle }}{% endif %}
+                {% if sheet.documentCode %}<span class="text-muted"> · {{ sheet.documentCode }}</span>{% endif %}
+            </dd></div>
+            <div><dt>Редакция</dt><dd>версия {{ sheet.versionNumber }}</dd></div>
+            <div><dt>Лист сформирован</dt><dd>{{ sheet.createdAt|date('d.m.Y H:i') }}, {{ sheet.createdByName }}</dd></div>
+            <div><dt>На листе</dt><dd>назначено {{ sheet.assigned }} · ознакомились {{ sheet.acknowledged }}{% if sheet.approvals > 0 %} · решений согласования {{ sheet.approvals }}{% endif %}</dd></div>
+            {% if current %}
+                <div><dt>Сейчас в портале</dt><dd class="{{ matches ? '' : 'text-warning' }}">назначено {{ current.assigned }} · ознакомились {{ current.acknowledged }}{% if current.approvals > 0 %} · решений согласования {{ current.approvals }}{% endif %}{% if current.overdue > 0 %} · срок истёк у {{ current.overdue }}{% endif %}</dd></div>
+            {% endif %}
+            {% if sheet.fileChecksum %}
+                <div><dt>Контрольная сумма редакции (SHA-256)</dt><dd><code class="text-break">{{ sheet.fileChecksum }}</code></dd></div>
+            {% endif %}
+        </dl>
+    </div>
+
+    {% if details %}
+        <div class="card table-card">
+            <div class="card__head card__head--padded">
+                <h2 class="h-section">Ознакомление сейчас</h2>
+                <div class="hero__actions">
+                    <a class="btn btn--ghost" href="{{ path('app_document_acknowledgements', {id: document.id, version: sheet.versionNumber}) }}">Отчёт</a>
+                    <a class="btn btn--pill" href="{{ path('app_document_acknowledgements_pdf', {id: document.id, version: sheet.versionNumber}) }}">{{ matches ? 'Скачать лист снова' : 'Сформировать актуальный лист' }}</a>
+                </div>
+            </div>
+            {% if details.acknowledgements is empty %}
+                <div class="table-card__empty">Назначений по этой редакции сейчас нет.</div>
+            {% else %}
+            <div class="table-scroll"><table class="admin-table">
+                <thead><tr><th>Сотрудник</th><th>Подразделение</th><th>Назначено</th><th>Ознакомлен</th></tr></thead>
+                <tbody>
+                {% for row in details.acknowledgements %}
+                    <tr>
+                        <td>{{ row.user.displayName }} <span class="hints">{{ row.user.username }}</span></td>
+                        <td>{{ row.user.department ?: '—' }}</td>
+                        <td class="col-nowrap">{{ row.assignedAt|date('d.m.Y') }}</td>
+                        <td class="col-nowrap">{% if row.confirmedAt %}<span class="text-success">{{ row.confirmedAt|date('d.m.Y H:i') }}</span>{% else %}<span class="text-muted">не ознакомлен</span>{% endif %}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table></div>
+            {% endif %}
+            {% if details.approvals is not empty %}
+                <div class="card__padded">
+                    <h3 class="h-sub">Согласование</h3>
+                    <ul class="plain-list">
+                        {% for approval in details.approvals %}
+                            <li>{{ approval.deciderName }} — {{ approval.decisionLabel|lower }}{% if approval.decidedAt %}, {{ approval.decidedAt|date('d.m.Y H:i') }}{% endif %}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            {% endif %}
+        </div>
+    {% elseif document %}
+        <p class="form-help">Список сотрудников виден ответственным за документ{% if not app.user %} после <a href="{{ path('app_login') }}">входа в портал</a>{% endif %}.</p>
+    {% endif %}
+</section>
+{% endblock %}

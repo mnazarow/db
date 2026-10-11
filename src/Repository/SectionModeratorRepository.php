@@ -30,6 +30,14 @@ final class SectionModeratorRepository extends ServiceEntityRepository
         return array_map(static fn (array $r) => (int) $r['sid'], $rows);
     }
 
+    /** @return list<int> идентификаторы всех сотрудников, назначенных модераторами хотя бы одного раздела */
+    public function findAllModeratorUserIds(): array
+    {
+        $rows = $this->createQueryBuilder('m')->select('DISTINCT IDENTITY(m.user) AS uid')->getQuery()->getArrayResult();
+
+        return array_map(static fn (array $r) => (int) $r['uid'], $rows);
+    }
+
     /** @return list<SectionModerator> */
     public function findForUser(User $user): array
     {

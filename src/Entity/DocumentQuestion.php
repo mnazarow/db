@@ -101,22 +101,31 @@ class DocumentQuestion
      */
     public function setOptions(array $options, int $correctOption): static
     {
+        // Номер верного варианта — номер поля формы; пустые поля выбрасываются, поэтому номер пересчитывается
+        // (иначе при пустом поле между вариантами верным оказывался бы соседний ответ).
         $clean = [];
-        foreach ($options as $option) {
+        $correct = null;
+        foreach (array_values($options) as $index => $option) {
             $option = trim((string) $option);
-            if ('' !== $option) {
-                $clean[] = mb_substr($option, 0, 300);
+            if ('' === $option) {
+                continue;
             }
+            if ($index === $correctOption) {
+                $correct = \count($clean);
+            }
+            $clean[] = mb_substr($option, 0, 300);
         }
         if (\count($clean) < self::MIN_OPTIONS) {
             throw new \InvalidArgumentException('Нужно не меньше двух вариантов ответа.');
         }
-        $clean = \array_slice($clean, 0, self::MAX_OPTIONS);
-        if (!isset($clean[$correctOption])) {
-            throw new \InvalidArgumentException('Отметьте верный вариант ответа.');
+        if (\count($clean) > self::MAX_OPTIONS) {
+            throw new \InvalidArgumentException(\sprintf('Не больше %d вариантов ответа.', self::MAX_OPTIONS));
+        }
+        if (null === $correct) {
+            throw new \InvalidArgumentException('Отметьте верный вариант ответа (у отмеченного варианта не заполнен текст).');
         }
         $this->options = $clean;
-        $this->correctOption = $correctOption;
+        $this->correctOption = $correct;
 
         return $this;
     }

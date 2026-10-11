@@ -11,27 +11,55 @@ use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\Mapping as ORM;
 use Symfony\Bridge\Doctrine\Validator\Constraints\UniqueEntity;
 use Symfony\Component\Security\Core\User\PasswordAuthenticatedUserInterface;
+use Symfony\Component\Security\Core\User\EquatableInterface;
 use Symfony\Component\Security\Core\User\UserInterface;
 use Symfony\Component\Validator\Constraints as Assert;
 
 /**
  * Пользователь портала.
  *
- * Роли: ROLE_USER (чтение опубликованных документов) и ROLE_ADMIN (панель администратора, всё остальное).
- * Права модератора не хранятся в ролях — они выдаются на конкретные разделы (см. SectionModerator)
- * и распространяются на все вложенные подразделы.
+ * Роли (одна на учётную запись, действуют во всём портале — в документах и в видео):
+ * - ROLE_USER — пользователь: видит опубликованные документы и одобренные видео;
+ * - ROLE_ASSISTANT — помощник маркетолога: добавляет документы, новые редакции и видео, но они
+ *   публикуются только после модерации;
+ * - ROLE_MARKETER — маркетолог (модератор): ведёт все разделы, публикует сразу, решает по материалам
+ *   на модерации;
+ * - ROLE_ADMIN — администратор: всё, включая панель администратора.
+ * Кроме того, права модератора можно выдать на отдельные разделы (см. SectionModerator) — они
+ * распространяются на все вложенные подразделы.
  *
  * Источник учётной записи: local (пароль хранится в портале) или ldap (проверка пароля в Active Directory).
  */
 #[ORM\Entity(repositoryClass: UserRepository::class)]
 #[ORM\Table(name: '`user`')]
 #[ORM\UniqueConstraint(name: 'uniq_user_username', columns: ['username'])]
+#[ORM\UniqueConstraint(name: 'uniq_user_sso_subject', columns: ['sso_subject'])]
 #[ORM\Index(name: 'idx_user_source', columns: ['auth_source'])]
+#[ORM\Index(name: 'idx_user_employee_number', columns: ['employee_number'])]
 #[UniqueEntity(fields: ['username'], message: 'Пользователь с таким логином уже существует.')]
-class User implements UserInterface, PasswordAuthenticatedUserInterface
+class User implements UserInterface, PasswordAuthenticatedUserInterface, EquatableInterface
 {
     public const ROLE_USER = 'ROLE_USER';
+    public const ROLE_ASSISTANT = 'ROLE_ASSISTANT';
+    public const ROLE_MARKETER = 'ROLE_MARKETER';
     public const ROLE_ADMIN = 'ROLE_ADMIN';
+
+    /** Роль пользователя одним значением (форма пользователя, синхронизация с каталогом, видео). */
+    public const POSITION_USER = 'user';
+    public const POSITION_ASSISTANT = 'assistant';
+    public const POSITION_MARKETER = 'marketer';
+    public const POSITION_ADMIN = 'admin';
+
+    public const POSITIONS = [self::POSITION_USER, self::POSITION_ASSISTANT, self::POSITION_MARKETER, self::POSITION_ADMIN];
+
+    public const POSITION_LABELS = [
+        self::POSITION_USER => 'Пользователь',
+        self::POSITION_ASSISTANT => 'Помощник маркетолога',
+        self::POSITION_MARKETER => 'Маркетолог',
+        self::POSITION_ADMIN => 'Администратор',
+    ];
+
+    private const POSITION_ROLES = [self::ROLE_ASSISTANT, self::ROLE_MARKETER, self::ROLE_ADMIN];
 
     public const SOURCE_LOCAL = 'local';
     public const SOURCE_LDAP = 'ldap';
@@ -64,6 +92,21 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
     #[Assert\Length(max: 128)]
     private ?string $department = null;
 
+    /** Должность (из 1С:ЗУП или вручную). */
+    #[ORM\Column(name: 'job_title', length: 128, nullable: true)]
+    #[Assert\Length(max: 128)]
+    private ?string $jobTitle = null;
+
+    /** Табельный номер: по нему выгрузка из кадровой системы находит сотрудника, если в ней нет логина. */
+    #[ORM\Column(name: 'employee_number', length: 32, nullable: true)]
+    #[Assert\Length(max: 32)]
+    private ?string $employeeNumber = null;
+
+    /** Непосредственный руководитель: видит ознакомления и просмотры своих сотрудников («Мои сотрудники»). */
+    #[ORM\ManyToOne(targetEntity: self::class)]
+    #[ORM\JoinColumn(name: 'manager_id', nullable: true, onDelete: 'SET NULL')]
+    private ?User $manager = null;
+
     /** @var list<string> */
     #[ORM\Column(type: Types::JSON)]
     private array $roles = [];
@@ -77,6 +120,13 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
 
     #[ORM\Column(length: 512, nullable: true)]
     private ?string $ldapDn = null;
+
+    /**
+     * Постоянный идентификатор у провайдера SSO («issuer|sub»): учётная запись привязывается к нему
+     * при первом входе через SSO, и дальше войти в неё может только тот же пользователь провайдера.
+     */
+    #[ORM\Column(name: 'sso_subject', length: 255, nullable: true)]
+    private ?string $ssoSubject = null;
 
     #[ORM\Column(options: ['default' => true])]
     private bool $active = true;
@@ -203,6 +253,54 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
         return $this;
     }
 
+    public function getJobTitle(): ?string
+    {
+        return $this->jobTitle;
+    }
+
+    public function setJobTitle(?string $jobTitle): static
+    {
+        $jobTitle = trim((string) preg_replace('/\s+/u', ' ', (string) $jobTitle));
+        $this->jobTitle = '' === $jobTitle ? null : mb_substr($jobTitle, 0, 128);
+
+        return $this;
+    }
+
+    public function getEmployeeNumber(): ?string
+    {
+        return $this->employeeNumber;
+    }
+
+    public function setEmployeeNumber(?string $employeeNumber): static
+    {
+        $employeeNumber = trim((string) $employeeNumber);
+        $this->employeeNumber = '' === $employeeNumber ? null : mb_substr($employeeNumber, 0, 32);
+
+        return $this;
+    }
+
+    public function getManager(): ?User
+    {
+        return $this->manager;
+    }
+
+    /**
+     * Руководитель. Сам себе и «по кругу» (руководитель подчиняется своему сотруднику) — нельзя.
+     *
+     * @throws \DomainException
+     */
+    public function setManager(?User $manager): static
+    {
+        for ($m = $manager, $depth = 0; null !== $m && $depth < 64; $m = $m->getManager(), ++$depth) {
+            if ($m === $this || (null !== $this->id && $m->getId() === $this->id)) {
+                throw new \DomainException(null === $manager || $manager === $this ? 'Сотрудник не может быть руководителем самому себе.' : \sprintf('«%s» не может быть руководителем «%s»: он сам подчиняется «%s».', $manager->getDisplayName(), $this->getDisplayName(), $this->getDisplayName()));
+            }
+        }
+        $this->manager = $manager;
+
+        return $this;
+    }
+
     /** @return list<string> */
     public function getRoles(): array
     {
@@ -233,6 +331,51 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
         }
 
         return $this->setRoles($roles);
+    }
+
+    /** Маркетолог (модератор всех разделов). Администратор маркетологом не считается, хотя может то же самое. */
+    public function isMarketer(): bool
+    {
+        return \in_array(self::ROLE_MARKETER, $this->roles, true);
+    }
+
+    /** Помощник маркетолога: добавляет материалы, публикация — после модерации. */
+    public function isAssistant(): bool
+    {
+        return \in_array(self::ROLE_ASSISTANT, $this->roles, true) && !$this->isMarketer() && !$this->isAdmin();
+    }
+
+    /** Роль одним значением: admin, marketer, assistant или user. */
+    public function getPosition(): string
+    {
+        return match (true) {
+            $this->isAdmin() => self::POSITION_ADMIN,
+            $this->isMarketer() => self::POSITION_MARKETER,
+            \in_array(self::ROLE_ASSISTANT, $this->roles, true) => self::POSITION_ASSISTANT,
+            default => self::POSITION_USER,
+        };
+    }
+
+    public function getPositionLabel(): string
+    {
+        return self::POSITION_LABELS[$this->getPosition()];
+    }
+
+    /** Назначает роль одним значением; прочие роли (если появятся) сохраняются. */
+    public function setPosition(string $position): static
+    {
+        if (!\in_array($position, self::POSITIONS, true)) {
+            throw new \InvalidArgumentException(\sprintf('Неизвестная роль «%s».', $position));
+        }
+        $roles = array_values(array_diff($this->roles, self::POSITION_ROLES));
+        $roles[] = match ($position) {
+            self::POSITION_ADMIN => self::ROLE_ADMIN,
+            self::POSITION_MARKETER => self::ROLE_MARKETER,
+            self::POSITION_ASSISTANT => self::ROLE_ASSISTANT,
+            default => self::ROLE_USER,
+        };
+
+        return $this->setRoles(array_values(array_diff($roles, [self::ROLE_USER])));
     }
 
     public function getPassword(): string
@@ -277,6 +420,18 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
     public function setLdapDn(?string $ldapDn): static
     {
         $this->ldapDn = null === $ldapDn ? null : mb_substr($ldapDn, 0, 512);
+
+        return $this;
+    }
+
+    public function getSsoSubject(): ?string
+    {
+        return $this->ssoSubject;
+    }
+
+    public function setSsoSubject(?string $ssoSubject): static
+    {
+        $this->ssoSubject = null === $ssoSubject || '' === $ssoSubject ? null : mb_substr($ssoSubject, 0, 255);
 
         return $this;
     }
@@ -497,6 +652,26 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
     #[\Deprecated] // метод пустой: временные учётные данные в объекте не хранятся (требование Symfony 7.3+)
     public function eraseCredentials(): void
     {
+    }
+
+    /**
+     * Сравнение пользователя из сессии с актуальной записью из базы при каждом запросе: если учётную запись
+     * заблокировали, сменили пароль, права или способ входа — сессия завершается сразу, а не по истечении срока.
+     */
+    public function isEqualTo(UserInterface $user): bool
+    {
+        if (!$user instanceof self || !$user->isActive()) {
+            return false;
+        }
+        $roles = $this->getRoles();
+        $other = $user->getRoles();
+        sort($roles);
+        sort($other);
+
+        return $this->getUserIdentifier() === $user->getUserIdentifier()
+            && $this->getPassword() === $user->getPassword()
+            && $this->getAuthSource() === $user->getAuthSource()
+            && $roles === $other;
     }
 
     public function __toString(): string

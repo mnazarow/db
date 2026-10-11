@@ -141,6 +141,43 @@
     </div>
 {% endif %}
 
+{% if cats is not empty %}
+    <div class="card card--form" id="remind">
+        <div class="card__head">
+            <h2 class="h-section">Еженедельная сводка</h2>
+            {% if remind.enabled %}<span class="badge badge--done"><span class="badge__dot"></span>Включена</span>{% else %}<span class="badge badge--none"><span class="badge__dot"></span>Выключена</span>{% endif %}
+        </div>
+        <p>По понедельникам модераторы разделов (а где их нет — администраторы) получают по почте и в Telegram список материалов в выбранных состояниях — со ссылками на таблицы.</p>
+        <form method="post" action="{{ path('admin_materials_remind') }}" class="form">
+            <input type="hidden" name="_token" value="{{ csrf_token('materials_admin') }}">
+            <div class="form-row form-row--check"><label class="form-check"><input type="checkbox" name="enabled" value="1" {{ remind.enabled ? 'checked' }}><span>Присылать сводку</span></label></div>
+            <fieldset class="form-row">
+                <legend class="form-label">Состояния в сводке</legend>
+                <div class="checks-inline">
+                    {% for state in remind_states %}
+                        <label class="form-check form-check--inline"><input type="checkbox" name="states[]" value="{{ state }}" {{ state in remind.states ? 'checked' }}><span>{{ state }}</span></label>
+                    {% endfor %}
+                </div>
+            </fieldset>
+            <div class="form-actions">
+                <button type="submit" class="btn btn--pill btn--small">Сохранить</button>
+            </div>
+        </form>
+        <div class="form-actions">
+            <form method="post" action="{{ path('admin_materials_remind_send') }}" class="inline-form">
+                <input type="hidden" name="_token" value="{{ csrf_token('materials_admin') }}">
+                <input type="hidden" name="mode" value="preview">
+                <button type="submit" class="btn btn--ghost btn--small">Кому уйдёт сводка</button>
+            </form>
+            <form method="post" action="{{ path('admin_materials_remind_send') }}" class="inline-form" data-confirm="Отправить сводку по таблицам материалов сейчас?">
+                <input type="hidden" name="_token" value="{{ csrf_token('materials_admin') }}">
+                <button type="submit" class="btn btn--ghost btn--small">Отправить сейчас</button>
+            </form>
+        </div>
+        <p class="form-help">{% if remind.last_run %}Последняя отправка: {{ remind.last_run|date('d.m.Y H:i') }}. {% endif %}Рассылку выполняет задание cron <code>app:materials:remind</code> (понедельник, 09:10; в Docker — расписание MATERIALS_REMIND_CRON).</p>
+    </div>
+{% endif %}
+
 {% if candidates is not empty %}
     <div class="card table-card">
         <div class="card__head card__head--padded">

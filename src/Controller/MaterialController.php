@@ -6,12 +6,16 @@ namespace App\Controller;
 
 use App\Entity\MaterialParameter;
 use App\Entity\MaterialRow;
+use App\Entity\MaterialRowChange;
 use App\Entity\Section;
 use App\Entity\User;
+use App\Repository\MaterialRowChangeRepository;
 use App\Security\Access;
+use App\Service\Csv;
 use App\Service\DocumentKindService;
 use App\Service\FileStorage;
 use App\Service\Material\MaterialExporter;
+use App\Service\Material\MaterialHistory;
 use App\Service\Material\MaterialService;
 use App\Service\Material\MaterialState;
 use App\Service\Material\MaterialSummary;
@@ -20,6 +24,7 @@ use Symfony\Component\HttpFoundation\File\UploadedFile;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use Symfony\Component\Routing\Attribute\Route;
 use Symfony\Component\Security\Http\Attribute\CurrentUser;
 use Symfony\Component\Security\Http\Attribute\IsGranted;
@@ -45,19 +50,29 @@ final class MaterialController extends AbstractController
     public function table(Section $section, #[CurrentUser] User $user): Response
     {
         $this->checkAccess($section, $user);
+        $rows = $this->materials->rows($section);
         if (!$this->materials->supports($section)) {
-            $this->addFlash('info', 'Таблица материалов ведётся для разделов верхнего уровня.');
+            if ([] === $rows) {
+                $this->addFlash('info', 'Таблица материалов ведётся для разделов верхнего уровня.');
 
-            return $this->redirectToRoute('app_section_show', ['id' => $section->getId()]);
+                return $this->redirectToRoute('app_section_show', ['id' => $section->getId()]);
+            }
+            // Раздел с таблицей оказался подразделом (перенесён до версии 1.6.1): строки сохранены,
+            // их можно вернуть переносом раздела на верхний уровень или удалить.
+            return $this->render('materials/table.html.twig', [
+                'section' => $section,
+                'enabled' => false,
+                'orphaned' => \count($rows),
+            ]);
         }
         $parameters = $this->materials->parameters($section);
-        $rows = $this->materials->rows($section);
 
         return $this->render('materials/table.html.twig', [
             'section' => $section,
             'enabled' => $section->isMaterialsEnabled(),
+            'hidden_rows' => $section->isMaterialsEnabled() ? 0 : \count($rows),
             'parameters' => $parameters,
-            'rows' => array_map($this->materials->serializeRow(...), $rows),
+            'rows' => array_map(fn (MaterialRow $row): array => $this->materials->serializeRow($row, $user), $rows),
             'kinds' => $this->kinds->all(),
             'summary' => $this->summary->forSection($section),
             'states' => MaterialState::SUMMARY,
@@ -72,7 +87,10 @@ final class MaterialController extends AbstractController
                 'kinds' => array_map(static fn ($k): array => ['id' => $k->getId(), 'name' => $k->getName()], $this->kinds->all()),
                 'states' => MaterialState::CSS,
                 'maxBytes' => $this->storage->getUploadMaxBytes(),
+                // Помощник маркетолога правит строки и загружает файлы, но не меняет устройство таблицы.
+                'canStructure' => $this->access->canManageSection($user, $section),
             ],
+            'can_structure' => $this->access->canManageSection($user, $section),
         ]);
     }
 
@@ -80,7 +98,7 @@ final class MaterialController extends AbstractController
     #[Route('/enable', name: 'app_section_materials_enable', methods: ['POST'])]
     public function enable(Section $section, Request $request, #[CurrentUser] User $user): Response
     {
-        $this->checkAccess($section, $user);
+        $this->checkAccess($section, $user, true);
         $this->checkFormToken($request, $section);
         try {
             $this->materials->enable($section, $user);
@@ -92,10 +110,22 @@ final class MaterialController extends AbstractController
         return $this->redirectToRoute('app_section_materials', ['id' => $section->getId()]);
     }
 
+    /** Удаляет таблицу целиком (строки и столбцы); загруженные из строк документы остаются в разделе. */
+    #[Route('/purge', name: 'app_section_materials_purge', methods: ['POST'])]
+    #[IsGranted('ROLE_ADMIN')]
+    public function purge(Section $section, Request $request, #[CurrentUser] User $user): Response
+    {
+        $this->checkFormToken($request, $section);
+        $rows = $this->materials->purge($section, $user);
+        $this->addFlash('success', \sprintf('Таблица материалов раздела «%s» удалена (строк: %d). Документы, загруженные из строк, остались в разделе.', $section->getName(), $rows));
+
+        return $this->redirectToRoute('app_section_show', ['id' => $section->getId()]);
+    }
+
     #[Route('/disable', name: 'app_section_materials_disable', methods: ['POST'])]
     public function disable(Section $section, Request $request, #[CurrentUser] User $user): Response
     {
-        $this->checkAccess($section, $user);
+        $this->checkAccess($section, $user, true);
         $this->checkFormToken($request, $section);
         $this->materials->disable($section, $user);
         $this->addFlash('success', 'Таблица материалов скрыта. Строки и столбцы сохранены — при повторном включении они вернутся.');
@@ -116,7 +146,7 @@ final class MaterialController extends AbstractController
         }
         $row = $this->materials->addRow($section, $user, (string) $request->request->get('title', ''), $after);
 
-        return $this->json(['ok' => true, 'row' => $this->materials->serializeRow($row), 'summary' => $this->summary->forSection($section)]);
+        return $this->json(['ok' => true, 'row' => $this->materials->serializeRow($row, $user), 'summary' => $this->summary->forSection($section)]);
     }
 
     #[Route('/rows/{row}', name: 'app_section_materials_row_update', requirements: ['row' => '\d+'], methods: ['POST'])]
@@ -127,16 +157,16 @@ final class MaterialController extends AbstractController
         try {
             $this->materials->updateCell($material, (string) $request->request->get('field'), (string) $request->request->get('value'), $user);
         } catch (\DomainException $e) {
-            return $this->json(['ok' => false, 'error' => $e->getMessage(), 'row' => $this->materials->serializeRow($material)], 422);
+            return $this->json(['ok' => false, 'error' => $e->getMessage(), 'row' => $this->materials->serializeRow($material, $user)], 422);
         }
 
-        return $this->json(['ok' => true, 'row' => $this->materials->serializeRow($material), 'summary' => $this->summary->forSection($section)]);
+        return $this->json(['ok' => true, 'row' => $this->materials->serializeRow($material, $user), 'summary' => $this->summary->forSection($section)]);
     }
 
     #[Route('/rows/{row}/delete', name: 'app_section_materials_row_delete', requirements: ['row' => '\d+'], methods: ['POST'])]
     public function deleteRow(Section $section, int $row, Request $request, #[CurrentUser] User $user): JsonResponse
     {
-        $this->checkApi($request, $section, $user);
+        $this->checkApi($request, $section, $user, true);
         $this->materials->deleteRow($this->row($section, $row), $user);
 
         return $this->json(['ok' => true, 'summary' => $this->summary->forSection($section)]);
@@ -162,15 +192,15 @@ final class MaterialController extends AbstractController
             return $this->json(['ok' => false, 'error' => 'Файл не получен: возможно, он больше допустимого размера.'], 422);
         }
         try {
-            $document = $this->materials->upload($material, $file, $user, $request->getClientIp());
+            $version = $this->materials->upload($material, $file, $user, $request->getClientIp());
         } catch (\InvalidArgumentException|\DomainException|\RuntimeException $e) {
             return $this->json(['ok' => false, 'error' => $e->getMessage()], 422);
         }
 
         return $this->json([
             'ok' => true,
-            'message' => \sprintf('Файл загружен: «%s», версия %d%s.', $document->getTitle(), (int) $document->getCurrentVersion()?->getNumber(), $document->isPublished() ? '' : ' (черновик — опубликуйте после проверки)'),
-            'row' => $this->materials->serializeRow($material),
+            'message' => $this->materials->uploadMessage($version),
+            'row' => $this->materials->serializeRow($material, $user),
             'summary' => $this->summary->forSection($section),
         ]);
     }
@@ -178,11 +208,70 @@ final class MaterialController extends AbstractController
     #[Route('/rows/{row}/detach', name: 'app_section_materials_row_detach', requirements: ['row' => '\d+'], methods: ['POST'])]
     public function detach(Section $section, int $row, Request $request, #[CurrentUser] User $user): JsonResponse
     {
-        $this->checkApi($request, $section, $user);
+        $this->checkApi($request, $section, $user, true);
         $material = $this->row($section, $row);
         $this->materials->detach($material, $user);
 
-        return $this->json(['ok' => true, 'row' => $this->materials->serializeRow($material), 'summary' => $this->summary->forSection($section)]);
+        return $this->json(['ok' => true, 'row' => $this->materials->serializeRow($material, $user), 'summary' => $this->summary->forSection($section)]);
+    }
+
+    // ---- Журнал изменений -----------------------------------------------------------------------------
+
+    /** История строки для диалога «История изменений» в таблице. */
+    #[Route('/rows/{row}/history', name: 'app_section_materials_row_history', requirements: ['row' => '\d+'], methods: ['GET'])]
+    public function rowHistory(Section $section, int $row, #[CurrentUser] User $user, MaterialHistory $history): JsonResponse
+    {
+        $this->checkAccess($section, $user);
+        $material = $this->row($section, $row);
+
+        return $this->json(['ok' => true, 'title' => $material->getTitle(), 'changes' => $history->forRow($material)]);
+    }
+
+    /** Журнал изменений таблицы раздела: кто, когда и что поменял (в том числе в удалённых строках). */
+    #[Route('/history', name: 'app_section_materials_history', methods: ['GET'])]
+    public function history(Section $section, Request $request, #[CurrentUser] User $user, MaterialRowChangeRepository $changes): Response
+    {
+        $this->checkAccess($section, $user);
+        $action = (string) $request->query->get('action', '');
+        if (!isset(MaterialRowChange::ACTION_LABELS[$action])) {
+            $action = '';
+        }
+        $perPage = 100;
+        $total = $changes->countForSection($section, '' !== $action ? $action : null);
+        $pages = max(1, (int) ceil($total / $perPage));
+        $page = min($pages, max(1, (int) $request->query->get('page', 1)));
+
+        return $this->render('materials/history.html.twig', [
+            'section' => $section,
+            'changes' => $changes->findForSection($section, $perPage, ($page - 1) * $perPage, '' !== $action ? $action : null),
+            'total' => $total,
+            'page' => $page,
+            'pages' => $pages,
+            'action' => $action,
+            'actions' => MaterialRowChange::ACTION_LABELS,
+        ]);
+    }
+
+    /** Журнал изменений таблицы в CSV (последние 20 000 записей). */
+    #[Route('/history.csv', name: 'app_section_materials_history_csv', methods: ['GET'])]
+    public function historyCsv(Section $section, #[CurrentUser] User $user, MaterialRowChangeRepository $changes): StreamedResponse
+    {
+        $this->checkAccess($section, $user);
+        $list = $changes->findForSection($section, 20000);
+        $response = new StreamedResponse(static function () use ($list): void {
+            $out = fopen('php://output', 'wb');
+            fwrite($out, "\xEF\xBB\xBF");
+            Csv::put($out, ['Когда', 'Кто', 'Материал', 'Действие', 'Поле', 'Было', 'Стало']);
+            foreach ($list as $change) {
+                Csv::put($out, [$change->getCreatedAt()->format('d.m.Y H:i:s'), $change->getUserName() ?? 'система', $change->getRowTitle(),
+                    $change->getActionLabel(), (string) $change->getFieldLabel(), (string) $change->getOldValue(), (string) $change->getNewValue()]);
+            }
+            fclose($out);
+        });
+        $response->headers->set('Content-Type', 'text/csv; charset=UTF-8');
+        $response->headers->set('Content-Disposition', \sprintf('attachment; filename="materials-history-%d.csv"', $section->getId()));
+
+        return $response;
     }
 
     // ---- Столбцы --------------------------------------------------------------------------------------
@@ -190,7 +279,7 @@ final class MaterialController extends AbstractController
     #[Route('/parameters', name: 'app_section_materials_parameter_add', methods: ['POST'])]
     public function addParameter(Section $section, Request $request, #[CurrentUser] User $user): JsonResponse
     {
-        $this->checkApi($request, $section, $user);
+        $this->checkApi($request, $section, $user, true);
         try {
             $parameter = $this->materials->addParameter($section, (string) $request->request->get('name'), (string) $request->request->get('kind', MaterialParameter::KIND_TEXT), (string) $request->request->get('options', ''), $user);
         } catch (\DomainException $e) {
@@ -203,15 +292,15 @@ final class MaterialController extends AbstractController
     #[Route('/parameters/{parameter}', name: 'app_section_materials_parameter_update', requirements: ['parameter' => '\d+'], methods: ['POST'])]
     public function updateParameter(Section $section, int $parameter, Request $request, #[CurrentUser] User $user): JsonResponse
     {
-        $this->checkApi($request, $section, $user);
+        $this->checkApi($request, $section, $user, true);
         $column = $this->parameter($section, $parameter);
-        $width = $request->request->get('width');
         try {
             $this->materials->updateParameter(
                 $column,
                 (string) $request->request->get('name', $column->getName()),
                 $request->request->has('options') ? (string) $request->request->get('options') : null,
-                null !== $width && '' !== $width ? (int) $width : null,
+                // Пустое поле ширины — «по содержимому» (0 сбрасывает ширину), отсутствие поля — не менять.
+                $request->request->has('width') ? (int) $request->request->get('width') : null,
                 $user,
             );
         } catch (\DomainException $e) {
@@ -224,7 +313,7 @@ final class MaterialController extends AbstractController
     #[Route('/parameters/{parameter}/delete', name: 'app_section_materials_parameter_delete', requirements: ['parameter' => '\d+'], methods: ['POST'])]
     public function deleteParameter(Section $section, int $parameter, Request $request, #[CurrentUser] User $user): JsonResponse
     {
-        $this->checkApi($request, $section, $user);
+        $this->checkApi($request, $section, $user, true);
         $this->materials->deleteParameter($this->parameter($section, $parameter), $user);
 
         return $this->json(['ok' => true]);
@@ -233,7 +322,7 @@ final class MaterialController extends AbstractController
     #[Route('/parameters/{parameter}/move', name: 'app_section_materials_parameter_move', requirements: ['parameter' => '\d+'], methods: ['POST'])]
     public function moveParameter(Section $section, int $parameter, Request $request, #[CurrentUser] User $user): JsonResponse
     {
-        $this->checkApi($request, $section, $user);
+        $this->checkApi($request, $section, $user, true);
         $this->materials->moveParameter($this->parameter($section, $parameter), (int) $request->request->get('direction', 1));
 
         return $this->json(['ok' => true]);
@@ -245,16 +334,26 @@ final class MaterialController extends AbstractController
     {
         $this->checkAccess($section, $user);
 
-        return $exporter->response([$section], \sprintf('Материалы — %s', $section->getName()));
+        return $exporter->response([$section], \sprintf('Материалы — %s', $section->getName()), true, $user);
     }
 
     // ---- Служебное ------------------------------------------------------------------------------------
 
-    private function checkAccess(Section $section, User $user): void
+    /**
+     * Таблицу ведут модераторы раздела (маркетологи); помощник маркетолога добавляет и правит строки и
+     * загружает файлы (они уходят на модерацию), но не меняет устройство таблицы ($structure).
+     */
+    private function checkAccess(Section $section, User $user, bool $structure = false): void
     {
-        if (!$this->access->canManageSection($user, $section)) {
-            throw $this->createAccessDeniedException('Таблица материалов доступна администраторам и модераторам раздела.');
+        if ($this->access->canManageSection($user, $section)) {
+            return;
         }
+        if (!$structure && $this->access->isAssistant($user)) {
+            return;
+        }
+        throw $this->createAccessDeniedException($structure
+            ? 'Устройство таблицы материалов (столбцы, включение, удаление строк) меняют маркетологи и модераторы раздела.'
+            : 'Таблица материалов доступна маркетологам, их помощникам, модераторам раздела и администраторам.');
     }
 
     private function checkFormToken(Request $request, Section $section): void
@@ -264,15 +363,15 @@ final class MaterialController extends AbstractController
         }
     }
 
-    private function checkApi(Request $request, Section $section, User $user): void
+    private function checkApi(Request $request, Section $section, User $user, bool $structure = false): void
     {
-        $this->checkAccess($section, $user);
+        $this->checkAccess($section, $user, $structure);
         $token = (string) ($request->headers->get('X-CSRF-Token') ?? $request->request->get('_token'));
         if (!$this->isCsrfTokenValid('materials_'.$section->getId(), $token)) {
             throw $this->createAccessDeniedException('Неверный CSRF-токен — обновите страницу.');
         }
-        if (!$section->isMaterialsEnabled()) {
-            throw $this->createNotFoundException('Таблица материалов выключена.');
+        if (!$section->isMaterialsEnabled() || !$this->materials->supports($section)) {
+            throw $this->createNotFoundException('Таблица материалов выключена или раздел уже не верхнего уровня.');
         }
     }
 

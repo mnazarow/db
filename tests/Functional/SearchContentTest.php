@@ -129,6 +129,53 @@ final class SearchContentTest extends PortalTestCase
         self::assertSame(0, $crawler->filter('.snippet__title')->count());
     }
 
+    public function testPhrasesInQuotesAreMatchedExactly(): void
+    {
+        // Разбор: фразы в любых кавычках, слова вне кавычек — с отбрасыванием окончаний.
+        $query = SearchQuery::parse('план «эвакуации людей» "по охране   труда" охрана');
+        self::assertSame(['эвакуации людей', 'по охране труда'], $query->phrases);
+        self::assertSame(['план', 'охрана'], $query->looseTerms);
+        self::assertSame('+план* +охра* +"эвакуации людей" +"охране труда"', $query->booleanMode(), 'короткие слова фразы индекс не хранит');
+        self::assertSame([], SearchQuery::parse('незакрытая "кавычка')->phrases, 'непарная кавычка — обычный символ');
+        self::assertSame(['пр-2026/01'], SearchQuery::parse('“ПР-2026/01”')->phrases);
+        self::assertTrue(SearchQuery::parse('"по охране труда"')->matchesPhrases('Инструкция ПО   охране, труда для всех'));
+        self::assertFalse(SearchQuery::parse('"по охране труда"')->matchesPhrases('охране по труда'), 'порядок слов важен');
+        self::assertFalse(SearchQuery::parse('"охране труд"')->matchesPhrases('по охране труда'), 'фраза — целыми словами');
+        self::assertTrue(SearchQuery::parse('«ПР 2026 01»')->matchesPhrases('Приказ ПР-2026/01 от января'), 'знаки препинания не мешают');
+        self::assertSame('Есть инструкция <mark>по охране труда</mark> и прочее', SearchQuery::parse('"по охране труда"')->snippet('Есть инструкция по охране   труда и прочее'));
+
+        $manager = $this->manager();
+        $petrova = $this->user('petrova');
+        $first = (new Document($this->section('ИТ')))->setTitle('Памятка дежурному')->setCode('ИТ-ДЕЖ-001')->setType(Document::TYPE_FILE)->setPublic(true);
+        $manager->create($first, $this->upload('duty.txt', "Резервное копирование серверов выполняется ежедневно.\nПроверка журналов — еженедельно."), null, null, $petrova, true);
+        $second = (new Document($this->section('ИТ')))->setTitle('Памятка администратору')->setCode('ИТ-АДМ-002')->setType(Document::TYPE_FILE)->setPublic(true);
+        $manager->create($second, $this->upload('admin.txt', "Копирование резервное не требуется для серверов тестовой среды."), null, null, $petrova, true);
+
+        self::assertEqualsCanonicalizing(['Памятка дежурному', 'Памятка администратору'], $this->contentHits('резервное копирование серверов'), 'без кавычек — все слова в любом порядке');
+        self::assertSame(['Памятка дежурному'], $this->contentHits('"резервное копирование серверов"'), 'в кавычках — слова подряд');
+        self::assertSame(['Памятка дежурному'], $this->contentHits('«Резервное копирование» журналов'));
+        self::assertSame([], $this->contentHits('"копирование резервное серверов"'));
+
+        // Короткое слово или стоп-слово внутри фразы: фраза делится на части для индекса, а целиком
+        // проверяется по тексту.
+        self::assertSame('+договор +поставку', SearchQuery::parse('"договор на поставку"')->booleanMode());
+        self::assertSame('+статья +закона', SearchQuery::parse('"Статья 5 закона"')->booleanMode());
+        self::assertSame('+terms +use', SearchQuery::parse('"terms of the use"')->booleanMode(), 'стоп-слова InnoDB не передаются');
+        $third = (new Document($this->section('ИТ')))->setTitle('Памятка по закупкам')->setCode('ИТ-ЗАК-003')->setType(Document::TYPE_FILE)->setPublic(true);
+        $manager->create($third, $this->upload('buy.txt', "Договор на поставку оборудования заключается после согласования. Статья 5 закона о закупках.\nSee the terms of the use."), null, null, $this->user('petrova'), true);
+        self::assertSame(['Памятка по закупкам'], $this->contentHits('"договор на поставку"'));
+        self::assertSame(['Памятка по закупкам'], $this->contentHits('"статья 5 закона"'));
+        self::assertSame(['Памятка по закупкам'], $this->contentHits('"terms of the use"'));
+        self::assertSame([], $this->contentHits('"договор поставку"'), 'слова фразы — подряд');
+        self::assertSame(['Памятка по закупкам'], $this->contentHits('the закупках'), 'стоп-слово вне кавычек не обнуляет поиск');
+
+        // Реквизиты: фраза ищется в названии целиком.
+        $crawler = $this->client->request('GET', '/search?q='.urlencode('"памятка дежурному"'));
+        self::assertSame(['Памятка дежурному'], $crawler->filter('.doc-table__title')->each(static fn ($n): string => trim($n->text())));
+        $crawler = $this->client->request('GET', '/search?q='.urlencode('"дежурному памятка"'));
+        self::assertSame(0, $crawler->filter('.doc-table__title')->count());
+    }
+
     public function testIndexFollowsVersionsStatusAndDeletion(): void
     {
         $texts = static::getContainer()->get(DocumentTextRepository::class);
@@ -203,4 +250,41 @@ final class SearchContentTest extends PortalTestCase
         self::assertLessThanOrEqual($summary['documents'], $summary['indexed']);
         self::assertSame([], $texts->findOutdatedDocumentIds(), 'после переиндексации отставших документов нет');
     }
+
+    public function testWebReindexAllMarksIndexOutdatedAndRebuildsFirstPortion(): void
+    {
+        $connection = $this->em()->getConnection();
+        $connection->beginTransaction();
+        try {
+            static::getContainer()->get(TextIndexer::class)->reindex(500);
+            self::assertSame(0, (int) $connection->fetchOne('SELECT COUNT(*) FROM document_text WHERE version_number = 0'));
+            $connection->executeStatement("UPDATE document_text SET content = 'устаревший текст' WHERE status = 'ok'");
+            $documents = (int) $connection->fetchOne('SELECT COUNT(*) FROM document WHERE current_version_id IS NOT NULL');
+            $limit = 200; // SettingsController::REINDEX_LIMIT
+
+            $this->loginAs('admin');
+            $crawler = $this->client->request('GET', '/admin/settings');
+            self::assertResponseIsSuccessful();
+            $this->client->submit($crawler->selectButton('Переиндексировать всё')->form());
+            self::assertResponseRedirects('/admin/settings');
+            $text = $this->client->followRedirect()->filter('.flashes')->text();
+            self::assertStringContainsString(\sprintf('Проиндексировано документов: %d ', min($documents, $limit)), $text);
+            self::assertStringContainsString(\sprintf('Осталось: %d', max(0, $documents - $limit)), $text);
+            if ($documents <= $limit) {
+                self::assertSame(0, (int) $connection->fetchOne('SELECT COUNT(*) FROM document_text WHERE version_number = 0'));
+                self::assertSame(0, (int) $connection->fetchOne("SELECT COUNT(*) FROM document_text WHERE content = 'устаревший текст'"));
+
+                // «Проиндексировать изменившиеся» без отставших документов ничего не делает.
+                $crawler = $this->client->request('GET', '/admin/settings');
+                $this->client->submit($crawler->selectButton('Проиндексировать изменившиеся')->form());
+                self::assertStringContainsString('Проиндексировано документов: 0', $this->client->followRedirect()->filter('.flashes')->text());
+            }
+        } finally {
+            while ($connection->isTransactionActive()) {
+                $connection->rollBack();
+            }
+            $this->em()->clear();
+        }
+    }
+
 }

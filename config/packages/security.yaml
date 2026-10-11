@@ -60,7 +60,9 @@ security:
     access_control:
         - { path: ^/api, roles: ROLE_API }
         - { path: ^/login$, roles: PUBLIC_ACCESS }
-        - { path: ^/health$, roles: PUBLIC_ACCESS }
+        # Проверка работоспособности и метрики мониторинга (подробности — только с токеном мониторинга).
+        - { path: ^/health(/details)?$, roles: PUBLIC_ACCESS }
+        - { path: ^/metrics$, roles: PUBLIC_ACCESS }
         - { path: ^/admin, roles: ROLE_ADMIN }
         - { path: ^/profile, roles: ROLE_USER }
         - { path: ^/documents/new, roles: ROLE_USER }

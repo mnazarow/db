@@ -1,0 +1,39 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+body{margin:0;background:#fff;font-family:Arial,sans-serif}
+.st{fill:#EEF4FA;stroke:#0F4382;stroke-width:2}
+.st2{fill:#fff;stroke:#79A7C6;stroke-width:2}
+.dec{fill:#FFF7E6;stroke:#D98E04;stroke-width:2}
+.h{font:700 15px Arial,sans-serif;fill:#0F4382}
+.t{font:13px Arial,sans-serif;fill:#1e2a3a}
+.s{font:12px Arial,sans-serif;fill:#4a5a6e}
+.lbl{font:700 12px Arial,sans-serif;fill:#0F4382}
+.arr{stroke:#0F4382;stroke-width:2.2;fill:none;marker-end:url(#a)}
+.arr2{stroke:#79A7C6;stroke-width:2;fill:none;marker-end:url(#b);stroke-dasharray:6 4}
+.title{font:700 20px Arial,sans-serif;fill:#0F4382;text-transform:uppercase;letter-spacing:.5px}
+</style></head><body>
+<svg width="1400" height="600" viewBox="0 0 1400 600" xmlns="http://www.w3.org/2000/svg">
+<defs><marker id="a" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#0F4382"/></marker>
+<marker id="b" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#79A7C6"/></marker></defs>
+<text class="title" x="30" y="40">Жизненный цикл видео</text>
+<!-- row 1 -->
+<rect class="st" x="30" y="80" width="200" height="110" rx="12"/><text class="h" x="130" y="108" text-anchor="middle">1. Загрузка</text><text class="t" x="130" y="132" text-anchor="middle">чанки по 8 МБ, докачка</text><text class="t" x="130" y="150" text-anchor="middle">после обрыва, до 8 ГБ</text><text class="s" x="130" y="172" text-anchor="middle">статус: uploading</text>
+<rect class="st" x="290" y="80" width="200" height="110" rx="12"/><text class="h" x="390" y="108" text-anchor="middle">2. В очереди</text><text class="t" x="390" y="132" text-anchor="middle">задание transcode</text><text class="t" x="390" y="150" text-anchor="middle">в таблице jobs</text><text class="s" x="390" y="172" text-anchor="middle">статус: queued</text>
+<rect class="st" x="550" y="80" width="230" height="110" rx="12"/><text class="h" x="665" y="108" text-anchor="middle">3. Обработка (воркер)</text><text class="t" x="665" y="132" text-anchor="middle">ffprobe → HLS-лестница → mp4</text><text class="t" x="665" y="150" text-anchor="middle">→ 3 кадра обложки → раскадровка</text><text class="s" x="665" y="172" text-anchor="middle">статус: processing, прогресс по WS</text>
+<rect class="dec" x="840" y="80" width="200" height="110" rx="12"/><text class="h" x="940" y="108" text-anchor="middle" fill="#8a5a00">4. Премодерация?</text><text class="t" x="940" y="132" text-anchor="middle">если включена в настройках</text><text class="t" x="940" y="150" text-anchor="middle">или автор ограничен</text><text class="s" x="940" y="172" text-anchor="middle">moderation: pending</text>
+<rect class="st" x="1100" y="80" width="270" height="110" rx="12"/><text class="h" x="1235" y="108" text-anchor="middle">5. Опубликовано</text><text class="t" x="1235" y="132" text-anchor="middle">видно по правилам доступа:</text><text class="t" x="1235" y="150" text-anchor="middle">публичное / для сотрудников /</text><text class="t" x="1235" y="168" text-anchor="middle">по ссылке / приватное · расписание</text>
+<path class="arr" d="M230,135 L290,135"/><path class="arr" d="M490,135 L550,135"/><path class="arr" d="M780,135 L840,135"/><path class="arr" d="M1040,135 L1100,135"/><text class="lbl" x="1070" y="70" text-anchor="middle">одобрено</text>
+<!-- side outcomes -->
+<rect class="st2" x="550" y="230" width="230" height="90" rx="12"/><text class="h" x="665" y="256" text-anchor="middle" fill="#b00020">Ошибка обработки</text><text class="t" x="665" y="278" text-anchor="middle">статус failed, до 3 повторов,</text><text class="t" x="665" y="296" text-anchor="middle">кнопка «Обработать заново»</text>
+<path class="arr2" d="M665,190 L665,230"/>
+<rect class="st2" x="830" y="230" width="230" height="90" rx="12"/><text class="h" x="945" y="256" text-anchor="middle" fill="#b00020">Отклонено / заблокировано</text><text class="t" x="945" y="278" text-anchor="middle">автор получает уведомление</text><text class="t" x="945" y="296" text-anchor="middle">с указанием причины</text>
+<path class="arr2" d="M940,190 L940,230"/>
+<!-- storage -->
+<rect class="st2" x="30" y="230" width="460" height="90" rx="12"/><text class="h" x="260" y="256" text-anchor="middle">Автор в студии редактирует в любой момент</text><text class="t" x="260" y="278" text-anchor="middle">название, описание, категория, теги, обложка, главы,</text><text class="t" x="260" y="296" text-anchor="middle">субтитры, доступ, комментарии, разрешение скачивать</text>
+<!-- row 3: viewing -->
+<text class="title" x="30" y="380" style="font-size:17px">Просмотр и статистика</text>
+<rect class="st" x="30" y="405" width="250" height="110" rx="12"/><text class="h" x="155" y="432" text-anchor="middle">Плеер</text><text class="t" x="155" y="456" text-anchor="middle">hls.js выбирает качество,</text><text class="t" x="155" y="474" text-anchor="middle">прогресс каждые 10 с → API,</text><text class="t" x="155" y="492" text-anchor="middle">позиция для «продолжить»</text>
+<rect class="st" x="340" y="405" width="300" height="110" rx="12"/><text class="h" x="490" y="432" text-anchor="middle">Учёт просмотров</text><text class="t" x="490" y="456" text-anchor="middle">засчитывается после 10 с просмотра</text><text class="t" x="490" y="474" text-anchor="middle">(30 % для коротких), раз в сутки на сессию;</text><text class="t" x="490" y="492" text-anchor="middle">удержание аудитории по 100 отрезкам</text>
+<rect class="st" x="700" y="405" width="300" height="110" rx="12"/><text class="h" x="850" y="432" text-anchor="middle">Аналитика автора и админа</text><text class="t" x="850" y="456" text-anchor="middle">просмотры, время, удержание,</text><text class="t" x="850" y="474" text-anchor="middle">источники, устройства, динамика</text><text class="t" x="850" y="492" text-anchor="middle">по дням, топ видео и каналов</text>
+<rect class="st" x="1060" y="405" width="310" height="110" rx="12"/><text class="h" x="1215" y="432" text-anchor="middle">Хранение</text><text class="t" x="1215" y="456" text-anchor="middle">сырые просмотры — 400 дней,</text><text class="t" x="1215" y="474" text-anchor="middle">история — 365, журнал действий — 730</text><text class="t" x="1215" y="492" text-anchor="middle">(настраивается в панели)</text>
+<path class="arr" d="M280,460 L340,460"/><path class="arr" d="M640,460 L700,460"/><path class="arr" d="M1000,460 L1060,460"/>
+</svg></body></html>

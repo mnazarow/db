@@ -2,7 +2,8 @@
 # =============================================================================
 #  Точка входа контейнера приложения: ждёт базу данных, применяет миграции,
 #  прогревает кэш, создаёт первого администратора и запускает PHP-FPM.
-#  Команда "cron" запускает планировщик: проверка сроков актуальности и описания документов через LLM.
+#  Команда "cron" запускает планировщик: проверка сроков актуальности, описания через LLM, индексация
+#  содержимого, напоминания об ознакомлении и по таблицам материалов, разбор сообщений бота Telegram.
 #  Переменные окружения — см. docker/.env.example.
 # =============================================================================
 set -Eeuo pipefail
@@ -53,9 +54,17 @@ if [[ "${1:-php-fpm}" == "cron" ]]; then
     printf '%s cd /var/www/html && su-exec www-data php bin/console app:documents:describe --missing --limit=50 --quiet-if-disabled --no-interaction >> /var/www/html/var/log/describe-cron.log 2>&1\n' "${DESCRIBE_CRON:-20 * * * *}" >> /etc/crontabs/root
     # Индексация содержимого документов для полнотекстового поиска.
     printf '%s cd /var/www/html && su-exec www-data php bin/console app:search:reindex --limit=500 --no-interaction >> /var/www/html/var/log/reindex-cron.log 2>&1\n' "${REINDEX_CRON:-40 * * * *}" >> /etc/crontabs/root
+    # Смысловой индекс для ответов ИИ и очистка журнала вопросов к ИИ (индекс — только если поиск по смыслу включён).
+    printf '%s cd /var/www/html && su-exec www-data php bin/console app:ai:index --limit=200 --quiet-if-disabled --no-interaction >> /var/www/html/var/log/ai-index-cron.log 2>&1\n' "${AI_INDEX_CRON:-50 * * * *}" >> /etc/crontabs/root
     # Напоминания сотрудникам о документах, с которыми они не ознакомились.
     printf '%s cd /var/www/html && su-exec www-data php bin/console app:documents:acknowledge-remind --no-interaction >> /var/www/html/var/log/acknowledge-cron.log 2>&1\n' "${ACKNOWLEDGE_CRON:-30 8 * * *}" >> /etc/crontabs/root
-    log "Планировщик запущен: проверка сроков актуальности по расписанию «${EXPIRY_CRON:-0 8 * * *}»."
+    # Разбор сообщений бота Telegram (привязка чатов; без включённых уведомлений ничего не делает).
+    printf '%s cd /var/www/html && su-exec www-data php bin/console app:telegram:poll --no-interaction >> /var/www/html/var/log/telegram-cron.log 2>&1\n' "${TELEGRAM_CRON:-* * * * *}" >> /etc/crontabs/root
+    # Еженедельная сводка по таблицам материалов («Не соответствует», «Отсутствует»; включается в панели администратора).
+    printf '%s cd /var/www/html && su-exec www-data php bin/console app:materials:remind --no-interaction >> /var/www/html/var/log/materials-remind-cron.log 2>&1\n' "${MATERIALS_REMIND_CRON:-10 9 * * 1}" >> /etc/crontabs/root
+    # Журналы заданий больше 10 МБ обнуляются раз в сутки (ротации в контейнере нет).
+    printf '%s\n' '15 4 * * * find /var/www/html/var/log -maxdepth 1 -name "*-cron.log" -size +10240k -exec sh -c ": > \"\$1\"" _ {} \;' >> /etc/crontabs/root
+    log "Планировщик запущен: проверка сроков актуальности по расписанию «${EXPIRY_CRON:-0 8 * * *}», разбор сообщений Telegram, индексация и напоминания."
     exec crond -f -l 6
 fi
 

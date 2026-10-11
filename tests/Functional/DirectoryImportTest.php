@@ -5,9 +5,12 @@ declare(strict_types=1);
 namespace App\Tests\Functional;
 
 use App\Entity\Document;
+use App\Entity\DocumentEvent;
+use App\Entity\DocumentVersion;
 use App\Entity\Section;
 use App\Repository\DocumentRepository;
 use App\Repository\SectionRepository;
+use App\Service\DocumentManager;
 use App\Service\FileStorage;
 use App\Service\Import\DirectoryImporter;
 use App\Service\Import\DirectoryScanner;
@@ -15,6 +18,8 @@ use App\Service\Import\ImportJobStore;
 use App\Service\Import\ImportOptions;
 use App\Service\Import\ImportPlan;
 use App\Tests\PortalTestCase;
+use Doctrine\ORM\Event\OnFlushEventArgs;
+use Doctrine\ORM\Events;
 use Symfony\Bundle\FrameworkBundle\Console\Application;
 use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Output\BufferedOutput;
@@ -104,6 +109,38 @@ final class DirectoryImportTest extends PortalTestCase
         self::assertSame('', $rootEntry['path']);
         self::assertSame('README.txt', $rootEntry['descFile']);
         self::assertSame('Положение об ОТК', DirectoryScanner::documentTitle('Положение_об_ОТК.docx'));
+    }
+
+    public function testNonUtf8NamesFromWindowsArchivesAreImported(): void
+    {
+        // Архив «Проводника» Windows, распакованный без перекодировки: имена в CP866 (папка) и CP1251 (файл).
+        $root = $this->importDir.'/'.iconv('UTF-8', 'CP866', 'Паспорта');
+        mkdir($root, 0770, true);
+        $fileName = iconv('UTF-8', 'Windows-1251', 'Паспорт насоса.pdf');
+        file_put_contents($root.'/'.$fileName, '%PDF-1.4 passport');
+        self::assertFalse(mb_check_encoding($fileName, 'UTF-8'));
+
+        self::assertSame('Паспорта', DirectoryScanner::displayName(iconv('UTF-8', 'CP866', 'Паспорта')));
+        self::assertSame('Паспорт насоса.pdf', DirectoryScanner::displayName($fileName));
+
+        $options = new ImportOptions(targetSectionId: $this->section('Производство')->getId(), rootAsSection: true, publish: true);
+        $plan = $this->importer()->scan($root, $options);
+        self::assertSame('Паспорта', $plan->label);
+        $file = array_values(array_filter($plan->entries, static fn (array $e): bool => 'file' === $e['type']))[0];
+        self::assertSame('Паспорт насоса.pdf', $file['name']);
+        self::assertFileExists($plan->absolutePath($file), 'путь к файлу на диске сохранён в исходных байтах');
+        // План с такими именами сохраняется в JSON (раньше — исключение и сорванный импорт).
+        self::assertNotFalse(json_encode($plan->toArray(), \JSON_THROW_ON_ERROR));
+
+        $state = $this->importer()->run($plan, $options, $this->user('admin'));
+        self::assertSame(0, $state->counters['errors']);
+        self::assertSame(1, $state->counters['docsNew']);
+        $this->em()->clear();
+        $section = $this->sections()->findChildByName($this->section('Производство'), 'Паспорта');
+        self::assertNotNull($section);
+        $documents = $this->documents()->findBy(['section' => $section]);
+        self::assertCount(1, $documents);
+        self::assertSame('Паспорт насоса', $documents[0]->getTitle());
     }
 
     public function testImportCreatesTreeAndIsIdempotent(): void
@@ -204,6 +241,151 @@ final class DirectoryImportTest extends PortalTestCase
         self::assertDirectoryExists($root);
     }
 
+    public function testMovedFileIsReturnedWhenSavingFails(): void
+    {
+        $root = $this->importDir.'/Откат';
+        mkdir($root, 0770, true);
+        $source = $root.'/Приказ.pdf';
+        file_put_contents($source, '%PDF-1.4 order');
+        $manager = static::getContainer()->get(DocumentManager::class);
+        $admin = $this->user('admin');
+        $section = $this->section('Общие документы');
+
+        // Сбой записи в базу после того, как файл уже перенесён в хранилище: исключение из onFlush
+        // оставляет менеджер сущностей открытым (как сбой фиксации транзакции).
+        $failing = new class {
+            /** @var class-string|null */
+            public ?string $failOn = null;
+
+            public function onFlush(OnFlushEventArgs $args): void
+            {
+                foreach ($args->getObjectManager()->getUnitOfWork()->getScheduledEntityInsertions() as $entity) {
+                    if (null !== $this->failOn && $entity instanceof $this->failOn) {
+                        throw new \RuntimeException('Сбой базы (тест)');
+                    }
+                }
+            }
+        };
+        $events = $this->em()->getEventManager();
+        $events->addEventListener([Events::onFlush], $failing);
+        try {
+            $before = $this->documents()->count([]);
+            $failing->failOn = DocumentVersion::class;
+            try {
+                $manager->createFromPath((new Document($section))->setTitle('Откат')->setType(Document::TYPE_FILE), $source, 'Приказ.pdf', null, $admin, false, true);
+                self::fail('ожидалась ошибка записи');
+            } catch (\RuntimeException $e) {
+                self::assertSame('Сбой базы (тест)', $e->getMessage());
+            }
+            self::assertFileExists($source, 'перенесённый файл возвращён на место, а не удалён вместе с откатом');
+            self::assertSame('%PDF-1.4 order', file_get_contents($source));
+            self::assertSame($before, $this->documents()->count([]), 'черновик без версии не остался');
+
+            // Новая версия существующего документа: сбой на записи версии и на записи события (вторая
+            // запись в той же транзакции — версия уже в базе и откатывается вместе с ней).
+            $failing->failOn = null;
+            $copy = $root.'/Копия.pdf';
+            file_put_contents($copy, '%PDF-1.4 first');
+            $doc = $manager->createFromPath((new Document($section))->setTitle('Откат версии')->setType(Document::TYPE_FILE), $copy, 'Копия.pdf', null, $admin, false);
+            foreach ([DocumentVersion::class, DocumentEvent::class] as $failOn) {
+                $failing->failOn = $failOn;
+                try {
+                    $manager->addFileVersionFromPath($doc, $source, 'Приказ.pdf', null, $admin, true);
+                    self::fail('ожидалась ошибка записи');
+                } catch (\RuntimeException $e) {
+                    self::assertSame('Сбой базы (тест)', $e->getMessage());
+                }
+                self::assertFileExists($source, 'файл новой версии возвращён на место: '.$failOn);
+                self::assertSame(1, $doc->getVersionCount());
+                self::assertSame(1, $doc->getCurrentVersion()?->getNumber(), 'текущей осталась прежняя версия');
+                $failing->failOn = null;
+                $this->em()->flush(); // несостоявшиеся версия и событие не записываются «хвостом» следующего сохранения
+            }
+            $this->em()->clear();
+            self::assertSame(1, $this->documents()->find($doc->getId())?->getVersionCount());
+            self::assertSame(1, $this->documents()->find($doc->getId())?->getCurrentVersion()?->getNumber());
+        } finally {
+            $events->removeEventListener([Events::onFlush], $failing);
+        }
+    }
+
+    public function testMovedFileIsReturnedAfterDatabaseError(): void
+    {
+        $root = $this->importDir.'/Ошибка базы';
+        mkdir($root, 0770, true);
+        $source = $root.'/Приказ.pdf';
+        file_put_contents($source, '%PDF-1.4 order');
+        $copy = $root.'/Копия.pdf';
+        file_put_contents($copy, '%PDF-1.4 first');
+        $manager = static::getContainer()->get(DocumentManager::class);
+        $connection = $this->em()->getConnection();
+        $doc = $manager->createFromPath((new Document($this->section('Общие документы')))->setTitle('Ошибка базы, версия')->setType(Document::TYPE_FILE), $copy, 'Копия.pdf', null, $this->user('admin'), false);
+        $id = (int) $doc->getId();
+        $documentsBefore = (int) $connection->fetchOne('SELECT COUNT(*) FROM document');
+
+        // Настоящая ошибка базы при записи версии (уже после переноса файла): менеджер сущностей закрывается.
+        $connection->executeStatement("CREATE TRIGGER test_fail_version BEFORE INSERT ON document_version FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'test failure'");
+        try {
+            try {
+                $manager->createFromPath((new Document($this->section('Общие документы')))->setTitle('Ошибка базы')->setType(Document::TYPE_FILE), $source, 'Приказ.pdf', null, $this->user('admin'), false, true);
+                self::fail('ожидалась ошибка базы данных');
+            } catch (\Doctrine\DBAL\Exception $e) {
+                self::assertStringContainsString('test failure', $e->getMessage());
+            }
+            self::assertFalse($this->em()->isOpen(), 'ошибка базы закрывает менеджер сущностей');
+            self::assertFileExists($source, 'файл возвращён в каталог импорта');
+            self::assertSame($documentsBefore, (int) $connection->fetchOne('SELECT COUNT(*) FROM document'), 'черновик без версий удалён напрямую');
+
+            static::getContainer()->get('doctrine')->resetManager();
+            $manager = static::getContainer()->get(DocumentManager::class);
+            $doc = $this->em()->find(Document::class, $id);
+            self::assertNotNull($doc);
+            try {
+                $manager->addFileVersionFromPath($doc, $source, 'Приказ.pdf', null, $this->user('admin'), true);
+                self::fail('ожидалась ошибка базы данных');
+            } catch (\Doctrine\DBAL\Exception $e) {
+                self::assertStringContainsString('test failure', $e->getMessage());
+            }
+            self::assertFileExists($source, 'файл новой версии возвращён в каталог импорта');
+        } finally {
+            $connection->executeStatement('DROP TRIGGER IF EXISTS test_fail_version');
+            static::getContainer()->get('doctrine')->resetManager();
+        }
+        self::assertSame(1, (int) $connection->fetchOne('SELECT COUNT(*) FROM document_version WHERE document_id = ?', [$id]));
+        $storage = static::getContainer()->get(FileStorage::class)->getStorageDir().'/'.$id;
+        self::assertCount(1, glob($storage.'/*') ?: [], 'в хранилище осталась только первая версия');
+    }
+
+    public function testPreviewForTopLevelImportRecognisesExistingSections(): void
+    {
+        // Разделы верхнего уровня, созданные этим тестом, другим тестам не нужны — всё в откатываемой транзакции.
+        $connection = $this->em()->getConnection();
+        $connection->beginTransaction();
+        try {
+            $root = $this->makeTree('Верхний уровень');
+            $options = new ImportOptions(targetSectionId: null, rootAsSection: false, publish: false, validityMonths: 0);
+            $this->importer()->run($this->importer()->scan($root, $options), $options, $this->user('admin'));
+            $this->em()->clear();
+
+            // Повторный предпросмотр того же каталога: разделы верхнего уровня уже есть, файлы не изменились.
+            $plan = $this->importer()->preview($this->importer()->scan($root, $options), $options);
+            $results = [];
+            foreach ($plan->entries as $e) {
+                $results[$e['path']] = $e['result'] ?? null;
+            }
+            self::assertSame(ImportPlan::RESULT_SECTION_EXISTS, $results['Инструкции по контролю'], 'раздел верхнего уровня найден, а не «новый»');
+            self::assertSame(ImportPlan::RESULT_SECTION_EXISTS, $results['Инструкции по контролю/2025']);
+            self::assertSame(ImportPlan::RESULT_UNCHANGED, $results['Инструкции по контролю/2025/ИК-03.pdf']);
+            self::assertSame(ImportPlan::RESULT_UNCHANGED, $results['Протоколы/Протокол 1.pdf']);
+            self::assertSame(ImportPlan::RESULT_SKIPPED, $results['README.txt'], 'файлы корня без целевого раздела пропускаются');
+        } finally {
+            while ($connection->isTransactionActive()) {
+                $connection->rollBack();
+            }
+            $this->em()->clear();
+        }
+    }
+
     public function testTooDeepFoldersAreFlattened(): void
     {
         $root = $this->importDir.'/Глубина';
@@ -285,6 +467,13 @@ final class DirectoryImportTest extends PortalTestCase
         self::assertStringStartsWith('/admin/import?', (string) $this->client->getResponse()->headers->get('Location'));
         $this->client->request('POST', '/admin/import/preview', ['_token' => 'bad', 'folder' => 'Через панель']);
         self::assertResponseStatusCodeSame(403);
+        // Испорченное имя папки (base64) и NUL в имени — ошибка формы, а не импорт всего каталога и не 500.
+        foreach (['b64:!!!не-base64', 'b64:', 'b64:'.base64_encode("a\0b")] as $bad) {
+            $this->client->request('POST', '/admin/import/preview', ['_token' => $token, 'folder' => $bad, 'section' => 0]);
+            self::assertResponseRedirects(null, 302, 'папка '.$bad);
+            $crawler = $this->client->followRedirect();
+            self::assertStringContainsString('Недопустимое имя подкаталога', $crawler->filter('.flashes')->text(), 'папка '.$bad);
+        }
 
         $this->client->request('POST', '/admin/import/start', ['_token' => $token, 'folder' => 'Через панель', 'section' => $target->getId(), 'root_as_section' => '1', 'status' => 'published', 'validity' => '3', 'update' => '1']);
         self::assertResponseRedirects();

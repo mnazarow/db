@@ -113,14 +113,18 @@ final class DocumentLinkService
 
     /**
      * Переносит в архив документы, которые заменены или отменены этим документом.
+     * $canArchive — проверка прав на каждый документ: без неё модератор одного раздела мог бы
+     * отправить в архив документы чужих разделов, связанные с его документом ранее.
+     *
+     * @param (callable(Document): bool)|null $canArchive
      *
      * @return list<string> названия перенесённых документов
      */
-    public function archiveSuperseded(Document $document, User $by, ?string $ip = null): array
+    public function archiveSuperseded(Document $document, User $by, ?string $ip = null, ?callable $canArchive = null): array
     {
         $archived = [];
         foreach ($this->links->supersededBy($document) as $old) {
-            if (!$old->isArchived()) {
+            if (!$old->isArchived() && (null === $canArchive || $canArchive($old))) {
                 $this->manager->archive($old, $by, $ip);
                 $archived[] = $old->getTitle();
             }

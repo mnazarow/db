@@ -14,8 +14,11 @@
                 <p class="hero__meta">{% if app.user %}Опубликовано документов: {{ total_published }}. Выберите раздел или воспользуйтесь поиском.{% else %}Открытых документов: {{ total_published }}. Выберите раздел или воспользуйтесь поиском. <a href="{{ path('app_login') }}">Войдите</a>, чтобы видеть внутренние документы и работать с разделами.{% endif %}</p>
             </div>
             <div class="hero__actions">
-                {% if is_moderator %}
+                {% if is_moderator or is_assistant|default(false) %}
                     <a class="btn btn--pill" href="{{ path('app_document_new') }}">Добавить документ</a>
+                {% endif %}
+                {% if video_enabled() %}
+                    <a class="btn btn--ghost" href="{{ video_url('/') }}">Видео</a>
                 {% endif %}
                 {% if is_granted('ROLE_ADMIN') %}
                     <a class="btn btn--ghost" href="{{ path('app_section_new_root') }}">Новый раздел</a>
@@ -41,6 +44,25 @@
                         <a href="{{ path('app_document_show', {id: a.document.id}) }}">{{ a.document.title }}</a>
                         <span class="attention-item__meta">{{ a.document.section.fullName }}{% if a.dueAt %} · до {{ a.dueAt|date('d.m.Y') }}{% if a.isOverdue(today) %} <span class="text-danger">просрочено</span>{% endif %}{% endif %}</span>
                     </li>
+                {% endfor %}
+            </ul>
+        </div>
+    {% endif %}
+
+    {% set video_pending = is_moderator ? video_moderation_pending() : 0 %}
+    {% if is_moderator and (moderation_pending() > 0 or video_pending > 0) %}
+        <div class="alert alert--warning">{% if moderation_pending() > 0 %}Материалы на модерации ждут решения: {{ moderation_pending() }}.{% endif %}{% if video_pending > 0 %} Видео на модерации: {{ video_pending }}.{% endif %} <a href="{{ path('app_moderation') }}">Открыть «Модерацию» →</a></div>
+    {% endif %}
+
+    {% if is_assistant|default(false) and drafts|length > 0 %}
+        <div class="card">
+            <div class="card__head">
+                <h2 class="h-section">Черновики и материалы на модерации</h2>
+                <a class="link-action" href="{{ path('app_moderation') }}">Мои материалы →</a>
+            </div>
+            <ul class="mini-list">
+                {% for d in drafts %}
+                    <li><a href="{{ path('app_document_show', {id: d.id}) }}">{{ d.title }}</a> <span class="text-muted">— {{ d.section.name }}, {{ d.status|status_label|lower }}, {{ d.updatedAt|date('d.m.Y') }}</span></li>
                 {% endfor %}
             </ul>
         </div>
@@ -100,10 +122,11 @@
                             {{ c.published|plural(['документ', 'документа', 'документов']) }}
                             {% if c.children > 0 %} · {{ c.children|plural(['подраздел', 'подраздела', 'подразделов']) }}{% endif %}
                         </div>
-                        {% if s.children|length > 0 %}
+                        {% set kids = children[s.id]|default([]) %}
+                        {% if kids|length > 0 %}
                             <div class="section-card__children">
-                                {% for ch in s.children|slice(0, 5) %}<span class="chip chip--static">{{ ch.name }}</span>{% endfor %}
-                                {% if s.children|length > 5 %}<span class="chip chip--static">ещё {{ s.children|length - 5 }}</span>{% endif %}
+                                {% for ch in kids|slice(0, 5) %}<span class="chip chip--static">{{ ch.name }}</span>{% endfor %}
+                                {% if kids|length > 5 %}<span class="chip chip--static">ещё {{ kids|length - 5 }}</span>{% endif %}
                             </div>
                         {% endif %}
                     </div>

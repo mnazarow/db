@@ -1,0 +1,102 @@
+{% extends 'admin/_layout.html.twig' %}
+
+{% block title %}Мониторинг{% endblock %}
+{% block admin_title %}Мониторинг{% endblock %}
+
+{% set badge = {ok: 'done', warning: 'soon', critical: 'overdue', info: 'none', running: 'progress', error: 'overdue'} %}
+{% set status_labels = {ok: 'Норма', warning: 'Требует внимания', critical: 'Неисправность', info: 'Сведения', running: 'Выполняется', error: 'Ошибка'} %}
+
+{% block admin_body %}
+{% if new_token %}
+<div class="card card--token" id="new-token">
+    <h2 class="h-section">Токен мониторинга создан</h2>
+    <p>Скопируйте его сейчас — после обновления страницы он будет скрыт.</p>
+    <div class="token-row">
+        <input class="form-control token-row__value" id="new-monitoring-token" type="text" readonly value="{{ new_token }}" onclick="this.select()" aria-label="Токен мониторинга">
+    </div>
+</div>
+{% endif %}
+
+<div class="grid grid--stats">
+    <div class="card">
+        <div class="stat__label">Общее состояние</div>
+        <div class="stat__value"><span class="badge badge--{{ badge[report.status] ?? 'none' }}"><span class="badge__dot"></span>{{ status_labels[report.status] ?? report.status }}</span></div>
+        <div class="stat__hint">версия {{ report.version }}, проверено {{ 'now'|date('d.m.Y H:i') }}</div>
+    </div>
+    {% for key, label in {documents_published: 'Опубликовано документов', acknowledgements_overdue: 'Просрочено ознакомлений', search_index_outdated: 'Ждут индексации'} %}
+        {% if report.metrics[key] is defined %}
+            <div class="card"><div class="stat__label">{{ label }}</div><div class="stat__value">{{ report.metrics[key] }}</div></div>
+        {% endif %}
+    {% endfor %}
+</div>
+
+<div class="card table-card">
+    <div class="card__head card__head--padded"><h2 class="h-section">Проверки</h2></div>
+    <div class="table-scroll"><table class="admin-table">
+        <thead><tr><th>Проверка</th><th>Состояние</th><th>Подробности</th></tr></thead>
+        <tbody>
+        {% for check in report.checks %}
+            <tr>
+                <td>{{ check.label }}</td>
+                <td class="col-nowrap"><span class="badge badge--{{ badge[check.status] ?? 'none' }}"><span class="badge__dot"></span>{{ status_labels[check.status] ?? check.status }}</span></td>
+                <td>{{ check.message }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table></div>
+</div>
+
+<div class="card table-card" id="jobs">
+    <div class="card__head card__head--padded"><h2 class="h-section">Регулярные задания</h2></div>
+    <div class="table-scroll"><table class="admin-table">
+        <thead><tr><th>Задание</th><th>Последний запуск</th><th>Последний успешный</th><th class="col-num">Длительность</th><th>Состояние</th><th>Пояснение</th></tr></thead>
+        <tbody>
+        {% for job in report.jobs %}
+            <tr class="{{ not job.expected ? 'text-muted' }}">
+                <td>{{ job.label }}{% if not job.expected %} <span class="text-muted">(не используется)</span>{% endif %}</td>
+                <td class="col-nowrap">{{ job.last_started_at ? job.last_started_at|date('d.m.Y H:i') : '—' }}</td>
+                <td class="col-nowrap">{{ job.last_success_at ? job.last_success_at|date('d.m.Y H:i') : '—' }}</td>
+                <td class="col-num">{{ job.duration_ms is not null ? (job.duration_ms / 1000)|number_format(1, ',', ' ') ~ ' с' : '—' }}</td>
+                <td class="col-nowrap">{% if job.status %}<span class="badge badge--{{ badge[job.status] ?? 'none' }}"><span class="badge__dot"></span>{{ status_labels[job.status] ?? job.status }}</span>{% else %}—{% endif %}</td>
+                <td>{{ job.message }}{% if job.failures > 1 %} <span class="text-danger">(ошибок подряд: {{ job.failures }})</span>{% endif %}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table></div>
+    <div class="card__padded"><p class="form-help">Задания приложения запускает cron (в Docker — контейнер <code>cron</code>); резервную копию, её отправку во внешнее хранилище и еженедельную проверку восстановления — задания на сервере (<code>docportal backup</code>, <code>docportal remote-backup</code>, <code>docportal verify-backup</code>). Если задание давно не выполнялось, проверьте <code>docportal status</code> и журналы <code>/var/log/docportal/*-cron.log</code>. На время работ посетителей можно закрыть страницей «Идёт обновление портала»: <code>docportal maintenance on</code> (обновление включает её само).</p></div>
+</div>
+
+<div class="grid grid--two" id="token">
+    <div class="card card--form">
+        <div class="card__head"><h2 class="h-section">Доступ для систем мониторинга</h2>
+            {% if token_set %}<span class="badge badge--done"><span class="badge__dot"></span>Включён</span>{% else %}<span class="badge badge--none"><span class="badge__dot"></span>Выключен</span>{% endif %}</div>
+        <p>Подробное состояние (<code>/health/details</code>, JSON) и метрики (<code>/metrics</code>, формат Prometheus) отдаются только с токеном — в заголовке <code>Authorization: Bearer …</code> или в параметре <code>?token=</code>. Простая проверка <code>/health</code> работает без токена.</p>
+        {% if token_set %}<p>Действующий токен: <code>{{ token_masked }}</code></p>{% endif %}
+        <div class="form-actions">
+            <form method="post" action="{{ path('admin_monitoring_token') }}" class="inline-form" {% if token_set %}data-confirm="Создать новый токен? Прежний сразу перестанет действовать — его нужно будет заменить в системе мониторинга."{% endif %}>
+                <input type="hidden" name="_token" value="{{ csrf_token('monitoring') }}">
+                <button type="submit" class="btn btn--pill btn--small">{{ token_set ? 'Заменить токен' : 'Создать токен' }}</button>
+            </form>
+            {% if token_set %}
+                <form method="post" action="{{ path('admin_monitoring_token_delete') }}" class="inline-form" data-confirm="Отключить /health/details и /metrics?">
+                    <input type="hidden" name="_token" value="{{ csrf_token('monitoring') }}">
+                    <button type="submit" class="btn btn--ghost btn--small">Отключить</button>
+                </form>
+            {% endif %}
+        </div>
+    </div>
+    <div class="card card--info">
+        <h2 class="h-section">Как подключить</h2>
+        <p><b>Zabbix</b> — элемент данных «HTTP-агент» с адресом <code>{{ details_url }}</code>, заголовком <code>Authorization: Bearer ТОКЕН</code>; зависимые элементы — по JSONPath (<code>$.status</code>, <code>$.checks[?(@.key=='job:backup')].status.first()</code>), триггер — <code>$.status</code> не равен <code>ok</code>.</p>
+        <p><b>Prometheus</b>:</p>
+        <pre class="code-block">- job_name: docportal
+  scheme: {{ metrics_url starts with 'https' ? 'https' : 'http' }}
+  metrics_path: /metrics
+  authorization:
+    credentials: ТОКЕН
+  static_configs:
+    - targets: ['{{ metrics_url|replace({'https://': '', 'http://': ''})|split('/')|first }}']</pre>
+        <p class="form-help">Код ответа <code>/health/details?strict=1</code> — 503 при неисправности: так его можно проверять и простым HTTP-мониторингом.</p>
+    </div>
+</div>
+{% endblock %}

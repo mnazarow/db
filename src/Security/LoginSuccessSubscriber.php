@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Security;
 
+use App\Controller\KerberosController;
 use App\Entity\User;
 use Doctrine\ORM\EntityManagerInterface;
 use Psr\Log\LoggerInterface;
@@ -48,9 +49,11 @@ final class LoginSuccessSubscriber implements EventSubscriberInterface
             }
         }
 
-        // Второй фактор: до ввода кода пользователь видит только форму подтверждения.
-        if ($user instanceof User && $user->isTotpEnabled() && $event->getRequest()->hasSession()) {
-            $event->getRequest()->getSession()->set(TwoFactorSubscriber::SESSION_PENDING, true);
+        // Второй фактор: каждый новый вход подтверждается заново — до ввода кода пользователь видит
+        // только форму подтверждения (TwoFactorSubscriber).
+        if ($event->getRequest()->hasSession()) {
+            $event->getRequest()->getSession()->remove(TwoFactorSubscriber::SESSION_VERIFIED);
+            $event->getRequest()->getSession()->remove(TwoFactorSubscriber::SESSION_ATTEMPTS);
         }
 
         $this->auditLogger->info('Вход в систему', [
@@ -84,5 +87,7 @@ final class LoginSuccessSubscriber implements EventSubscriberInterface
         if (null !== $token) {
             $this->auditLogger->info('Выход из системы', ['user' => $token->getUserIdentifier()]);
         }
+        // После выхода страница входа не пробует сразу войти через Windows — иначе выйти было бы нельзя.
+        $event->getResponse()?->headers->setCookie(KerberosController::skipCookie($event->getRequest()));
     }
 }

@@ -30,7 +30,7 @@ final class UserListCommand extends Command
         }
         $rows = [];
         foreach ($this->users->findAllOrdered() as $u) {
-            $rows[] = [$u->getUsername(), $u->getDisplayName(), $u->getEmail() ?? '', User::SOURCE_LDAP === $u->getAuthSource() ? 'домен' : 'локальная', $u->isAdmin() ? 'администратор' : 'пользователь', implode(', ', $moderated[$u->getId()] ?? []), $u->isActive() ? 'да' : 'нет', $u->getLastLoginAt()?->format('d.m.Y H:i') ?? '—'];
+            $rows[] = [$u->getUsername(), $u->getDisplayName(), $u->getEmail() ?? '', User::SOURCE_LDAP === $u->getAuthSource() ? 'домен' : 'локальная', mb_strtolower($u->getPositionLabel()), implode(', ', $moderated[$u->getId()] ?? []), $u->isActive() ? 'да' : 'нет', $u->getLastLoginAt()?->format('d.m.Y H:i') ?? '—'];
         }
         $io->table(['Логин', 'Имя', 'E-mail', 'Источник', 'Роль', 'Модерирует', 'Активна', 'Последний вход'], $rows);
 

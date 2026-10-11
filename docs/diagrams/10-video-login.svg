@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1160" height="470" viewBox="0 0 1160 470" font-family="Roboto, Arial, Helvetica, sans-serif" font-size="14">
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0F4382"/></marker><marker id="arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#D00024"/></marker><marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#1F8F4E"/></marker><marker id="arrow-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#6E7480"/></marker></defs>
+<rect width="1160" height="470" fill="#FFFFFF"/>
+<text x="24" y="34" font-family="'DIN Condensed', 'Arial Narrow', Arial, sans-serif" font-size="24" font-weight="600" fill="#0F4382" letter-spacing="0.5">РАЗДЕЛ «ВИДЕО»: ОБЩИЙ ВХОД И РОЛИ</text>
+<rect x="20" y="110" width="170" height="70" rx="14" fill="#FFFFFF" stroke="#0F4382" stroke-width="1.5"/>
+<text x="105.0" y="134" text-anchor="middle" font-weight="700" font-size="14" fill="#0F4382">Браузер</text>
+<text x="105.0" y="154" text-anchor="middle" font-size="13" fill="#1D1E1E">cookie сессии портала</text>
+<text x="105.0" y="172" text-anchor="middle" font-size="13" fill="#1D1E1E">(и «Запомнить меня»)</text>
+<rect x="215" y="60" width="925" height="380" rx="18" fill="#F4F8FB" stroke="#DFDEDE"/>
+<text x="231" y="82" font-size="12" font-weight="700" fill="#79A7C6" letter-spacing="1.5">СЕРВЕР ПОРТАЛА (ОДИН АДРЕС САЙТА)</text>
+<rect x="250" y="100" width="190" height="90" rx="14" fill="#FFFFFF" stroke="#0F4382" stroke-width="1.5"/>
+<text x="345.0" y="124" text-anchor="middle" font-weight="700" font-size="14" fill="#0F4382">nginx портала</text>
+<text x="345.0" y="144" text-anchor="middle" font-size="13" fill="#1D1E1E">/ → портал (PHP-FPM)</text>
+<text x="345.0" y="162" text-anchor="middle" font-size="13" fill="#1D1E1E">/video/ → видеопортал</text>
+<text x="345.0" y="180" text-anchor="middle" font-size="13" fill="#1D1E1E">/video/media/ — файлы</text>
+<rect x="520" y="100" width="230" height="90" rx="14" fill="#FFFFFF" stroke="#0F4382" stroke-width="1.5"/>
+<text x="635.0" y="124" text-anchor="middle" font-weight="700" font-size="14" fill="#0F4382">Видеопортал (Node.js)</text>
+<text x="635.0" y="144" text-anchor="middle" font-size="13" fill="#1D1E1E">API и интерфейс /video/,</text>
+<text x="635.0" y="162" text-anchor="middle" font-size="13" fill="#1D1E1E">обработка видео (ffmpeg),</text>
+<text x="635.0" y="180" text-anchor="middle" font-size="13" fill="#1D1E1E">база PostgreSQL</text>
+<rect x="870" y="100" width="250" height="90" rx="14" fill="#FFFFFF" stroke="#0F4382" stroke-width="1.5"/>
+<text x="995.0" y="124" text-anchor="middle" font-weight="700" font-size="14" fill="#0F4382">Портал документации</text>
+<text x="995.0" y="144" text-anchor="middle" font-size="13" fill="#1D1E1E">GET /internal/video/session</text>
+<text x="995.0" y="162" text-anchor="middle" font-size="13" fill="#1D1E1E">127.0.0.1:8079 (Docker: web:8079)</text>
+<text x="995.0" y="180" text-anchor="middle" font-size="13" fill="#1D1E1E">подпись: VIDEO_SHARED_SECRET</text>
+<rect x="520" y="250" width="230" height="160" rx="14" fill="#E7EFF6" stroke="#0F4382" stroke-width="1.5"/>
+<text x="635.0" y="274" text-anchor="middle" font-weight="700" font-size="14" fill="#0F4382">Учётная запись видео</text>
+<text x="635.0" y="294" text-anchor="middle" font-size="13" fill="#1D1E1E">заводится и обновляется</text>
+<text x="635.0" y="312" text-anchor="middle" font-size="13" fill="#1D1E1E">по данным портала:</text>
+<text x="635.0" y="330" text-anchor="middle" font-size="13" fill="#1D1E1E">администратор → admin</text>
+<text x="635.0" y="348" text-anchor="middle" font-size="13" fill="#1D1E1E">маркетолог → модератор</text>
+<text x="635.0" y="366" text-anchor="middle" font-size="13" fill="#1D1E1E">помощник → загрузка</text>
+<text x="635.0" y="384" text-anchor="middle" font-size="13" fill="#1D1E1E">   (премодерация)</text>
+<text x="635.0" y="402" text-anchor="middle" font-size="13" fill="#1D1E1E">пользователь → просмотр</text>
+<rect x="870" y="250" width="250" height="160" rx="14" fill="#E7EFF6" stroke="#0F4382" stroke-width="1.5"/>
+<text x="995.0" y="274" text-anchor="middle" font-weight="700" font-size="14" fill="#0F4382">Ответ портала</text>
+<text x="995.0" y="294" text-anchor="middle" font-size="13" fill="#1D1E1E">вошёл ли сотрудник, прошёл ли</text>
+<text x="995.0" y="312" text-anchor="middle" font-size="13" fill="#1D1E1E">второй фактор, не заблокирован;</text>
+<text x="995.0" y="330" text-anchor="middle" font-size="13" fill="#1D1E1E">имя, почта, роль;</text>
+<text x="995.0" y="348" text-anchor="middle" font-size="13" fill="#1D1E1E">новые cookie «Запомнить меня»</text>
+<text x="995.0" y="366" text-anchor="middle" font-size="13" fill="#1D1E1E">(передаются браузеру);</text>
+<text x="995.0" y="384" text-anchor="middle" font-size="13" fill="#1D1E1E">ответ кэшируется на 10 с</text>
+<line x1="190" y1="145" x2="250" y2="145" stroke="#0F4382" stroke-width="1.8" marker-end="url(#arrow)"/>
+<text x="220.0" y="139.0" text-anchor="middle" font-size="12" fill="#0F4382">HTTPS</text>
+<line x1="440" y1="145" x2="520" y2="145" stroke="#0F4382" stroke-width="1.8" marker-end="url(#arrow)"/>
+<text x="480.0" y="139.0" text-anchor="middle" font-size="12" fill="#0F4382">/video/…</text>
+<line x1="750" y1="132" x2="870" y2="132" stroke="#0F4382" stroke-width="1.8" marker-end="url(#arrow)"/>
+<text x="810.0" y="124.0" text-anchor="middle" font-size="12" fill="#0F4382">cookie, секрет</text>
+<line x1="870" y1="162" x2="750" y2="162" stroke="#0F4382" stroke-width="1.8" marker-end="url(#arrow)"/>
+<text x="810.0" y="180.0" text-anchor="middle" font-size="12" fill="#0F4382">кто вошёл</text>
+<line x1="635" y1="190" x2="635" y2="250" stroke="#0F4382" stroke-width="1.8" marker-end="url(#arrow)"/>
+<line x1="995" y1="190" x2="995" y2="250" stroke="#0F4382" stroke-width="1.8" marker-end="url(#arrow)" stroke-dasharray="6 4"/>
+</svg>

@@ -9,6 +9,7 @@ use App\Entity\DocumentEvent;
 use App\Entity\Section;
 use App\Entity\User;
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
+use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\Persistence\ManagerRegistry;
 
 /**
@@ -95,27 +96,32 @@ final class DocumentEventRepository extends ServiceEntityRepository
      */
     public function activityByDay(\DateTimeImmutable $from, \DateTimeImmutable $to, ?Document $document = null, ?array $sectionIds = null): array
     {
-        $qb = $this->createQueryBuilder('e')
-            ->select('e.type AS t, e.createdAt AS c')
-            ->andWhere('e.type IN (:types)')->setParameter('types', [DocumentEvent::VIEW, DocumentEvent::DOWNLOAD])
-            ->andWhere('e.createdAt >= :from')->setParameter('from', $from->setTime(0, 0))
-            ->andWhere('e.createdAt < :to')->setParameter('to', $to->modify('+1 day')->setTime(0, 0));
+        if (null !== $sectionIds && [] === $sectionIds) {
+            return $this->emptyDays($from, $to);
+        }
+        // Счёт — в базе (GROUP BY по дню): тысячи просмотров за месяц не загружаются в память по одному.
+        $sql = 'SELECT e.type AS t, DATE(e.created_at) AS d, COUNT(*) AS cnt FROM document_event e';
+        $params = ['types' => [DocumentEvent::VIEW, DocumentEvent::DOWNLOAD], 'from' => $from->setTime(0, 0)->format('Y-m-d H:i:s'), 'to' => $to->modify('+1 day')->setTime(0, 0)->format('Y-m-d H:i:s')];
+        $types = ['types' => ArrayParameterType::STRING];
+        if (null !== $sectionIds) {
+            $sql .= ' JOIN document d ON d.id = e.document_id';
+        }
+        $sql .= ' WHERE e.type IN (:types) AND e.created_at >= :from AND e.created_at < :to';
         if (null !== $document) {
-            $qb->andWhere('e.document = :d')->setParameter('d', $document);
+            $sql .= ' AND e.document_id = :document';
+            $params['document'] = (int) $document->getId();
         }
         if (null !== $sectionIds) {
-            if ([] === $sectionIds) {
-                return $this->emptyDays($from, $to);
-            }
-            $qb->join('e.document', 'd')->andWhere('d.section IN (:ids)')->setParameter('ids', $sectionIds);
+            $sql .= ' AND d.section_id IN (:sections)';
+            $params['sections'] = array_map('intval', $sectionIds);
+            $types['sections'] = ArrayParameterType::INTEGER;
         }
+        $sql .= ' GROUP BY e.type, DATE(e.created_at)';
         $out = $this->emptyDays($from, $to);
-        foreach ($qb->getQuery()->getArrayResult() as $row) {
-            /** @var \DateTimeInterface $c */
-            $c = $row['c'];
-            $day = $c->format('Y-m-d');
-            if (isset($out[$day])) {
-                ++$out[$day][$row['t']];
+        foreach ($this->getEntityManager()->getConnection()->fetchAllAssociative($sql, $params, $types) as $row) {
+            $day = (string) $row['d'];
+            if (isset($out[$day][$row['t']])) {
+                $out[$day][$row['t']] += (int) $row['cnt'];
             }
         }
 
@@ -145,19 +151,19 @@ final class DocumentEventRepository extends ServiceEntityRepository
         for ($i = 0; $i < $months; ++$i) {
             $out[$start->modify('+'.$i.' months')->format('Y-m')] = ['view' => 0, 'download' => 0, 'new_version' => 0];
         }
-        $rows = $this->createQueryBuilder('e')->select('e.type AS t, e.createdAt AS c')
-            ->andWhere('e.type IN (:types)')->setParameter('types', [DocumentEvent::VIEW, DocumentEvent::DOWNLOAD, DocumentEvent::NEW_VERSION, DocumentEvent::CREATE])
-            ->andWhere('e.createdAt >= :from')->setParameter('from', $start)
-            ->getQuery()->getArrayResult();
+        $rows = $this->getEntityManager()->getConnection()->fetchAllAssociative(
+            "SELECT e.type AS t, DATE_FORMAT(e.created_at, '%Y-%m') AS m, COUNT(*) AS cnt FROM document_event e"
+            .' WHERE e.type IN (:types) AND e.created_at >= :from GROUP BY e.type, m',
+            ['types' => [DocumentEvent::VIEW, DocumentEvent::DOWNLOAD, DocumentEvent::NEW_VERSION, DocumentEvent::CREATE], 'from' => $start->format('Y-m-d H:i:s')],
+            ['types' => ArrayParameterType::STRING],
+        );
         foreach ($rows as $row) {
-            /** @var \DateTimeInterface $c */
-            $c = $row['c'];
-            $m = $c->format('Y-m');
+            $m = (string) $row['m'];
             if (!isset($out[$m])) {
                 continue;
             }
-            $type = DocumentEvent::CREATE === $row['t'] ? 'new_version' : $row['t'];
-            ++$out[$m][$type];
+            $type = DocumentEvent::CREATE === $row['t'] ? 'new_version' : (string) $row['t'];
+            $out[$m][$type] += (int) $row['cnt'];
         }
 
         return $out;

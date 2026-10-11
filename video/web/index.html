@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ru" data-theme="__THEME__">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0F4382" />
+    <meta name="site-name" content="__SITE_NAME__" />
+    <link rel="icon" href="__FAVICON__" />
+    <!-- Адреса — с префиксом пути портала (сборка с VITE_BASE, по умолчанию «/»); манифест формирует сервер -->
+    <link rel="manifest" href="%BASE_URL%manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="%BASE_URL%icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <title>Видео</title>
+    <!--META-->
+    __ACCENT__
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('cv:theme') || document.documentElement.getAttribute('data-theme') || 'light';
+          if (t === 'system') t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+          if (t !== 'light' && t !== 'dark') t = 'light';
+          document.documentElement.setAttribute('data-theme', t);
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

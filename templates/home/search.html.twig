@@ -23,15 +23,26 @@
             </select>
             <button class="btn btn--pill" type="submit">Найти</button>
         </form>
-        <p class="form-help">Ищет по названию, обозначению, описанию, тегам, имени файла, тексту страниц и <b>содержимому файлов</b> (PDF, Word, Excel, PowerPoint, текстовые файлы). Черновики находят только модераторы своих разделов.</p>
+        <p class="form-help">Ищет по названию, обозначению, описанию, тегам, имени файла, тексту страниц и <b>содержимому файлов</b> (PDF, Word, Excel, PowerPoint, текстовые файлы). Фразу в кавычках — <code>"план эвакуации"</code> или <code>«план эвакуации»</code> — ищет дословно, слова подряд. Черновики находят только модераторы своих разделов.</p>
     </div>
 
     {% if q|length >= 2 %}
+        {% if ai_answers %}
+        <div class="card ai-answer" data-ai-answer data-url="{{ path('app_search_answer') }}" data-token="{{ csrf_token('search_answer') }}" data-q="{{ q }}"{% if ai_auto %} data-auto{% endif %} hidden>
+            <div class="card__head card__head--padded">
+                <h2 class="h-section">Ответ на вопрос</h2>
+                <button class="btn btn--ghost btn--small" type="button" data-ai-ask>Ответить по документам{{ video_enabled() ? ' и видео' }}</button>
+            </div>
+            <div class="card__padded ai-answer__body" data-ai-body aria-live="polite">
+                <p class="text-muted">Языковая модель составит ответ по документам{{ video_enabled() ? ' и видео' }}, которые вам доступны, и покажет, откуда он взят. Проверяйте важное по источникам.</p>
+            </div>
+        </div>
+        {% endif %}
         <div class="card table-card">
             <div class="card__head card__head--padded">
                 <h2 class="h-section">Найдено: {{ results|length }}</h2>
             </div>
-            {{ m.document_table(results, {show_section: true, show_status: is_granted('MODERATOR'), empty: content_results|length > 0 ? 'По названию и реквизитам ничего не найдено — смотрите совпадения в тексте файлов ниже.' : 'Ничего не найдено. Попробуйте другие слова или уберите фильтр по разделу.'}) }}
+            {{ m.document_table(results, {show_section: true, show_status: is_granted('CONTRIBUTOR'), empty: content_results|length > 0 ? 'По названию и реквизитам ничего не найдено — смотрите совпадения в тексте файлов ниже.' : 'Ничего не найдено. Попробуйте другие слова или уберите фильтр по разделу.'}) }}
         </div>
 
         {% if content_results|length > 0 %}
@@ -52,6 +63,40 @@
                         </div>
                         <div class="snippet__section">{{ hit.document.section.fullName }}</div>
                         {% if hit.snippet %}<p class="snippet__text">{{ hit.snippet|raw }}</p>{% endif %}
+                    </li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        {% if semantic_search|default(false) %}
+        <div class="card table-card semantic-results" data-semantic data-url="{{ path('app_search_semantic') }}" data-token="{{ csrf_token('search_answer') }}" data-q="{{ q }}" hidden>
+            <div class="card__head card__head--padded">
+                <h2 class="h-section">Похоже по смыслу</h2>
+                <span class="text-muted">документы о том же, даже если в них нет этих слов</span>
+            </div>
+            <ul class="snippet-list" data-semantic-list></ul>
+        </div>
+        {% endif %}
+
+        {% if video_results and video_results.items|length > 0 %}
+        <div class="card table-card">
+            <div class="card__head card__head--padded">
+                <h2 class="h-section">Видео: {{ video_results.total }}</h2>
+                <a class="text-muted" href="{{ video_url('/search?q=' ~ q|url_encode) }}">Все результаты в разделе «Видео» →</a>
+            </div>
+            <ul class="snippet-list video-hits">
+                {% for v in video_results.items %}
+                    <li class="snippet video-hit">
+                        <a class="video-hit__thumb" href="{{ v.url }}" tabindex="-1" aria-hidden="true">
+                            {% if v.thumbnail %}<img src="{{ v.thumbnail }}" alt="" loading="lazy">{% endif %}
+                            {% if v.duration %}<span class="video-hit__duration">{{ v.duration >= 3600 ? '%d:%02d:%02d'|format(v.duration // 3600, v.duration // 60 % 60, v.duration % 60) : '%d:%02d'|format(v.duration // 60, v.duration % 60) }}</span>{% endif %}
+                        </a>
+                        <div class="video-hit__body">
+                            <a class="snippet__title" href="{{ v.url }}">{{ v.title }}</a>
+                            <div class="snippet__section">{{ v.channel }}{% if v.published_at %} · {{ v.published_at|date('d.m.Y') }}{% endif %}</div>
+                            {% if v.snippet %}<p class="snippet__text">{{ v.snippet }}</p>{% endif %}
+                        </div>
                     </li>
                 {% endfor %}
             </ul>

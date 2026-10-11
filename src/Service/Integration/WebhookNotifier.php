@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Service\Integration;
 
+use App\Service\PortalUrl;
 use App\Entity\DocumentDeletion;
 use App\Entity\DocumentEvent;
 use App\Service\Http\HttpTransportInterface;
@@ -15,7 +16,6 @@ use Psr\Log\LoggerInterface;
 use Symfony\Component\Console\ConsoleEvents;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 use Symfony\Component\HttpKernel\KernelEvents;
-use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
 
 /**
  * Webhook об изменениях документов для внешних систем (индексатор RAG): собирает события за время
@@ -47,9 +47,9 @@ final class WebhookNotifier implements EventSubscriberInterface
     public function __construct(
         private readonly HttpTransportInterface $http,
         private readonly PortalSettings $settings,
-        private readonly UrlGeneratorInterface $urls,
         private readonly LoggerInterface $auditLogger,
         private readonly string $appName,
+        private readonly PortalUrl $portalUrl,
     ) {
     }
 
@@ -112,7 +112,7 @@ final class WebhookNotifier implements EventSubscriberInterface
         $this->send(self::EVENT_CHANGED, [
             'changes' => $changes,
             'deleted' => $deleted,
-            'documents' => array_map(fn (int $id): array => ['id' => $id, 'url' => $this->urls->generate('api_document', ['id' => $id], UrlGeneratorInterface::ABSOLUTE_URL)], $documents),
+            'documents' => array_map(fn (int $id): array => ['id' => $id, 'url' => $this->portalUrl->absolute('api_document', ['id' => $id])], $documents),
             'truncated' => $truncated,
         ]);
     }
@@ -145,7 +145,7 @@ final class WebhookNotifier implements EventSubscriberInterface
         }
         $payload = array_merge([
             'event' => $event,
-            'portal' => ['name' => $this->appName, 'url' => $this->urls->generate('app_home', [], UrlGeneratorInterface::ABSOLUTE_URL), 'api' => $this->urls->generate('api_index', [], UrlGeneratorInterface::ABSOLUTE_URL)],
+            'portal' => ['name' => $this->appName, 'url' => $this->portalUrl->absolute('app_home', []), 'api' => $this->portalUrl->absolute('api_index', [])],
             'sent_at' => (new \DateTimeImmutable())->format(\DATE_ATOM),
         ], $data);
         $body = json_encode($payload, \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES);

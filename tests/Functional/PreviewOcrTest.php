@@ -7,12 +7,15 @@ namespace App\Tests\Functional;
 use App\Entity\Document;
 use App\Repository\DocumentTextRepository;
 use App\Service\DocumentManager;
+use App\Service\FileStorage;
 use App\Service\PortalSettings;
 use App\Service\Preview\DocumentPreviewer;
 use App\Service\Process\Shell;
 use App\Service\Text\OcrReader;
 use App\Service\Text\TextExtractor;
+use App\Service\Text\TextIndexer;
 use App\Tests\PortalTestCase;
+use Psr\Log\NullLogger;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
 
 /**
@@ -123,6 +126,47 @@ final class PreviewOcrTest extends PortalTestCase
         self::assertSame(0, $previewer->usage()['files']);
     }
 
+    public function testFailedConversionIsRememberedAndTempFoldersAreCleaned(): void
+    {
+        // Вместо LibreOffice — сценарий, который всегда завершается ошибкой и считает свои запуски.
+        $bin = sys_get_temp_dir().'/docportal-fake-soffice-'.bin2hex(random_bytes(3));
+        $counter = $bin.'.runs';
+        file_put_contents($bin, "#!/bin/sh\necho run >> '".$counter."'\necho 'Error: source file could not be loaded' >&2\nexit 1\n");
+        chmod($bin, 0755);
+        $dir = sys_get_temp_dir().'/docportal-preview-'.bin2hex(random_bytes(3));
+        $previewer = new DocumentPreviewer(static::getContainer()->get(FileStorage::class), new NullLogger(), $dir, $bin, 10);
+
+        $document = (new Document($this->section('ИТ')))->setTitle('Повреждённый файл')->setCode('ПОВ-001')->setType(Document::TYPE_FILE)->setPublic(true);
+        static::getContainer()->get(DocumentManager::class)->create($document, $this->upload('broken.docx', 'не docx'), null, null, $this->user('petrova'), true);
+        $version = $document->getCurrentVersion();
+        self::assertNotNull($version);
+
+        self::assertFalse($previewer->hasFailed($version));
+        self::assertNull($previewer->pdf($version));
+        self::assertTrue($previewer->hasFailed($version), 'неудача запоминается');
+        self::assertNull($previewer->pdf($version));
+        self::assertCount(1, (array) file($counter), 'повторный просмотр не запускает конвертацию снова');
+        $docDir = $dir.'/'.$document->getId();
+        self::assertSame([], glob($docDir.'/tmp-*'), 'временный каталог конвертации удалён');
+
+        // Каталог, оставшийся от прерванного процесса, удаляется при следующей конвертации.
+        $previewer->clear();
+        self::assertFalse($previewer->hasFailed($version), 'очистка кэша снимает отметку о неудаче');
+        mkdir($docDir.'/tmp-stale/profile', 0700, true);
+        touch($docDir.'/tmp-stale', time() - 7200);
+        mkdir($docDir.'/tmp-fresh', 0700, true);
+        self::assertNull($previewer->pdf($version));
+        self::assertCount(2, (array) file($counter));
+        self::assertDirectoryDoesNotExist($docDir.'/tmp-stale');
+        self::assertDirectoryExists($docDir.'/tmp-fresh', 'каталог идущей сейчас конвертации не трогается');
+
+        $previewer->clear();
+        self::assertDirectoryDoesNotExist($docDir, 'очистка убирает и временные каталоги');
+        @unlink($bin);
+        @unlink($counter);
+        @rmdir($dir);
+    }
+
     public function testPreviewRefusesUnsupportedAndProtectsInternal(): void
     {
         $manager = static::getContainer()->get(DocumentManager::class);
@@ -145,6 +189,41 @@ final class PreviewOcrTest extends PortalTestCase
         $manager->create($internal, $this->upload('otchet.txt', 'секрет'), null, null, $this->user('ivanov'), true);
         $this->client->request('GET', '/documents/'.$internal->getId().'/preview');
         self::assertResponseRedirects('/login');
+    }
+
+    public function testInlineFilesCannotRunScripts(): void
+    {
+        $manager = static::getContainer()->get(DocumentManager::class);
+        // HTML под видом .txt: по содержимому это text/html, но в браузере файл открывается только как текст.
+        $html = (new Document($this->section('ИТ')))->setTitle('Подложный текст')->setCode('XSS-001')->setType(Document::TYPE_FILE)->setPublic(true);
+        $manager->create($html, $this->upload('note.txt', '<html><body><script>alert(document.cookie)</script></body></html>'), null, null, $this->user('petrova'), true);
+        $this->client->request('GET', '/documents/'.$html->getId().'/download?inline=1');
+        self::assertResponseIsSuccessful();
+        self::assertStringStartsWith('text/plain', (string) $this->client->getResponse()->headers->get('Content-Type'));
+        self::assertStringContainsString('sandbox', (string) $this->client->getResponse()->headers->get('Content-Security-Policy'));
+        self::assertSame('nosniff', $this->client->getResponse()->headers->get('X-Content-Type-Options'));
+
+        // SVG со скриптом: показывается картинкой, но при прямом открытии скрипты запрещены политикой.
+        $svg = (new Document($this->section('ИТ')))->setTitle('Схема')->setCode('XSS-002')->setType(Document::TYPE_FILE)->setPublic(true);
+        $manager->create($svg, $this->upload('scheme.svg', '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script><rect width="10" height="10"/></svg>'), null, null, $this->user('petrova'), true);
+        $this->client->request('GET', '/documents/'.$svg->getId().'/download?inline=1');
+        self::assertResponseIsSuccessful();
+        self::assertSame('image/svg+xml', $this->client->getResponse()->headers->get('Content-Type'));
+        $csp = (string) $this->client->getResponse()->headers->get('Content-Security-Policy');
+        self::assertStringContainsString("default-src 'none'", $csp);
+        self::assertStringContainsString('sandbox', $csp);
+
+        // Файлы вне белого списка (например, .xml) в браузере не открываются — только скачиваются.
+        $xml = (new Document($this->section('ИТ')))->setTitle('Выгрузка')->setCode('XSS-003')->setType(Document::TYPE_FILE)->setPublic(true);
+        $manager->create($xml, $this->upload('data.xml', '<?xml version="1.0"?><x:script xmlns:x="http://www.w3.org/1999/xhtml">alert(1)</x:script>'), null, null, $this->user('petrova'), true);
+        $this->client->request('GET', '/documents/'.$xml->getId().'/download?inline=1');
+        self::assertResponseIsSuccessful();
+        self::assertStringStartsWith('attachment', (string) $this->client->getResponse()->headers->get('Content-Disposition'));
+
+        // На странице документа текстовый предпросмотр — в iframe-песочнице.
+        $crawler = $this->client->request('GET', '/documents/'.$html->getId());
+        self::assertResponseIsSuccessful();
+        self::assertSame(1, $crawler->filter('iframe.preview-frame__iframe[sandbox]')->count());
     }
 
     public function testOcrRecognizesScans(): void
@@ -170,12 +249,43 @@ final class PreviewOcrTest extends PortalTestCase
         self::assertContains('png', $extractor->supportedExtensions());
         self::assertStringContainsStringIgnoringCase('DOCUMENT', $ocr->readImage($image));
 
-        // Скан (PDF без текстового слоя) распознаётся при индексации и находится поиском.
+        // Загрузка через сайт: распознавание в веб-запросе не выполняется (оно может идти минутами) —
+        // текст ждёт фонового задания, API отвечает статусом pending.
+        $extractor->allowOcr(false);
         $document = (new Document($this->section('Общие документы')))->setTitle('Скан приказа')->setCode('СКАН-001')->setType(Document::TYPE_FILE)->setPublic(true);
         static::getContainer()->get(DocumentManager::class)->create($document, new UploadedFile($image, 'scan.png', null, null, true), null, null, $this->user('ivanov'), true);
-        $text = static::getContainer()->get(DocumentTextRepository::class)->findForDocument($document);
+        $texts = static::getContainer()->get(DocumentTextRepository::class);
+        $text = $texts->findForDocument($document);
         self::assertNotNull($text);
+        self::assertSame(TextExtractor::STATUS_PENDING, $text->getStatus());
+        self::assertContains((int) $document->getId(), $texts->findOutdatedDocumentIds(1000), 'документ в очереди фоновой индексации');
+        $id = (int) $document->getId();
+        $this->em()->getConnection()->executeStatement('UPDATE document SET updated_at = ? WHERE id = ?', [(new \DateTimeImmutable('-1 hour'))->format('Y-m-d H:i:s'), $id]);
+        $this->em()->clear();
+
+        // Фоновое задание (cron) распознаёт скан; документ снова попадает в ленту изменений API.
+        $extractor->allowOcr(true);
+        $stats = static::getContainer()->get(TextIndexer::class)->reindex();
+        self::assertGreaterThanOrEqual(1, $stats['indexed']);
+        $this->em()->clear();
+        $text = $texts->findForDocument($this->document('СКАН-001'));
+        self::assertNotNull($text);
+        self::assertSame(TextExtractor::STATUS_OK, $text->getStatus());
         self::assertStringContainsStringIgnoringCase('DOCUMENT', $text->getContent(), 'распознанный текст попадает в индекс');
+        self::assertGreaterThan(new \DateTimeImmutable('-10 minutes'), $this->document('СКАН-001')->getUpdatedAt(), 'распознанный текст — изменение для внешних систем');
+
+        // Веб-процесс со своим (пустым) файловым кэшем — другой контейнер Docker или кэш, очищенный
+        // обновлением, — отдаёт распознанный текст из индекса, а не «ждёт распознавания» вечно.
+        $extractor->allowOcr(false);
+        foreach (glob(static::getContainer()->getParameter('kernel.cache_dir').'/doc-text/*') ?: [] as $cached) {
+            @unlink($cached);
+        }
+        $version = $this->document('СКАН-001')->getCurrentVersion();
+        self::assertNotNull($version);
+        $result = $extractor->extract($version);
+        self::assertSame(TextExtractor::STATUS_OK, $result['status']);
+        self::assertStringContainsStringIgnoringCase('DOCUMENT', (string) $result['text']);
+        $extractor->allowOcr(null);
 
         $crawler = $this->client->request('GET', '/search?q=DOCUMENT+CONTROL');
         self::assertResponseIsSuccessful();

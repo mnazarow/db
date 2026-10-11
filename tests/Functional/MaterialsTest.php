@@ -421,7 +421,8 @@ final class MaterialsTest extends PortalTestCase
         static::getContainer()->get(MaterialExporter::class)->build([$pumps, $tanks], $path);
         $sheets = (new XlsxReader())->read($path);
         @unlink($path);
-        self::assertSame(['Сводная по категориям', 'Насосные станции', 'Предохранительные клапаны'], array_column($sheets, 'name'));
+        self::assertSame(['Сводная по категориям', 'Насосные станции', 'Предохранительные клапаны', 'Служебный — не изменять'], array_column($sheets, 'name'));
+        self::assertSame([false, false, false, true], array_column($sheets, 'hidden'), 'служебный лист с id разделов скрыт');
 
         $importer = static::getContainer()->get(MaterialImporter::class);
         $plan = $importer->plan($sheets);
@@ -555,7 +556,7 @@ final class MaterialsTest extends PortalTestCase
         $crawler = $this->client->request('GET', '/admin/materials');
         self::assertStringContainsString('Общие документы', $crawler->filter('table.ms-pivot')->first()->text());
         $crawler = $this->client->request('GET', $url);
-        $this->client->submit($crawler->filter('form.mt-disable')->form());
+        $this->client->submit($crawler->filter('.mt-disable form')->first()->form());
         $this->em()->clear();
         self::assertFalse($this->section('Общие документы')->isMaterialsEnabled());
     }

@@ -17,7 +17,7 @@
                     {% if comment.deleted %}
                         <p class="comments__body comments__body--deleted">Сообщение удалено{% if comment.deletedByName %} ({{ comment.deletedByName }}){% endif %}.</p>
                     {% else %}
-                        <p class="comments__body">{{ comment.body|nl2br }}</p>
+                        <p class="comments__body">{{ comment.body }}</p>
                         {% if can_comment %}
                             <div class="comments__actions">
                                 {% if not comment.reply %}

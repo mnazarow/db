@@ -7,6 +7,7 @@
 <div class="grid grid--two">
     <div class="card card--form">
         {{ form_start(form, {attr: {novalidate: 'novalidate', class: 'form'}}) }}
+            {% include '_form_errors.html.twig' %}
             {{ form_row(form.name) }}
             {{ form_row(form.parent) }}
             {{ form_row(form.description) }}

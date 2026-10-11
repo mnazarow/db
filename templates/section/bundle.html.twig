@@ -1,0 +1,99 @@
+{% extends 'base.html.twig' %}
+{% import '_macros.html.twig' as m %}
+
+{% block title %}PDF-сборник — {{ section.name }}{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        {{ m.breadcrumbs(section, 'PDF-сборник') }}
+        <div class="hero__row">
+            <h1 class="h-display">PDF-сборник раздела</h1>
+            <div class="hero__actions">
+                <a class="btn btn--ghost" href="{{ path('app_section_show', {id: section.id}) }}">← К разделу</a>
+            </div>
+        </div>
+        <p class="hero__meta">Действующие редакции документов раздела «{{ section.name }}» и его подразделов одним файлом: обложка с содержанием, затем документы по порядку.</p>
+    </div>
+</section>
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+    {% if not available %}
+        <div class="alert alert--danger" role="alert">На сервере портала не установлен пакет <b>poppler-utils</b> (программы pdfunite и pdfinfo) — без него сборник не собрать. Администратору: <code>apt install poppler-utils</code> (или <code>dnf install poppler-utils</code>).</div>
+    {% endif %}
+    {% for error in errors %}
+        <div class="alert alert--danger" role="alert">{{ error }}</div>
+    {% endfor %}
+    {% if office_count > 0 and not office_available %}
+        <div class="alert alert--warning">На сервере не установлен LibreOffice: офисные файлы ({{ office_count|plural(['документ', 'документа', 'документов']) }}) войдут в сборник только страницей с реквизитами и ссылкой на портал.</div>
+    {% endif %}
+
+    {% if recent is not empty %}
+        <div class="card table-card">
+            <div class="card__head card__head--padded"><h2 class="h-section">Ваши сборники</h2><span class="hints">хранятся сутки</span></div>
+            <div class="table-scroll"><table class="admin-table">
+                <thead><tr><th>Запущен</th><th>Документов</th><th>Состояние</th><th></th></tr></thead>
+                <tbody>
+                {% for job in recent %}
+                    <tr>
+                        <td class="col-nowrap">{{ job.createdAt|date('d.m.Y H:i') }}</td>
+                        <td>{{ job.total }}</td>
+                        <td>
+                            {% if job.error %}<span class="badge badge--overdue"><span class="badge__dot"></span>Ошибка</span>
+                            {% elseif job.ready %}<span class="badge badge--done"><span class="badge__dot"></span>Готов</span> <span class="hints">{{ job.pages|plural(['страница', 'страницы', 'страниц']) }}</span>
+                            {% else %}<span class="badge badge--progress"><span class="badge__dot"></span>Собирается · {{ job.progressPercent }}%</span>{% endif %}
+                        </td>
+                        <td class="col-nowrap">
+                            <a href="{{ path('app_section_bundle_job', {id: section.id, job: job.id}) }}">Открыть</a>
+                            {% if job.ready %} · <a href="{{ path('app_section_bundle_download', {id: section.id, job: job.id}) }}">Скачать</a>{% endif %}
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table></div>
+        </div>
+    {% endif %}
+
+    <div class="card">
+        {% if groups is empty %}
+            <p class="text-muted">В разделе и его подразделах нет опубликованных документов — собирать нечего.</p>
+        {% else %}
+        <form method="post" class="form" data-bundle-form>
+            <input type="hidden" name="_token" value="{{ csrf_token('bundle_' ~ section.id) }}">
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="title_pages" value="1" {{ title_pages ? 'checked' }}><span>Титульная страница перед каждым документом <span class="hints">— название, обозначение, редакция, срок действия, ответственный и ссылка на портал</span></span></label>
+            </div>
+            <div class="form-row">
+                <div class="toolbar__row toolbar__row--compact">
+                    <span class="form-label">Документы</span>
+                    <button type="button" class="btn btn--ghost btn--small" data-bundle-all>Выбрать все</button>
+                    <button type="button" class="btn btn--ghost btn--small" data-bundle-none>Снять выбор</button>
+                    <span class="hints" data-bundle-counter>отмечено: {{ selected is null ? total : selected|length }} из {{ total }}</span>
+                </div>
+                <div class="ack-people bundle-docs">
+                    {% for group in groups %}
+                        <div class="ack-people__group" style="--depth: {{ group.depth }}">
+                            <label class="form-check form-check--dept"><input type="checkbox" data-bundle-group {{ selected is null ? 'checked' }}><span>{{ group.section.name }}</span></label>
+                            {% for document in group.documents %}
+                                {% set version = document.currentVersion %}
+                                {% set kind = kinds[document.id] %}
+                                <label class="form-check ack-people__person">
+                                    <input type="checkbox" name="documents[]" value="{{ document.id }}" {{ selected is null or document.id in selected ? 'checked' }}>
+                                    <span>{{ document.title }}{% if document.code %} <span class="text-muted">· {{ document.code }}</span>{% endif %}
+                                        <span class="hints">версия {{ version.number }} · {{ version.isFile ? version.extension|upper ~ ', ' ~ version.size|filesize : 'страница' }}{% if kind != 'pdf' and kind != 'page' %} · <span class="{{ kind == 'other' or (kind == 'office' and not office_available) ? 'text-warning' }}">{{ kind == 'office' and not office_available ? 'только реквизиты' : kind_labels[kind] }}</span>{% endif %}</span>
+                                    </span>
+                                </label>
+                            {% endfor %}
+                        </div>
+                    {% endfor %}
+                </div>
+                <div class="form-help">В сборник входят опубликованные документы, видимые вам, — их действующие редакции. Черновики, документы на согласовании и архив не входят. Не больше {{ max_documents }} документов в одном сборнике.</div>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn--pill" {{ not available ? 'disabled' }}>Собрать PDF</button>
+            </div>
+        </form>
+        {% endif %}
+    </div>
+</section>
+{% endblock %}

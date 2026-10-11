@@ -11,10 +11,13 @@ use App\Repository\DocumentKindRepository;
 use App\Service\DocumentKindService;
 use App\Service\Material\MaterialExporter;
 use App\Service\Material\MaterialImporter;
+use App\Service\Material\MaterialReminder;
 use App\Service\Material\MaterialService;
 use App\Service\Material\MaterialState;
 use App\Service\Material\MaterialSummary;
+use App\Service\PortalSettings;
 use App\Service\Xlsx\XlsxReader;
+use Psr\Log\LoggerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
@@ -42,8 +45,11 @@ final class MaterialAdminController extends AbstractController
         private readonly XlsxReader $reader,
         private readonly MaterialImporter $importer,
         private readonly MaterialExporter $exporter,
+        private readonly LoggerInterface $auditLogger,
         #[Autowire('%kernel.cache_dir%/materials-import')]
         private readonly string $importDir,
+        private readonly MaterialReminder $reminder,
+        private readonly PortalSettings $settings,
     ) {
     }
 
@@ -64,7 +70,46 @@ final class MaterialAdminController extends AbstractController
             'states' => MaterialState::SUMMARY,
             'state_css' => MaterialState::CSS,
             'candidates' => $this->summary->candidates(),
+            'remind' => $this->settings->materialsRemind(),
+            'remind_states' => MaterialReminder::STATES,
         ]);
+    }
+
+    /** Еженедельная сводка по таблицам материалов: включение и состояния. */
+    #[Route('/remind', name: 'admin_materials_remind', methods: ['POST'])]
+    public function remind(Request $request, #[CurrentUser] User $user): Response
+    {
+        $this->checkToken($request);
+        $states = array_values(array_intersect(MaterialReminder::STATES, array_map('strval', $request->request->all('states'))));
+        $enabled = $request->request->getBoolean('enabled');
+        if ($enabled && [] === $states) {
+            $this->addFlash('error', 'Выберите хотя бы одно состояние, по которому присылать сводку.');
+
+            return $this->redirectToRoute('admin_materials', ['_fragment' => 'remind']);
+        }
+        $this->settings->setMaterialsRemind($enabled, [] !== $states ? $states : PortalSettings::MATERIALS_REMIND_DEFAULT_STATES, $user);
+        $this->addFlash('success', $enabled
+            ? 'Сводка включена: по понедельникам модераторы разделов получат список материалов в состояниях «'.implode('», «', $states).'».'
+            : 'Еженедельная сводка по таблицам материалов выключена.');
+
+        return $this->redirectToRoute('admin_materials', ['_fragment' => 'remind']);
+    }
+
+    /** Отправить сводку сейчас (или показать, кому она уйдёт). */
+    #[Route('/remind/send', name: 'admin_materials_remind_send', methods: ['POST'])]
+    public function remindSend(Request $request): Response
+    {
+        $this->checkToken($request);
+        $dryRun = 'preview' === $request->request->get('mode');
+        $result = $this->reminder->run($dryRun, true);
+        if ($dryRun && [] !== $result['plan']) {
+            $lines = array_map(static fn (array $p): string => \sprintf('%s — %s (%d)', $p['user']->getDisplayName(), implode(', ', $p['sections']), $p['rows']), $result['plan']);
+            $this->addFlash('info', $result['message'].' Получатели: '.implode('; ', \array_slice($lines, 0, 20)).(\count($lines) > 20 ? '; …' : '').'.');
+        } else {
+            $this->addFlash(0 === $result['rows'] ? 'info' : 'success', $result['message']);
+        }
+
+        return $this->redirectToRoute('admin_materials', ['_fragment' => 'remind']);
     }
 
     /** Включить таблицу материалов для раздела верхнего уровня прямо из сводной. */
@@ -84,9 +129,9 @@ final class MaterialAdminController extends AbstractController
 
     /** Выгрузка всех таблиц в Excel: сводная и лист на каждый раздел. */
     #[Route('/export.xlsx', name: 'admin_materials_export', methods: ['GET'])]
-    public function export(): Response
+    public function export(#[CurrentUser] User $user): Response
     {
-        return $this->exporter->response($this->summary->categories(), 'Продуктовые материалы');
+        return $this->exporter->response($this->summary->categories(), 'Продуктовые материалы', true, $user);
     }
 
     // ---- Типы файлов ----------------------------------------------------------------------------------
@@ -186,7 +231,7 @@ final class MaterialAdminController extends AbstractController
         $deleteMissing = $request->request->getBoolean('delete_missing');
         try {
             $plan = $this->importer->plan($this->reader->read($this->path($token)), $deleteMissing);
-        } catch (\RuntimeException $e) {
+        } catch (\RuntimeException|\DomainException $e) {
             @unlink($this->path($token));
             $this->addFlash('error', 'Не удалось прочитать файл: '.$e->getMessage());
 
@@ -214,6 +259,12 @@ final class MaterialAdminController extends AbstractController
         }
         try {
             $report = $this->importer->apply($this->reader->read($path), $request->request->getBoolean('delete_missing'), $user);
+        } catch (\Throwable $e) {
+            // Импорт идёт одной транзакцией: при ошибке ничего не сохранено.
+            $this->auditLogger->error('Импорт таблиц материалов не выполнен', ['error' => $e->getMessage(), 'user' => $user->getUsername()]);
+            $this->addFlash('error', 'Импорт не выполнен, изменения отменены: '.$e->getMessage());
+
+            return $this->redirectToRoute('admin_materials_import');
         } finally {
             @unlink($path);
         }

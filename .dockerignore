@@ -12,3 +12,8 @@ docs
 tests
 node_modules
 *.log
+.github
+.gitlab-ci.yml
+maintenance
+video
+**/node_modules

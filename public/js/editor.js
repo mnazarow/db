@@ -49,9 +49,21 @@
     Array.prototype.forEach.call(choices, function (r) { r.addEventListener('change', applyType); });
     applyType();
 
+    // Quill 2 в getSemanticHTML() заменяет каждый пробел на &nbsp; — такой текст не переносится по строкам.
+    // Возвращаем обычные пробелы; из серии пробелов неразрывными остаются все, кроме последнего.
+    // Фрагменты текста, где есть обычные пробелы или нет ничего, кроме пробелов, не трогаем (как и на сервере).
+    function breakableSpaces(html) {
+        return ('>' + html + '<').replace(/>([^<]*)</g, function (match, text) {
+            if (text.indexOf('&nbsp;') === -1 || text.indexOf(' ') !== -1 || text.replace(/&nbsp;/g, '').trim() === '') { return match; }
+            return '>' + text.replace(/(&nbsp;)+/g, function (run) {
+                return new Array(run.length / 6).join('&nbsp;') + ' ';
+            }) + '<';
+        }).slice(1, -1);
+    }
+
     form.addEventListener('submit', function () {
         if (quill && hidden && currentType() === 'page') {
-            var html = quill.getSemanticHTML ? quill.getSemanticHTML() : quill.root.innerHTML;
+            var html = quill.getSemanticHTML ? breakableSpaces(quill.getSemanticHTML()) : quill.root.innerHTML;
             hidden.value = (quill.getText() || '').trim() === '' && !/<img/i.test(html) ? '' : html;
         }
         var btn = form.querySelector('[data-submit]');

@@ -51,6 +51,22 @@ final class PortalSettings
     public const LLM_TIMEOUT = 'llm.timeout';
     public const LLM_AUTO_DESCRIBE = 'llm.auto_describe';
     public const LLM_TEMPERATURE = 'llm.temperature';
+    /** Ответы на вопросы сотрудников на странице поиска (по документам и видео, со ссылками на источники). */
+    public const LLM_ANSWERS = 'llm.answers';
+
+    // Поиск по смыслу (эмбеддинги, OpenAI-совместимый POST {адрес}/embeddings): ответы ИИ и блок «Похоже по смыслу».
+    public const EMBED_ENABLED = 'llm.embed.enabled';
+    public const EMBED_MODEL = 'llm.embed.model';
+    public const EMBED_BASE_URL = 'llm.embed.base_url';
+    public const EMBED_API_KEY = 'llm.embed.api_key';
+    public const EMBED_DIMENSIONS = 'llm.embed.dimensions';
+    /** Минимальное сходство (косинус) документа с вопросом: ниже — документ не считается найденным по смыслу. */
+    public const EMBED_MIN_SCORE = 'llm.embed.min_score';
+    public const EMBED_DEFAULT_MIN_SCORE = 0.3;
+    public const EMBED_DEFAULT_MODEL = 'text-embedding-3-small';
+    /** Сколько дней хранить вопросы к ИИ и оценки ответов (0 — не сохранять). */
+    public const AI_LOG_DAYS = 'ai.log_days';
+    public const AI_LOG_DEFAULT_DAYS = 180;
 
     public const LLM_DEFAULT_BASE_URL = 'https://api.openai.com/v1';
     public const LLM_DEFAULT_MODEL = 'gpt-4o-mini';
@@ -81,12 +97,30 @@ final class PortalSettings
     public const SSO_DEPARTMENT_CLAIM = 'sso.department_claim';
     public const SSO_ADMIN_CLAIM = 'sso.admin_claim';
     public const SSO_ADMIN_VALUE = 'sso.admin_value';
+    public const SSO_MARKETER_VALUE = 'sso.marketer_value';
+    public const SSO_ASSISTANT_VALUE = 'sso.assistant_value';
 
     public const SSO_DEFAULT_SCOPES = 'openid profile email';
     public const SSO_DEFAULT_BUTTON = 'Войти через SSO';
 
     // Безопасность: обязательный второй фактор для администраторов.
     public const SECURITY_REQUIRE_2FA_ADMINS = 'security.require_2fa_admins';
+
+    // Вход через Kerberos (Windows, без пароля): учётную запись проверяет nginx (SPNEGO) или прокси перед порталом.
+    public const KERBEROS_ENABLED = 'kerberos.enabled';
+    public const KERBEROS_SOURCE = 'kerberos.source';
+    public const KERBEROS_HEADER = 'kerberos.header';
+    public const KERBEROS_PROXIES = 'kerberos.trusted_proxies';
+    public const KERBEROS_REALMS = 'kerberos.realms';
+    public const KERBEROS_AUTO = 'kerberos.auto';
+    public const KERBEROS_CREATE = 'kerberos.create_users';
+    public const KERBEROS_ALLOW_LOCAL = 'kerberos.allow_local';
+    public const KERBEROS_DEFAULT_HEADER = 'X-Remote-User';
+
+    // Водяной знак на PDF при просмотре и скачивании (режим — PdfWatermarker::MODE_*).
+    public const WATERMARK_MODE = 'watermark.mode';
+    public const WATERMARK_TEXT = 'watermark.text';
+    public const WATERMARK_SKIP_EDITORS = 'watermark.skip_editors';
 
     // Согласование документов перед публикацией.
     public const APPROVAL_REQUIRED = 'approval.required';
@@ -107,11 +141,35 @@ final class PortalSettings
 
     public const TELEGRAM_DEFAULT_API_URL = 'https://api.telegram.org';
 
+    // Мониторинг (1.7.0): токен для /health/details и /metrics.
+    public const MONITORING_TOKEN = 'monitoring.token';
+
+    // Редактирование в ONLYOFFICE / Р7-Офис (1.7.0).
+    public const ONLYOFFICE_ENABLED = 'onlyoffice.enabled';
+    public const ONLYOFFICE_URL = 'onlyoffice.url';
+    public const ONLYOFFICE_INTERNAL_URL = 'onlyoffice.internal_url';
+    public const ONLYOFFICE_SECRET = 'onlyoffice.secret';
+    public const ONLYOFFICE_PORTAL_URL = 'onlyoffice.portal_url';
+    public const ONLYOFFICE_HEADER = 'onlyoffice.header';
+    public const ONLYOFFICE_VIEW = 'onlyoffice.view';
+    public const ONLYOFFICE_DEFAULT_HEADER = 'Authorization';
+    /** Ключ подписи ссылок для сервера документов (свой, не секрет приложения); меняется при выключении. */
+    public const ONLYOFFICE_LINK_KEY = 'onlyoffice.link_key';
+
+    // Напоминания по таблицам материалов (1.7.0).
+    public const MATERIALS_REMIND_ENABLED = 'materials.remind.enabled';
+    public const MATERIALS_REMIND_STATES = 'materials.remind.states';
+    public const MATERIALS_REMIND_LAST_RUN = 'materials.remind.last_run';
+    public const MATERIALS_REMIND_DEFAULT_STATES = ['Не соответствует', 'Отсутствует'];
+
     public const OCR_DEFAULT_MAX_PAGES = 20;
     public const OCR_DEFAULT_DPI = 200;
 
     /** Настройки, значения которых не должны попадать в журнал. */
-    private const SECRET_NAMES = [self::WEBHOOK_SECRET, self::LLM_API_KEY, self::SSO_CLIENT_SECRET, self::TELEGRAM_TOKEN];
+    private const SECRET_NAMES = [self::WEBHOOK_SECRET, self::LLM_API_KEY, self::EMBED_API_KEY, self::SSO_CLIENT_SECRET, self::TELEGRAM_TOKEN, self::MONITORING_TOKEN, self::ONLYOFFICE_SECRET];
+
+    /** Служебные значения, которые портал меняет сам (в журнал аудита не пишутся). */
+    private const INTERNAL_NAMES = [self::TELEGRAM_OFFSET, self::MATERIALS_REMIND_LAST_RUN, self::ONLYOFFICE_LINK_KEY];
 
     private const CACHE_KEY = 'portal_settings';
 
@@ -157,10 +215,27 @@ final class PortalSettings
         $this->em->flush();
         $this->cache->delete(self::CACHE_KEY);
         $this->values = null;
-        $this->auditLogger->info('Изменена настройка портала', ['name' => $name, 'value' => \in_array($name, self::SECRET_NAMES, true) ? self::mask((string) $value) : $value, 'by' => $by?->getUsername()]);
+        if (!\in_array($name, self::INTERNAL_NAMES, true)) {
+            $this->auditLogger->info('Изменена настройка портала', ['name' => $name, 'value' => \in_array($name, self::SECRET_NAMES, true) ? self::mask((string) $value) : $value, 'by' => $by?->getUsername()]);
+        }
     }
 
-    /** Сохраняет несколько настроек, сбрасывая кэш один раз. */
+    /**
+     * Значение прямо из базы, минуя кэш настроек: для служебных значений, которые меняют параллельные
+     * процессы (позиция разбора сообщений бота Telegram).
+     */
+    public function fresh(string $name, mixed $default = null): mixed
+    {
+        $setting = $this->settings->find($name);
+        if (null === $setting) {
+            return $default;
+        }
+        $this->em->refresh($setting);
+
+        return $setting->getValue();
+    }
+
+    /** Сохраняет несколько настроек. */
     public function setMany(array $values, ?User $by = null): void
     {
         foreach ($values as $name => $value) {
@@ -218,7 +293,7 @@ final class PortalSettings
     // ---- LLM ---------------------------------------------------------------------------------------------
 
     /**
-     * @return array{enabled: bool, base_url: string, api_key: string, model: string, prompt: string, max_input_chars: int, timeout: int, auto_describe: bool, temperature: float}
+     * @return array{enabled: bool, base_url: string, api_key: string, model: string, prompt: string, max_input_chars: int, timeout: int, auto_describe: bool, temperature: float, answers: bool}
      */
     public function llm(): array
     {
@@ -235,7 +310,71 @@ final class PortalSettings
             'timeout' => max(5, min(600, (int) $this->get(self::LLM_TIMEOUT, self::LLM_DEFAULT_TIMEOUT))),
             'auto_describe' => (bool) $this->get(self::LLM_AUTO_DESCRIBE, false),
             'temperature' => (float) $this->get(self::LLM_TEMPERATURE, self::LLM_DEFAULT_TEMPERATURE),
+            'answers' => (bool) $this->get(self::LLM_ANSWERS, true),
         ];
+    }
+
+    /**
+     * Поиск по смыслу: адрес и ключ — свои или (пусто) те же, что у языковой модели; dimensions — длина вектора,
+     * если модель умеет её сокращать (0 — как у модели). own_base_url и own_api_key — что задано именно здесь.
+     *
+     * @return array{enabled: bool, model: string, base_url: string, api_key: string, own_base_url: string, own_api_key: string, dimensions: int, min_score: float, timeout: int, log_days: int}
+     */
+    public function embeddings(): array
+    {
+        $llm = $this->llm();
+        $ownUrl = rtrim(trim((string) $this->get(self::EMBED_BASE_URL, '')), '/');
+        $ownKey = (string) $this->get(self::EMBED_API_KEY, '');
+
+        return [
+            'enabled' => (bool) $this->get(self::EMBED_ENABLED, false),
+            'model' => trim((string) $this->get(self::EMBED_MODEL, self::EMBED_DEFAULT_MODEL)) ?: self::EMBED_DEFAULT_MODEL,
+            'base_url' => '' !== $ownUrl ? $ownUrl : $llm['base_url'],
+            'api_key' => '' !== $ownKey ? $ownKey : ('' !== $ownUrl ? '' : $llm['api_key']),
+            'own_base_url' => $ownUrl,
+            'own_api_key' => $ownKey,
+            'dimensions' => max(0, min(4096, (int) $this->get(self::EMBED_DIMENSIONS, 0))),
+            'min_score' => max(0.0, min(1.0, (float) $this->get(self::EMBED_MIN_SCORE, self::EMBED_DEFAULT_MIN_SCORE))),
+            'timeout' => $llm['timeout'],
+            'log_days' => max(0, min(3650, (int) $this->get(self::AI_LOG_DAYS, self::AI_LOG_DEFAULT_DAYS))),
+        ];
+    }
+
+    /** @param array<string, mixed> $values ключи: enabled, model, base_url, api_key (null — не менять), dimensions, min_score, log_days */
+    public function setEmbeddings(array $values, ?User $by = null): void
+    {
+        $baseUrl = rtrim(trim((string) ($values['base_url'] ?? '')), '/');
+        if ('' !== $baseUrl && (false === filter_var($baseUrl, \FILTER_VALIDATE_URL) || !preg_match('#^https?://#i', $baseUrl))) {
+            throw new \InvalidArgumentException('Адрес API эмбеддингов должен начинаться с http:// или https:// (или оставьте поле пустым — тогда тот же, что у модели).');
+        }
+        $model = trim((string) ($values['model'] ?? ''));
+        if ('' === $model) {
+            throw new \InvalidArgumentException('Укажите модель эмбеддингов (например, text-embedding-3-small, nomic-embed-text, bge-m3).');
+        }
+        $dimensions = (int) ($values['dimensions'] ?? 0);
+        if ($dimensions < 0 || ($dimensions > 0 && $dimensions < 32) || $dimensions > 4096) {
+            throw new \InvalidArgumentException('Длина вектора — от 32 до 4096 или 0 (как у модели).');
+        }
+        $set = [
+            self::EMBED_ENABLED => (bool) ($values['enabled'] ?? false),
+            self::EMBED_MODEL => mb_substr($model, 0, 128),
+            self::EMBED_BASE_URL => $baseUrl,
+            self::EMBED_DIMENSIONS => $dimensions,
+        ];
+        if (\array_key_exists('min_score', $values)) {
+            $minScore = (float) str_replace(',', '.', (string) $values['min_score']);
+            if ($minScore < 0 || $minScore >= 1) {
+                throw new \InvalidArgumentException('Минимальное сходство — число от 0 до 1 (например, 0,3).');
+            }
+            $set[self::EMBED_MIN_SCORE] = $minScore;
+        }
+        if (\array_key_exists('log_days', $values)) {
+            $set[self::AI_LOG_DAYS] = max(0, min(3650, (int) $values['log_days']));
+        }
+        if (\array_key_exists('api_key', $values) && null !== $values['api_key']) {
+            $set[self::EMBED_API_KEY] = trim((string) $values['api_key']);
+        }
+        $this->setMany($set, $by);
     }
 
     public function isLlmEnabled(): bool
@@ -276,7 +415,7 @@ final class PortalSettings
     /**
      * Настройки входа через внешнего провайдера.
      *
-     * @return array{enabled: bool, issuer: string, client_id: string, client_secret: string, scopes: string, button: string, create_users: bool, username_claim: string, name_claim: string, email_claim: string, department_claim: string, admin_claim: string, admin_value: string}
+     * @return array{enabled: bool, issuer: string, client_id: string, client_secret: string, scopes: string, button: string, create_users: bool, username_claim: string, name_claim: string, email_claim: string, department_claim: string, admin_claim: string, admin_value: string, marketer_value: string, assistant_value: string}
      */
     public function sso(): array
     {
@@ -298,6 +437,8 @@ final class PortalSettings
             'department_claim' => trim((string) $this->get(self::SSO_DEPARTMENT_CLAIM, '')),
             'admin_claim' => trim((string) $this->get(self::SSO_ADMIN_CLAIM, '')),
             'admin_value' => trim((string) $this->get(self::SSO_ADMIN_VALUE, '')),
+            'marketer_value' => trim((string) $this->get(self::SSO_MARKETER_VALUE, '')),
+            'assistant_value' => trim((string) $this->get(self::SSO_ASSISTANT_VALUE, '')),
         ];
     }
 
@@ -324,6 +465,8 @@ final class PortalSettings
             self::SSO_DEPARTMENT_CLAIM => trim((string) ($values['department_claim'] ?? '')),
             self::SSO_ADMIN_CLAIM => trim((string) ($values['admin_claim'] ?? '')),
             self::SSO_ADMIN_VALUE => trim((string) ($values['admin_value'] ?? '')),
+            self::SSO_MARKETER_VALUE => trim((string) ($values['marketer_value'] ?? '')),
+            self::SSO_ASSISTANT_VALUE => trim((string) ($values['assistant_value'] ?? '')),
         ];
         if (null !== ($values['client_secret'] ?? null)) {
             $update[self::SSO_CLIENT_SECRET] = (string) $values['client_secret'];
@@ -340,6 +483,96 @@ final class PortalSettings
     public function setRequireAdminTwoFactor(bool $required, ?User $by = null): void
     {
         $this->set(self::SECURITY_REQUIRE_2FA_ADMINS, $required, $by);
+    }
+
+    /**
+     * Вход через Kerberos: source — откуда портал берёт проверенную учётную запись: remote_user (переменная
+     * REMOTE_USER от nginx с модулем SPNEGO) или header (заголовок от прокси с адресов trusted_proxies);
+     * realms — допустимые области (пусто — любые); auto — пробовать вход сразу при открытии страницы входа;
+     * create_users — заводить доменные учётные записи при первом входе; allow_local — пускать в локальные
+     * учётные записи с тем же логином (по умолчанию нет: доменный «admin» не войдёт в локального «admin»).
+     *
+     * @return array{enabled: bool, source: string, header: string, trusted_proxies: string, realms: string, auto: bool, create_users: bool, allow_local: bool}
+     */
+    public function kerberos(): array
+    {
+        $source = (string) $this->get(self::KERBEROS_SOURCE, 'remote_user');
+        $header = trim((string) $this->get(self::KERBEROS_HEADER, ''));
+
+        return [
+            'enabled' => (bool) $this->get(self::KERBEROS_ENABLED, false),
+            'source' => 'header' === $source ? 'header' : 'remote_user',
+            'header' => '' !== $header ? $header : self::KERBEROS_DEFAULT_HEADER,
+            'trusted_proxies' => trim((string) $this->get(self::KERBEROS_PROXIES, '')),
+            'realms' => trim((string) $this->get(self::KERBEROS_REALMS, '')),
+            'auto' => (bool) $this->get(self::KERBEROS_AUTO, false),
+            'create_users' => (bool) $this->get(self::KERBEROS_CREATE, true),
+            'allow_local' => (bool) $this->get(self::KERBEROS_ALLOW_LOCAL, false),
+        ];
+    }
+
+    /** @param array<string, mixed> $values ключи как в kerberos() */
+    public function setKerberos(array $values, ?User $by = null): void
+    {
+        $header = trim((string) ($values['header'] ?? ''));
+        if ('' !== $header && !preg_match('/^[A-Za-z0-9-]{1,64}$/', $header)) {
+            throw new \InvalidArgumentException('Имя заголовка — латинские буквы, цифры и дефис.');
+        }
+        $proxies = [];
+        foreach (preg_split('/[\s,;]+/', (string) ($values['trusted_proxies'] ?? '')) ?: [] as $proxy) {
+            if ('' === $proxy) {
+                continue;
+            }
+            [$ip, $mask] = array_pad(explode('/', $proxy, 2), 2, null);
+            if (false === filter_var($ip, \FILTER_VALIDATE_IP) || (null !== $mask && (!ctype_digit($mask) || (int) $mask > (str_contains($ip, ':') ? 128 : 32)))) {
+                throw new \InvalidArgumentException(\sprintf('«%s» — не IP-адрес и не подсеть (например, 10.0.0.5 или 10.0.0.0/24).', $proxy));
+            }
+            $proxies[] = $proxy;
+        }
+        $realms = implode(', ', array_filter(array_map(static fn (string $r): string => strtoupper(trim($r)), preg_split('/[\s,;]+/', (string) ($values['realms'] ?? '')) ?: [])));
+        $source = 'header' === ($values['source'] ?? '') ? 'header' : 'remote_user';
+        if ((bool) ($values['enabled'] ?? false) && 'header' === $source && [] === $proxies) {
+            throw new \InvalidArgumentException('Для учётной записи из заголовка укажите адреса доверенных прокси: иначе заголовок мог бы подставить кто угодно.');
+        }
+        $this->setMany([
+            self::KERBEROS_ENABLED => (bool) ($values['enabled'] ?? false),
+            self::KERBEROS_SOURCE => $source,
+            self::KERBEROS_HEADER => '' !== $header ? $header : self::KERBEROS_DEFAULT_HEADER,
+            self::KERBEROS_PROXIES => implode(', ', $proxies),
+            self::KERBEROS_REALMS => $realms,
+            self::KERBEROS_AUTO => (bool) ($values['auto'] ?? false),
+            self::KERBEROS_CREATE => (bool) ($values['create_users'] ?? true),
+            self::KERBEROS_ALLOW_LOCAL => (bool) ($values['allow_local'] ?? false),
+        ], $by);
+    }
+
+    /**
+     * Водяной знак на PDF: режим (off, restricted, internal, all) и дополнительный текст перед ФИО
+     * (например, «Для служебного пользования»).
+     *
+     * Тем, кто может править документ (модераторы раздела, администраторы), знак по умолчанию не ставится:
+     * им нужен чистый файл для новой редакции.
+     *
+     * @return array{mode: string, text: string, skip_editors: bool}
+     */
+    public function watermark(): array
+    {
+        $mode = (string) $this->get(self::WATERMARK_MODE, 'off');
+
+        return [
+            'mode' => \in_array($mode, ['off', 'restricted', 'internal', 'all'], true) ? $mode : 'off',
+            'text' => mb_substr(trim((string) $this->get(self::WATERMARK_TEXT, '')), 0, 60),
+            'skip_editors' => (bool) $this->get(self::WATERMARK_SKIP_EDITORS, true),
+        ];
+    }
+
+    public function setWatermark(string $mode, string $text, bool $skipEditors = true, ?User $by = null): void
+    {
+        $this->setMany([
+            self::WATERMARK_MODE => \in_array($mode, ['off', 'restricted', 'internal', 'all'], true) ? $mode : 'off',
+            self::WATERMARK_TEXT => mb_substr(trim(str_replace(["\r", "\n"], ' ', $text)), 0, 60),
+            self::WATERMARK_SKIP_EDITORS => $skipEditors,
+        ], $by);
     }
 
     /**
@@ -406,6 +639,9 @@ final class PortalSettings
             self::LLM_AUTO_DESCRIBE => (bool) ($values['auto_describe'] ?? false),
             self::LLM_TEMPERATURE => $temperature,
         ];
+        if (\array_key_exists('answers', $values)) {
+            $set[self::LLM_ANSWERS] = (bool) $values['answers'];
+        }
         if (\array_key_exists('api_key', $values) && null !== $values['api_key']) {
             $set[self::LLM_API_KEY] = trim((string) $values['api_key']);
         }
@@ -562,5 +798,135 @@ final class PortalSettings
             $update[self::TELEGRAM_TOKEN] = trim((string) $values['token']);
         }
         $this->setMany($update, $by);
+    }
+
+    // ---- Мониторинг ---------------------------------------------------------------------------------------
+
+    public function monitoringToken(): string
+    {
+        return trim((string) $this->get(self::MONITORING_TOKEN, ''));
+    }
+
+    /** Создаёт новый токен мониторинга (прежний перестаёт действовать) и возвращает его. */
+    public function regenerateMonitoringToken(?User $by = null): string
+    {
+        $token = 'dpm_'.bin2hex(random_bytes(20));
+        $this->set(self::MONITORING_TOKEN, $token, $by);
+
+        return $token;
+    }
+
+    // ---- ONLYOFFICE / Р7-Офис -------------------------------------------------------------------------------
+
+    /**
+     * @return array{enabled: bool, url: string, internal_url: string, secret: string, portal_url: string, header: string, view: bool}
+     */
+    public function onlyoffice(): array
+    {
+        $header = trim((string) $this->get(self::ONLYOFFICE_HEADER, ''));
+
+        return [
+            'enabled' => (bool) $this->get(self::ONLYOFFICE_ENABLED, false),
+            'url' => rtrim(trim((string) $this->get(self::ONLYOFFICE_URL, '')), '/'),
+            'internal_url' => rtrim(trim((string) $this->get(self::ONLYOFFICE_INTERNAL_URL, '')), '/'),
+            'secret' => trim((string) $this->get(self::ONLYOFFICE_SECRET, '')),
+            'portal_url' => rtrim(trim((string) $this->get(self::ONLYOFFICE_PORTAL_URL, '')), '/'),
+            'header' => '' !== $header ? $header : self::ONLYOFFICE_DEFAULT_HEADER,
+            'view' => (bool) $this->get(self::ONLYOFFICE_VIEW, false),
+        ];
+    }
+
+    /** Редактор подключён: включён, указан адрес и секрет JWT (без секрета уведомления не проверить). */
+    public function isOnlyofficeEnabled(): bool
+    {
+        $config = $this->onlyoffice();
+
+        return $config['enabled'] && '' !== $config['url'] && '' !== $config['secret'];
+    }
+
+    /** Ключ подписи ссылок для сервера документов; создаётся при первом обращении. */
+    public function onlyofficeLinkKey(): string
+    {
+        $key = (string) $this->get(self::ONLYOFFICE_LINK_KEY, '');
+        if (64 !== \strlen($key)) {
+            $key = bin2hex(random_bytes(32));
+            $this->set(self::ONLYOFFICE_LINK_KEY, $key);
+        }
+
+        return $key;
+    }
+
+    /**
+     * @param array{enabled?: bool, url?: ?string, internal_url?: ?string, secret?: ?string, portal_url?: ?string, header?: ?string, view?: bool} $values
+     *
+     * @throws \InvalidArgumentException
+     */
+    public function setOnlyoffice(array $values, ?User $by = null): void
+    {
+        $urls = [];
+        foreach (['url' => 'Адрес сервера документов', 'internal_url' => 'Внутренний адрес сервера документов', 'portal_url' => 'Адрес портала для сервера документов'] as $key => $label) {
+            $url = rtrim(trim((string) ($values[$key] ?? '')), '/');
+            if ('' !== $url && (false === filter_var($url, \FILTER_VALIDATE_URL) || !preg_match('#^https?://#i', $url))) {
+                throw new \InvalidArgumentException($label.' должен начинаться с http:// или https://.');
+            }
+            $urls[$key] = $url;
+        }
+        $enabled = (bool) ($values['enabled'] ?? false);
+        if ($enabled && '' === $urls['url']) {
+            throw new \InvalidArgumentException('Укажите адрес сервера документов, например https://office.example.local.');
+        }
+        $header = trim((string) ($values['header'] ?? ''));
+        if ('' !== $header && 1 !== preg_match('/^[A-Za-z0-9-]{1,64}$/', $header)) {
+            throw new \InvalidArgumentException('Имя заголовка с токеном — латинские буквы, цифры и дефис.');
+        }
+        $previous = $this->onlyoffice();
+        $secret = null !== ($values['secret'] ?? null) ? trim((string) $values['secret']) : $previous['secret'];
+        if ($enabled && '' === $secret) {
+            throw new \InvalidArgumentException('Укажите секрет JWT — тот же, что на сервере документов: без него портал не может проверить, что уведомление о сохранении прислал именно сервер документов.');
+        }
+        if ('' !== $secret && mb_strlen($secret) < 8) {
+            throw new \InvalidArgumentException('Секрет JWT слишком короткий (нужно не меньше 8 символов).');
+        }
+        $update = [
+            self::ONLYOFFICE_ENABLED => $enabled,
+            self::ONLYOFFICE_URL => $urls['url'],
+            self::ONLYOFFICE_INTERNAL_URL => $urls['internal_url'],
+            self::ONLYOFFICE_PORTAL_URL => $urls['portal_url'],
+            self::ONLYOFFICE_HEADER => $header,
+            self::ONLYOFFICE_VIEW => (bool) ($values['view'] ?? false),
+        ];
+        // Пустое поле секрета означает «оставить прежний».
+        if (null !== ($values['secret'] ?? null)) {
+            $update[self::ONLYOFFICE_SECRET] = trim((string) $values['secret']);
+        }
+        // Выключение, смена сервера или секрета отзывают выданные ссылки для сервера документов.
+        if (!$enabled || $urls['url'] !== $previous['url'] || $secret !== $previous['secret']) {
+            $update[self::ONLYOFFICE_LINK_KEY] = bin2hex(random_bytes(32));
+        }
+        $this->setMany($update, $by);
+    }
+
+    // ---- Напоминания по таблицам материалов -----------------------------------------------------------------
+
+    /** @return array{enabled: bool, states: list<string>, last_run: ?string} */
+    public function materialsRemind(): array
+    {
+        $states = $this->get(self::MATERIALS_REMIND_STATES, self::MATERIALS_REMIND_DEFAULT_STATES);
+        $states = \is_array($states) ? array_values(array_filter(array_map('strval', $states), static fn (string $s): bool => '' !== $s)) : self::MATERIALS_REMIND_DEFAULT_STATES;
+
+        return [
+            'enabled' => (bool) $this->get(self::MATERIALS_REMIND_ENABLED, false),
+            'states' => [] !== $states ? $states : self::MATERIALS_REMIND_DEFAULT_STATES,
+            'last_run' => ($last = $this->get(self::MATERIALS_REMIND_LAST_RUN)) ? (string) $last : null,
+        ];
+    }
+
+    /** @param list<string> $states */
+    public function setMaterialsRemind(bool $enabled, array $states, ?User $by = null): void
+    {
+        $this->setMany([
+            self::MATERIALS_REMIND_ENABLED => $enabled,
+            self::MATERIALS_REMIND_STATES => array_values(array_unique(array_filter(array_map(static fn ($s): string => trim((string) $s), $states)))),
+        ], $by);
     }
 }

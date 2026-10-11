@@ -7,14 +7,21 @@ namespace App\Controller;
 use App\Entity\Document;
 use App\Entity\DocumentAcknowledgement;
 use App\Entity\DocumentQuestion;
+use App\Entity\Section;
 use App\Entity\User;
 use App\Repository\DocumentAcknowledgementRepository;
 use App\Repository\DocumentQuestionRepository;
+use App\Repository\SectionRepository;
 use App\Repository\UserRepository;
 use App\Security\Access;
 use App\Security\Voter\PortalVoter;
+use App\Service\Csv;
 use App\Service\AcknowledgementService;
+use App\Service\Pdf\PdfFactory;
+use App\Service\Pdf\SignatureSheetService;
 use App\Service\QuizService;
+use App\Service\Video\VideoApi;
+use App\Service\Video\VideoIntegration;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -36,6 +43,10 @@ final class AcknowledgementController extends AbstractController
         private readonly Access $access,
         private readonly QuizService $quiz,
         private readonly DocumentQuestionRepository $questions,
+        private readonly SectionRepository $sections,
+        private readonly SignatureSheetService $signatureSheets,
+        private readonly ?VideoApi $videoApi = null,
+        private readonly ?VideoIntegration $video = null,
     ) {
     }
 
@@ -236,6 +247,32 @@ final class AcknowledgementController extends AbstractController
         ]);
     }
 
+    /**
+     * Лист ознакомления в PDF с кодом проверки подлинности (QR): по коду страница /verify/<код> покажет,
+     * что лист выдан порталом и совпадают ли записи с текущими. При тех же записях код прежний.
+     */
+    #[Route('/documents/{id}/acknowledgements/sheet.pdf', name: 'app_document_acknowledgements_pdf', requirements: ['id' => '\d+'], methods: ['GET'])]
+    #[IsGranted(PortalVoter::DOCUMENT_EDIT, subject: 'document')]
+    public function sheetPdf(Document $document, Request $request, #[CurrentUser] User $user): Response
+    {
+        $version = (int) $request->query->get('version');
+        $report = $this->service->report($document, $version > 0 ? $version : null);
+        try {
+            $result = $this->signatureSheets->generate($document, $report['version'], $user);
+        } catch (\DomainException $e) {
+            $this->addFlash('error', $e->getMessage());
+
+            return $this->redirectToRoute('app_document_acknowledgements', ['id' => $document->getId()]);
+        }
+
+        return new Response($result['pdf'], Response::HTTP_OK, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => PdfFactory::disposition($result['filename'], 'inline' === $request->query->get('disposition')),
+            'Cache-Control' => 'private, no-store',
+            'X-Content-Type-Options' => 'nosniff',
+        ]);
+    }
+
     /** Выгрузка отчёта в CSV. */
     #[Route('/documents/{id}/acknowledgements.csv', name: 'app_document_acknowledgements_csv', requirements: ['id' => '\d+'], methods: ['GET'])]
     #[IsGranted(PortalVoter::DOCUMENT_EDIT, subject: 'document')]
@@ -246,13 +283,13 @@ final class AcknowledgementController extends AbstractController
         $response = new StreamedResponse(function () use ($document, $report): void {
             $out = fopen('php://output', 'wb');
             fwrite($out, "\xEF\xBB\xBF");
-            fputcsv($out, ['Документ', $document->getTitle()], ';', '"', '\\');
-            fputcsv($out, ['Обозначение', (string) $document->getCode()], ';', '"', '\\');
+            Csv::put($out, ['Документ', $document->getTitle()]);
+            Csv::put($out, ['Обозначение', (string) $document->getCode()]);
             fputcsv($out, ['Редакция (версия)', (string) $report['version']], ';', '"', '\\');
             fputcsv($out, [], ';', '"', '\\');
             fputcsv($out, ['Сотрудник', 'Подразделение', 'Назначено', 'Срок', 'Ознакомлен', 'Проверка знаний', 'IP'], ';', '"', '\\');
             foreach ($report['rows'] as $row) {
-                fputcsv($out, [
+                Csv::put($out, [
                     $row->getUser()->getDisplayName(),
                     (string) $row->getUser()->getDepartment(),
                     $row->getAssignedAt()->format('d.m.Y'),
@@ -260,7 +297,7 @@ final class AcknowledgementController extends AbstractController
                     $row->getConfirmedAt()?->format('d.m.Y H:i') ?? 'не ознакомлен',
                     $row->hasQuizResult() ? \sprintf('%d из %d (попыток: %d)', $row->getQuizScore(), $row->getQuizTotal(), $row->getQuizAttempts()) : '',
                     (string) $row->getConfirmedIp(),
-                ], ';', '"', '\\');
+                ]);
             }
             fclose($out);
         });
@@ -276,23 +313,181 @@ final class AcknowledgementController extends AbstractController
     public function mine(#[CurrentUser] User $user): Response
     {
         return $this->render('profile/acknowledgements.html.twig', [
-            'pending' => $this->acknowledgements->findPendingForUser($user),
+            'pending' => $this->acknowledgements->findPendingForUser($user, 100, $this->access->viewer($user)),
             'confirmed' => $this->acknowledgements->findConfirmedForUser($user, 50),
             'today' => new \DateTimeImmutable('today'),
         ]);
     }
 
-    /** Сводка по ознакомлениям в панели администратора. */
+    /** Документов-столбцов в сводке по подразделениям (остальные — в выгрузке CSV). */
+    private const MATRIX_DOCUMENTS = 30;
+
+    /** Сводка по ознакомлениям в панели администратора: по документам, по подразделениям или по сотрудникам (документы и видео). */
     #[Route('/admin/acknowledgements', name: 'admin_acknowledgements', methods: ['GET'])]
     #[IsGranted('ROLE_ADMIN')]
     public function overview(Request $request): Response
     {
         $onlyPending = filter_var($request->query->get('pending'), \FILTER_VALIDATE_BOOL);
+        $view = \in_array($request->query->get('view'), ['departments', 'people'], true) ? (string) $request->query->get('view') : 'documents';
+        $section = $this->filterSection($request);
+        $sort = 'pct' === $request->query->get('sort') ? 'pct' : 'name';
+        $department = trim((string) $request->query->get('department', ''));
 
         return $this->render('admin/acknowledgements/index.html.twig', [
-            'rows' => $this->acknowledgements->overview($onlyPending),
+            'view' => $view,
+            'rows' => 'documents' === $view ? $this->acknowledgements->overview($onlyPending) : [],
+            'matrix' => 'departments' === $view ? $this->service->departmentMatrix($this->sectionIds($section), self::MATRIX_DOCUMENTS, $sort) : null,
+            'people' => 'people' === $view ? $this->service->peopleReport($this->sectionIds($section), $this->videoAssignments(), $department, $onlyPending) : null,
+            'video_on' => $this->video?->isEnabled() ?? false,
+            'department' => $department,
             'totals' => $this->acknowledgements->totals(),
             'only_pending' => $onlyPending,
+            'tree' => 'departments' === $view || 'people' === $view ? $this->sections->findAllTree() : [],
+            'section' => $section,
+            'sort' => $sort,
         ]);
+    }
+
+    /** Сводка по подразделениям в CSV: строка на пару «подразделение — документ» (удобно для сводных таблиц Excel). */
+    #[Route('/admin/acknowledgements/departments.csv', name: 'admin_acknowledgements_departments_csv', methods: ['GET'])]
+    #[IsGranted('ROLE_ADMIN')]
+    public function departmentsCsv(Request $request): StreamedResponse
+    {
+        $matrix = $this->service->departmentMatrix($this->sectionIds($this->filterSection($request)), \PHP_INT_MAX);
+        $response = new StreamedResponse(static function () use ($matrix): void {
+            $out = fopen('php://output', 'wb');
+            fwrite($out, "\xEF\xBB\xBF");
+            Csv::put($out, ['Подразделение', 'Документ', 'Обозначение', 'Раздел', 'Назначено', 'Ознакомились', 'Просрочено', 'Ознакомились, %']);
+            foreach ($matrix['departments'] as $department) {
+                foreach ($matrix['all_documents'] as $column) {
+                    $cell = $department['cells'][$column['document']->getId()] ?? null;
+                    if (null === $cell) {
+                        continue;
+                    }
+                    Csv::put($out, [$department['name'], $column['document']->getTitle(), (string) $column['document']->getCode(),
+                        $column['document']->getSection()->getFullName(), $cell['assigned'], $cell['confirmed'], $cell['overdue'], $cell['pct']]);
+                }
+            }
+            fclose($out);
+        });
+        $response->headers->set('Content-Type', 'text/csv; charset=UTF-8');
+        $response->headers->set('Content-Disposition', 'attachment; filename="acknowledgements-departments-'.date('Y-m-d').'.csv"');
+
+        return $response;
+    }
+
+    /** Единый отчёт по сотрудникам в CSV: строка на сотрудника (документы и обязательные просмотры видео). */
+    #[Route('/admin/acknowledgements/people.csv', name: 'admin_acknowledgements_people_csv', methods: ['GET'])]
+    #[IsGranted('ROLE_ADMIN')]
+    public function peopleCsv(Request $request): StreamedResponse
+    {
+        $report = $this->service->peopleReport($this->sectionIds($this->filterSection($request)), $this->videoAssignments(),
+            trim((string) $request->query->get('department', '')), filter_var($request->query->get('pending'), \FILTER_VALIDATE_BOOL));
+        $withVideo = $this->video?->isEnabled() ?? false;
+        $response = new StreamedResponse(static function () use ($report, $withVideo): void {
+            $out = fopen('php://output', 'wb');
+            fwrite($out, "\xEF\xBB\xBF");
+            $head = ['Подразделение', 'Сотрудник', 'Логин', 'Документов назначено', 'Ознакомился', 'Документов просрочено'];
+            if ($withVideo) {
+                $head = array_merge($head, ['Видео назначено', 'Просмотрено', 'Видео просрочено']);
+            }
+            Csv::put($out, array_merge($head, ['Не выполнено всего']));
+            foreach ($report['departments'] as $department) {
+                foreach ($department['people'] as $row) {
+                    $line = [$department['name'], $row['user']->getDisplayName(), $row['user']->getUsername(), $row['docs']['assigned'], $row['docs']['confirmed'], $row['docs']['overdue']];
+                    if ($withVideo) {
+                        $line = array_merge($line, [$row['video']['assigned'], $row['video']['completed'], $row['video']['overdue']]);
+                    }
+                    Csv::put($out, array_merge($line, [$row['pending']]));
+                }
+            }
+            fclose($out);
+        });
+        $response->headers->set('Content-Type', 'text/csv; charset=UTF-8');
+        $response->headers->set('Content-Disposition', 'attachment; filename="acknowledgements-people-'.date('Y-m-d').'.csv"');
+
+        return $response;
+    }
+
+    /**
+     * «Мои сотрудники»: руководитель видит, кто из подчинённых (по оргструктуре) не ознакомился с документами
+     * и не посмотрел обязательные видео. Администратор может открыть страницу любого руководителя (?manager=логин).
+     */
+    #[Route('/profile/team', name: 'app_profile_team', methods: ['GET'])]
+    #[IsGranted('ROLE_USER')]
+    public function team(Request $request, #[CurrentUser] User $user): Response
+    {
+        $manager = $this->teamManager($request, $user);
+
+        return $this->render('profile/team.html.twig', [
+            'manager' => $manager,
+            'own' => $manager === $user,
+            'report' => $this->service->teamReport($manager, $this->videoAssignments()),
+            'video_on' => $this->video?->isEnabled() ?? false,
+        ]);
+    }
+
+    #[Route('/profile/team.csv', name: 'app_profile_team_csv', methods: ['GET'])]
+    #[IsGranted('ROLE_USER')]
+    public function teamCsv(Request $request, #[CurrentUser] User $user): StreamedResponse
+    {
+        $manager = $this->teamManager($request, $user);
+        $report = $this->service->teamReport($manager, $this->videoAssignments(), false);
+        $withVideo = $this->video?->isEnabled() ?? false;
+        $response = new StreamedResponse(static function () use ($report, $withVideo): void {
+            $out = fopen('php://output', 'wb');
+            fwrite($out, "\xEF\xBB\xBF");
+            $head = ['Сотрудник', 'Логин', 'Должность', 'Подразделение', 'Руководитель', 'Документов назначено', 'Ознакомился', 'Документов просрочено'];
+            if ($withVideo) {
+                $head = array_merge($head, ['Видео назначено', 'Просмотрено', 'Видео просрочено']);
+            }
+            Csv::put($out, array_merge($head, ['Не выполнено всего']));
+            foreach ($report['people'] as $row) {
+                $u = $row['user'];
+                $line = [$u->getDisplayName(), $u->getUsername(), (string) $u->getJobTitle(), (string) $u->getDepartment(), (string) $u->getManager()?->getDisplayName(), $row['docs']['assigned'], $row['docs']['confirmed'], $row['docs']['overdue']];
+                if ($withVideo) {
+                    $line = array_merge($line, [$row['video']['assigned'], $row['video']['completed'], $row['video']['overdue']]);
+                }
+                Csv::put($out, array_merge($line, [$row['pending']]));
+            }
+            fclose($out);
+        });
+        $response->headers->set('Content-Type', 'text/csv; charset=UTF-8');
+        $response->headers->set('Content-Disposition', 'attachment; filename="team-'.$manager->getUsername().'-'.date('Y-m-d').'.csv"');
+        $response->headers->set('Cache-Control', 'private, no-store');
+
+        return $response;
+    }
+
+    private function teamManager(Request $request, User $user): User
+    {
+        $login = trim((string) $request->query->get('manager', ''));
+        if ('' === $login || $login === $user->getUsername()) {
+            return $user;
+        }
+        if (!$this->isGranted('ROLE_ADMIN')) {
+            throw $this->createAccessDeniedException('Сотрудников другого руководителя видит только администратор.');
+        }
+
+        return $this->users->findOneByUsername($login) ?? throw $this->createNotFoundException('Нет такого пользователя.');
+    }
+
+    /** @return array<int, array{assigned: int, completed: int, overdue: int}>|null */
+    private function videoAssignments(): ?array
+    {
+        return null !== $this->videoApi && ($this->video?->isEnabled() ?? false) ? $this->videoApi->assignmentsByUser() : null;
+    }
+
+    private function filterSection(Request $request): ?Section
+    {
+        $id = (int) $request->query->get('section');
+
+        return $id > 0 ? $this->sections->find($id) : null;
+    }
+
+    /** @return list<int>|null */
+    private function sectionIds(?Section $section): ?array
+    {
+        return null === $section ? null : $this->sections->findSubtreeIds($section);
     }
 }

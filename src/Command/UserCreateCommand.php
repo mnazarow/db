@@ -38,7 +38,8 @@ final class UserCreateCommand extends Command
             ->addOption('generate', 'g', InputOption::VALUE_NONE, 'Сгенерировать случайный пароль и вывести его')
             ->addOption('name', null, InputOption::VALUE_REQUIRED, 'Отображаемое имя')
             ->addOption('email', null, InputOption::VALUE_REQUIRED, 'E-mail (необязательно)')
-            ->addOption('admin', 'a', InputOption::VALUE_NONE, 'Выдать права администратора')
+            ->addOption('admin', 'a', InputOption::VALUE_NONE, 'Выдать права администратора (то же, что --role=admin)')
+            ->addOption('role', 'r', InputOption::VALUE_REQUIRED, 'Роль: user (пользователь), assistant (помощник маркетолога), marketer (маркетолог), admin (администратор)')
             ->addOption('ldap', null, InputOption::VALUE_NONE, 'Доменная учётная запись (пароль проверяется в Active Directory)')
             ->addOption('must-change', null, InputOption::VALUE_NONE, 'Потребовать смену пароля при первом входе')
             ->addOption('if-not-exists', null, InputOption::VALUE_NONE, 'Не считать ошибкой, если пользователь уже существует (для скриптов)')
@@ -53,6 +54,9 @@ final class UserCreateCommand extends Command
 
   <info>php bin/console app:user:create petrov --ldap --name "Петров П.П." --admin</info>
       добавить доменную учётную запись (пароль проверит домен) и сразу сделать её администратором
+
+  <info>php bin/console app:user:create markova --name "Маркова А.В." --role=marketer --generate</info>
+      маркетолог (модератор всех разделов и видео); помощник маркетолога — --role=assistant
 
   <info>php bin/console app:user:create admin --admin --password "$ADMIN_PASSWORD" --if-not-exists</info>
       идемпотентное создание из скрипта установки
@@ -75,8 +79,16 @@ HELP);
             return Command::FAILURE;
         }
 
+        $position = $input->getOption('admin') ? User::POSITION_ADMIN : (string) ($input->getOption('role') ?? User::POSITION_USER);
+        if (!\in_array($position, User::POSITIONS, true)) {
+            $io->error(\sprintf('Неизвестная роль «%s». Допустимо: %s.', $position, implode(', ', User::POSITIONS)));
+
+            return Command::FAILURE;
+        }
+        $isAdmin = User::POSITION_ADMIN === $position;
+        $label = mb_strtolower(User::POSITION_LABELS[$position]);
         $name = (string) ($input->getOption('name') ?: $username);
-        $user = (new User())->setUsername($username)->setDisplayName($name)->setEmail($input->getOption('email'))->setAdmin((bool) $input->getOption('admin'));
+        $user = (new User())->setUsername($username)->setDisplayName($name)->setEmail($input->getOption('email'))->setAdmin($isAdmin);
         $violations = $this->validator->validate($user);
         if (\count($violations) > 0) {
             foreach ($violations as $violation) {
@@ -87,8 +99,11 @@ HELP);
         }
 
         if ($input->getOption('ldap')) {
-            $this->userManager->createLdapUser($username, $name, (bool) $input->getOption('admin'), $input->getOption('email'));
-            $io->success(\sprintf('Доменная учётная запись «%s» добавлена (%s).', $username, $input->getOption('admin') ? 'администратор' : 'пользователь'));
+            $created = $this->userManager->createLdapUser($username, $name, $isAdmin, $input->getOption('email'));
+            if (User::POSITION_USER !== $position && !$isAdmin) {
+                $this->userManager->save($created->setPosition($position));
+            }
+            $io->success(\sprintf('Доменная учётная запись «%s» добавлена (%s).', $username, $label));
 
             return Command::SUCCESS;
         }
@@ -114,7 +129,10 @@ HELP);
         }
 
         try {
-            $this->userManager->create($username, $name, $password, (bool) $input->getOption('admin'), $input->getOption('email'), (bool) $input->getOption('must-change'));
+            $created = $this->userManager->create($username, $name, $password, $isAdmin, $input->getOption('email'), (bool) $input->getOption('must-change'));
+            if (User::POSITION_USER !== $position && !$isAdmin) {
+                $this->userManager->save($created->setPosition($position));
+            }
         } catch (\InvalidArgumentException $e) {
             $io->error($e->getMessage());
 
@@ -125,7 +143,7 @@ HELP);
             return Command::FAILURE;
         }
 
-        $io->success(\sprintf('Пользователь «%s» создан (%s).', $username, $input->getOption('admin') ? 'администратор' : 'пользователь'));
+        $io->success(\sprintf('Пользователь «%s» создан (%s).', $username, $label));
         if ($generated) {
             $io->writeln('Пароль: <comment>'.$password.'</comment>');
             $io->writeln('Сохраните его — повторно он не показывается. Сменить: <info>php bin/console app:user:password '.$username.'</info>');
