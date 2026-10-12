@@ -31,7 +31,7 @@ final class DocumentLinkRepository extends ServiceEntityRepository
             ->andWhere('l.source = :document OR l.target = :document')->setParameter('document', $document)
             ->leftJoin('l.source', 's')->addSelect('s')
             ->leftJoin('l.target', 't')->addSelect('t')
-            ->orderBy('l.type', 'ASC')->addOrderBy('l.createdAt', 'ASC')
+            ->orderBy('l.type', \SortDirection::Ascending)->addOrderBy('l.createdAt', \SortDirection::Ascending)
             ->getQuery()->getResult();
 
         return $links;

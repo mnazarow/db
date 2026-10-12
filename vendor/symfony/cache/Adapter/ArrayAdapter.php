@@ -151,6 +151,10 @@ class ArrayAdapter implements AdapterInterface, CacheInterface, NamespacedPoolIn
     public function deleteItems(array $keys): bool
     {
         foreach ($keys as $key) {
+            \assert('' !== CacheItem::validateKey($key));
+        }
+
+        foreach ($keys as $key) {
             $this->deleteItem($key);
         }
 
@@ -373,7 +377,7 @@ class ArrayAdapter implements AdapterInterface, CacheInterface, NamespacedPoolIn
         }
         if (\is_string($value) && isset($value[2]) && ':' === $value[1]) {
             try {
-                $value = unserialize($value);
+                $value = unserialize($value, ['allowed_classes' => true]);
             } catch (\Exception $e) {
                 CacheItem::log($this->logger, 'Failed to unserialize key "{key}": '.$e->getMessage(), ['key' => $key, 'exception' => $e, 'cache-adapter' => get_debug_type($this)]);
                 $value = false;

@@ -27,7 +27,7 @@ final class DocumentApprovalRepository extends ServiceEntityRepository
             ->leftJoin('a.approver', 'u')->addSelect('u')
             ->andWhere('a.document = :d')->setParameter('d', $document)
             ->andWhere('a.decision = :pending')->setParameter('pending', DocumentApproval::PENDING)
-            ->orderBy('a.id', 'DESC')
+            ->orderBy('a.id', \SortDirection::Descending)
             ->setMaxResults(1)
             ->getQuery()->getOneOrNullResult();
     }
@@ -40,7 +40,7 @@ final class DocumentApprovalRepository extends ServiceEntityRepository
             ->andWhere('a.document = :d')->setParameter('d', $document)
             ->andWhere('a.versionNumber = :v')->setParameter('v', $versionNumber)
             ->andWhere('a.decision IN (:decided)')->setParameter('decided', [DocumentApproval::APPROVED, DocumentApproval::REJECTED])
-            ->orderBy('a.id', 'DESC')
+            ->orderBy('a.id', \SortDirection::Descending)
             ->setMaxResults(1)
             ->getQuery()->getOneOrNullResult();
     }
@@ -66,7 +66,7 @@ final class DocumentApprovalRepository extends ServiceEntityRepository
             ->leftJoin('a.approver', 'u')->addSelect('u')
             ->leftJoin('a.requestedBy', 'r')->addSelect('r')
             ->andWhere('a.document = :d')->setParameter('d', $document)
-            ->orderBy('a.id', 'DESC')
+            ->orderBy('a.id', \SortDirection::Descending)
             ->getQuery()->getResult();
     }
 
@@ -83,7 +83,7 @@ final class DocumentApprovalRepository extends ServiceEntityRepository
             ->leftJoin('a.requestedBy', 'r')->addSelect('r')
             ->andWhere('a.approver = :u')->setParameter('u', $user)
             ->andWhere('a.decision = :pending')->setParameter('pending', DocumentApproval::PENDING)
-            ->orderBy('a.requestedAt', 'ASC')
+            ->orderBy('a.requestedAt', \SortDirection::Ascending)
             ->setMaxResults($limit)
             ->getQuery()->getResult();
     }
@@ -107,7 +107,7 @@ final class DocumentApprovalRepository extends ServiceEntityRepository
             ->leftJoin('a.requestedBy', 'r')->addSelect('r')
             ->andWhere('a.approver IS NULL')
             ->andWhere('a.decision = :pending')->setParameter('pending', DocumentApproval::PENDING)
-            ->orderBy('a.requestedAt', 'ASC')
+            ->orderBy('a.requestedAt', \SortDirection::Ascending)
             ->setMaxResults($limit);
         if (null !== $sectionIds) {
             $qb->andWhere('d.section IN (:sections)')->setParameter('sections', $sectionIds);
@@ -145,7 +145,7 @@ final class DocumentApprovalRepository extends ServiceEntityRepository
             ->join('d.section', 's')->addSelect('s')
             ->leftJoin('a.approver', 'u')->addSelect('u')
             ->andWhere('a.requestedBy = :u')->setParameter('u', $user)
-            ->orderBy('a.id', 'DESC')
+            ->orderBy('a.id', \SortDirection::Descending)
             ->setMaxResults($limit)
             ->getQuery()->getResult();
     }
@@ -162,7 +162,7 @@ final class DocumentApprovalRepository extends ServiceEntityRepository
             ->join('d.section', 's')->addSelect('s')
             ->andWhere('a.approver = :u OR a.decidedBy = :u')->setParameter('u', $user)
             ->andWhere('a.decision IN (:decided)')->setParameter('decided', [DocumentApproval::APPROVED, DocumentApproval::REJECTED])
-            ->orderBy('a.decidedAt', 'DESC')
+            ->orderBy('a.decidedAt', \SortDirection::Descending)
             ->setMaxResults($limit)
             ->getQuery()->getResult();
     }
@@ -198,7 +198,7 @@ final class DocumentApprovalRepository extends ServiceEntityRepository
             ->leftJoin('a.approver', 'u')->addSelect('u')
             ->leftJoin('a.requestedBy', 'r')->addSelect('r')
             ->andWhere('a.decision = :pending')->setParameter('pending', DocumentApproval::PENDING)
-            ->orderBy('a.requestedAt', 'ASC')
+            ->orderBy('a.requestedAt', \SortDirection::Ascending)
             ->setMaxResults($limit)
             ->getQuery()->getResult();
     }

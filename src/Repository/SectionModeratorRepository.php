@@ -44,7 +44,7 @@ final class SectionModeratorRepository extends ServiceEntityRepository
         return $this->createQueryBuilder('m')
             ->join('m.section', 's')->addSelect('s')
             ->andWhere('m.user = :u')->setParameter('u', $user)
-            ->orderBy('s.path', 'ASC')
+            ->orderBy('s.path', \SortDirection::Ascending)
             ->getQuery()->getResult();
     }
 
@@ -54,7 +54,7 @@ final class SectionModeratorRepository extends ServiceEntityRepository
         return $this->createQueryBuilder('m')
             ->join('m.section', 's')->addSelect('s')
             ->join('m.user', 'u')->addSelect('u')
-            ->orderBy('s.path', 'ASC')->addOrderBy('u.displayName', 'ASC')
+            ->orderBy('s.path', \SortDirection::Ascending)->addOrderBy('u.displayName', \SortDirection::Ascending)
             ->getQuery()->getResult();
     }
 

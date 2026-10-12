@@ -28,7 +28,7 @@ final class MaterialRowRepository extends ServiceEntityRepository
             ->leftJoin('r.document', 'd')->addSelect('d')
             ->leftJoin('d.currentVersion', 'v')->addSelect('v')
             ->andWhere('r.section = :section')->setParameter('section', $section)
-            ->orderBy('r.position', 'ASC')->addOrderBy('r.id', 'ASC')
+            ->orderBy('r.position', \SortDirection::Ascending)->addOrderBy('r.id', \SortDirection::Ascending)
             ->getQuery()->getResult();
     }
 
@@ -46,7 +46,7 @@ final class MaterialRowRepository extends ServiceEntityRepository
         /** @var MaterialRow $row */
         foreach ($this->createQueryBuilder('r')->leftJoin('r.kind', 'k')->addSelect('k')
             ->andWhere('r.section IN (:ids)')->setParameter('ids', $sectionIds)
-            ->orderBy('r.position', 'ASC')->getQuery()->getResult() as $row) {
+            ->orderBy('r.position', \SortDirection::Ascending)->getQuery()->getResult() as $row) {
             $grouped[(int) $row->getSection()->getId()][] = $row;
         }
 

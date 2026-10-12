@@ -30,7 +30,7 @@ final class DocumentCommentRepository extends ServiceEntityRepository
         /** @var list<DocumentComment> $all */
         $all = $this->createQueryBuilder('c')
             ->andWhere('c.document = :document')->setParameter('document', $document)
-            ->orderBy('c.createdAt', 'ASC')->addOrderBy('c.id', 'ASC')
+            ->orderBy('c.createdAt', \SortDirection::Ascending)->addOrderBy('c.id', \SortDirection::Ascending)
             ->setMaxResults($limit)
             ->getQuery()->getResult();
 
@@ -100,7 +100,7 @@ final class DocumentCommentRepository extends ServiceEntityRepository
         return $this->createQueryBuilder('c')
             ->andWhere('c.author = :user')->setParameter('user', $user)
             ->andWhere('c.deletedAt IS NULL')
-            ->orderBy('c.createdAt', 'DESC')
+            ->orderBy('c.createdAt', \SortDirection::Descending)
             ->setMaxResults($limit)
             ->getQuery()->getResult();
     }

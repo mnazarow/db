@@ -328,6 +328,9 @@ final class SemanticAnswerTest extends PortalTestCase
     {
         $this->firePage();
         $this->command(['--limit' => 500]);
+        $this->loginAs('sidorov');
+        $this->client->request('POST', '/search/answer', ['q' => 'Сколько стоит ракета для полёта на Марс?', '_token' => $this->token('ракета')]);
+        // Вопросы ниже задаются в ту же секунду: последняя формулировка темы определяется и тогда.
         $this->loginAs('smirnov');
         foreach (['Когда будет полёт на Марс?', 'полёт на Марс когда', 'сколько дней отпуска?', 'Сколько дней отпуска положено?'] as $q) {
             $this->client->request('POST', '/search/answer', ['q' => $q, '_token' => $this->token($q)]);
@@ -336,15 +339,13 @@ final class SemanticAnswerTest extends PortalTestCase
         }
         $this->client->request('POST', '/search/semantic', ['q' => 'полёт на Марс', '_token' => $this->token('марс')]);
         self::assertSame([], json_decode((string) $this->client->getResponse()->getContent(), true)['items'], 'ничего похожего по смыслу — блок пуст');
-        $this->loginAs('sidorov');
-        $this->client->request('POST', '/search/answer', ['q' => 'Сколько стоит ракета для полёта на Марс?', '_token' => $this->token('ракета')]);
 
         $this->loginAs('admin');
         $crawler = $this->client->request('GET', '/admin/ai-questions');
         self::assertResponseIsSuccessful();
         $table = $crawler->filter('.ai-topics')->text();
         self::assertStringContainsString('полёт на Марс когда', $table, 'тема — последняя формулировка');
-        self::assertSame(1, substr_count($table, 'Марс когда'), 'похожие формулировки — одна тема');
+        self::assertSame(1, substr_count($table, 'Марс'), 'похожие формулировки — одна тема');
         self::assertSame(1, substr_count($table, 'дней отпуска'), '«дней отпуска» и «дней отпуска положено» — одна тема');
         $link = $crawler->filter('.ai-topics a:contains("Создать документ")')->first()->attr('href');
         self::assertStringContainsString('title=', (string) $link);

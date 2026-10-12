@@ -29,7 +29,7 @@ final class AuditEventRepository extends ServiceEntityRepository
     public function findFiltered(array $filters, int $limit = 200, int $offset = 0): array
     {
         return $this->filtered($filters)
-            ->orderBy('a.occurredAt', 'DESC')->addOrderBy('a.id', 'DESC')
+            ->orderBy('a.occurredAt', \SortDirection::Descending)->addOrderBy('a.id', \SortDirection::Descending)
             ->setMaxResults($limit)->setFirstResult($offset)
             ->getQuery()->getResult();
     }
@@ -47,7 +47,7 @@ final class AuditEventRepository extends ServiceEntityRepository
      */
     public function findSince(?\DateTimeImmutable $since, int $limit = 5000): array
     {
-        $qb = $this->createQueryBuilder('a')->orderBy('a.occurredAt', 'ASC')->addOrderBy('a.id', 'ASC')->setMaxResults($limit);
+        $qb = $this->createQueryBuilder('a')->orderBy('a.occurredAt', \SortDirection::Ascending)->addOrderBy('a.id', \SortDirection::Ascending)->setMaxResults($limit);
         if (null !== $since) {
             $qb->andWhere('a.occurredAt >= :since')->setParameter('since', $since);
         }
@@ -60,7 +60,7 @@ final class AuditEventRepository extends ServiceEntityRepository
     {
         $rows = $this->createQueryBuilder('a')->select('DISTINCT a.actorName AS name')
             ->andWhere('a.actorName IS NOT NULL')
-            ->orderBy('a.actorName', 'ASC')->setMaxResults($limit)
+            ->orderBy('a.actorName', \SortDirection::Ascending)->setMaxResults($limit)
             ->getQuery()->getArrayResult();
 
         return array_values(array_filter(array_column($rows, 'name')));

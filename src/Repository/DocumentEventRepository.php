@@ -29,7 +29,7 @@ final class DocumentEventRepository extends ServiceEntityRepository
     {
         $qb = $this->createQueryBuilder('e')->leftJoin('e.user', 'u')->addSelect('u')
             ->andWhere('e.document = :d')->setParameter('d', $document)
-            ->orderBy('e.createdAt', 'DESC')->setMaxResults($limit);
+            ->orderBy('e.createdAt', \SortDirection::Descending)->setMaxResults($limit);
         if (null !== $type) {
             $qb->andWhere('e.type = :t')->setParameter('t', $type);
         }
@@ -50,7 +50,7 @@ final class DocumentEventRepository extends ServiceEntityRepository
             ->leftJoin('e.user', 'u')->addSelect('u')
             ->join('e.document', 'd')->addSelect('d')
             ->join('d.section', 's')->addSelect('s')
-            ->orderBy('e.createdAt', 'DESC')->setMaxResults($limit);
+            ->orderBy('e.createdAt', \SortDirection::Descending)->setMaxResults($limit);
         if (!empty($filters['type'])) {
             $qb->andWhere('e.type = :t')->setParameter('t', $filters['type']);
         }
@@ -297,7 +297,7 @@ final class DocumentEventRepository extends ServiceEntityRepository
             ->join('e.document', 'd')->addSelect('d')
             ->join('d.section', 's')->addSelect('s')
             ->andWhere('e.type <> :view')->setParameter('view', DocumentEvent::VIEW)
-            ->orderBy('e.createdAt', 'DESC')->setMaxResults($limit);
+            ->orderBy('e.createdAt', \SortDirection::Descending)->setMaxResults($limit);
         if (null !== $sectionIds) {
             if ([] === $sectionIds) {
                 return [];

@@ -12,6 +12,7 @@
 namespace Symfony\Component\Security\Http\AccessToken\Cas;
 
 use Symfony\Component\HttpClient\HttpClient;
+use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\RequestStack;
 use Symfony\Component\Security\Core\Exception\AuthenticationException;
 use Symfony\Component\Security\Http\AccessToken\AccessTokenHandlerInterface;
@@ -45,7 +46,7 @@ final class Cas2Handler implements AccessTokenHandlerInterface
      */
     public function getUserBadgeFrom(string $accessToken): UserBadge
     {
-        $response = $this->client->request('GET', $this->getValidationUrl($accessToken));
+        $response = $this->client->request('GET', $this->getValidationUrl($accessToken), ['max_redirects' => 0]);
 
         $xml = new \SimpleXMLElement($response->getContent(), 0, false, $this->prefix, true);
 
@@ -75,6 +76,10 @@ final class Cas2Handler implements AccessTokenHandlerInterface
         }
         unset($query['ticket']);
         $queryString = $query ? '?'.http_build_query($query) : '';
+
+        if (!Request::getTrustedHosts()) {
+            throw new \LogicException('CAS authentication requires trusted hosts to be configured to prevent host header injection; configure the "framework.trusted_hosts" option or call "Request::setTrustedHosts()".');
+        }
 
         return \sprintf('%s?ticket=%s&service=%s',
             $this->validationUrl,

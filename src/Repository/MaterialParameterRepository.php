@@ -24,7 +24,7 @@ final class MaterialParameterRepository extends ServiceEntityRepository
     {
         return $this->createQueryBuilder('p')
             ->andWhere('p.section = :section')->setParameter('section', $section)
-            ->orderBy('p.position', 'ASC')->addOrderBy('p.id', 'ASC')
+            ->orderBy('p.position', \SortDirection::Ascending)->addOrderBy('p.id', \SortDirection::Ascending)
             ->getQuery()->getResult();
     }
 
@@ -43,7 +43,7 @@ final class MaterialParameterRepository extends ServiceEntityRepository
         $grouped = [];
         /** @var MaterialParameter $parameter */
         foreach ($this->createQueryBuilder('p')->andWhere('p.section IN (:ids)')->setParameter('ids', $sectionIds)
-            ->orderBy('p.position', 'ASC')->getQuery()->getResult() as $parameter) {
+            ->orderBy('p.position', \SortDirection::Ascending)->getQuery()->getResult() as $parameter) {
             $grouped[(int) $parameter->getSection()->getId()][] = $parameter;
         }
 

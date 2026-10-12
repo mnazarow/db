@@ -43,7 +43,7 @@ final class DocumentSubscriptionRepository extends ServiceEntityRepository
             ->andWhere('s.user = :user')->setParameter('user', $user)
             ->leftJoin('s.document', 'd')->addSelect('d')
             ->leftJoin('s.section', 'sec')->addSelect('sec')
-            ->orderBy('s.createdAt', 'DESC')
+            ->orderBy('s.createdAt', \SortDirection::Descending)
             ->getQuery()->getResult();
 
         usort($all, static fn (DocumentSubscription $a, DocumentSubscription $b): int => [$b->isForSection(), $a->getTitle()] <=> [$a->isForSection(), $b->getTitle()]);

@@ -24,7 +24,7 @@ final class DocumentQuestionRepository extends ServiceEntityRepository
     {
         return $this->createQueryBuilder('q')
             ->andWhere('q.document = :d')->setParameter('d', $document)
-            ->orderBy('q.position', 'ASC')->addOrderBy('q.id', 'ASC')
+            ->orderBy('q.position', \SortDirection::Ascending)->addOrderBy('q.id', \SortDirection::Ascending)
             ->getQuery()->getResult();
     }
 

@@ -26,7 +26,7 @@ final class MaterialRowChangeRepository extends ServiceEntityRepository
         return $this->createQueryBuilder('c')
             ->leftJoin('c.user', 'u')->addSelect('u')
             ->andWhere('c.row = :row')->setParameter('row', $row)
-            ->orderBy('c.createdAt', 'DESC')->addOrderBy('c.id', 'DESC')
+            ->orderBy('c.createdAt', \SortDirection::Descending)->addOrderBy('c.id', \SortDirection::Descending)
             ->setMaxResults($limit)
             ->getQuery()->getResult();
     }
@@ -37,7 +37,7 @@ final class MaterialRowChangeRepository extends ServiceEntityRepository
         $qb = $this->createQueryBuilder('c')
             ->leftJoin('c.user', 'u')->addSelect('u')
             ->andWhere('c.section = :section')->setParameter('section', $section)
-            ->orderBy('c.createdAt', 'DESC')->addOrderBy('c.id', 'DESC')
+            ->orderBy('c.createdAt', \SortDirection::Descending)->addOrderBy('c.id', \SortDirection::Descending)
             ->setFirstResult(max(0, $offset))
             ->setMaxResults($limit);
         if (null !== $action && '' !== $action) {

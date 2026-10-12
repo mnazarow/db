@@ -60,20 +60,20 @@ final class UserRepository extends ServiceEntityRepository
     {
         return $this->createQueryBuilder('u')
             ->andWhere('u.active = true')->andWhere('u.telegramChatId IS NOT NULL')
-            ->orderBy('u.displayName', 'ASC')
+            ->orderBy('u.displayName', \SortDirection::Ascending)
             ->getQuery()->getResult();
     }
 
     /** @return list<User> */
     public function findAllOrdered(): array
     {
-        return $this->createQueryBuilder('u')->orderBy('u.displayName', 'ASC')->getQuery()->getResult();
+        return $this->createQueryBuilder('u')->orderBy('u.displayName', \SortDirection::Ascending)->getQuery()->getResult();
     }
 
     /** @return list<User> */
     public function findActiveOrdered(): array
     {
-        return $this->createQueryBuilder('u')->andWhere('u.active = true')->orderBy('u.displayName', 'ASC')->getQuery()->getResult();
+        return $this->createQueryBuilder('u')->andWhere('u.active = true')->orderBy('u.displayName', \SortDirection::Ascending)->getQuery()->getResult();
     }
 
     public function countActiveAdmins(): int
@@ -126,7 +126,7 @@ final class UserRepository extends ServiceEntityRepository
     public function findSubordinates(User $manager, int $maxDepth = 10): array
     {
         $byManager = [];
-        foreach ($this->createQueryBuilder('u')->andWhere('u.active = true')->andWhere('u.manager IS NOT NULL')->orderBy('u.displayName', 'ASC')->getQuery()->getResult() as $user) {
+        foreach ($this->createQueryBuilder('u')->andWhere('u.active = true')->andWhere('u.manager IS NOT NULL')->orderBy('u.displayName', \SortDirection::Ascending)->getQuery()->getResult() as $user) {
             $byManager[(int) $user->getManager()->getId()][] = $user;
         }
         $out = [];
