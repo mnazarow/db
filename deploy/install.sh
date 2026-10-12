@@ -143,7 +143,7 @@ DB_USER="${DEFAULT_DB_USER}"
 DB_PASSWORD=""
 DB_LOCAL="1"
 DB_SERVICE=""
-DB_SERVER_VERSION="8.0"
+DB_SERVER_VERSION="8.0.0"
 DOCKER_MIRROR=""
 BACKUP_DIR="${DEFAULT_BACKUP_DIR}"
 BACKUP_CRON="1"
@@ -738,7 +738,7 @@ setup_database_native() {
     if [[ "${raw}" == *MariaDB* ]]; then
         DB_SERVER_VERSION="$(echo "${raw}" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' || echo '10.6.0')-MariaDB"
     else
-        DB_SERVER_VERSION="$(echo "${raw}" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' || echo '8.0')"
+        DB_SERVER_VERSION="$(echo "${raw}" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' || echo '8.0.0')"
     fi
     ok "База данных доступна: ${DB_NAME} на ${DB_HOST}:${DB_PORT} (${raw})"
 }
@@ -1248,7 +1248,7 @@ EOF
     chmod 600 "${APP_DIR}/docker/.env"
     # Каталог импорта на сервере (подключается в контейнеры как /var/www/html/var/import; uid 82 = www-data в alpine).
     mkdir -p "${APP_DIR}/import" && chown 82:82 "${APP_DIR}/import" && chmod 2775 "${APP_DIR}/import"
-    DB_HOST="db"; DB_LOCAL="0"; DB_SERVICE="docker"; SERVICE_USER="www-data"; PHP_VERSION="8.4"; PHP_FPM_SERVICE="docker"; PHP_FPM_SOCK=""; DB_SERVER_VERSION="8.0"
+    DB_HOST="db"; DB_LOCAL="0"; DB_SERVICE="docker"; SERVICE_USER="www-data"; PHP_VERSION="8.4"; PHP_FPM_SERVICE="docker"; PHP_FPM_SOCK=""; DB_SERVER_VERSION="8.0.0"
 
     step "Сборка образа и запуск контейнеров (может занять несколько минут)"
     # Загрузка образов прерывается при сбоях сети и ограничениях Docker Hub — до трёх попыток.

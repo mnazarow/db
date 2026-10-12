@@ -291,7 +291,7 @@ final class ApiController extends AbstractController
         $deletions = $this->em->getRepository(DocumentDeletion::class)->createQueryBuilder('x')
             ->andWhere('x.deletedAt > :at OR (x.deletedAt = :at AND x.documentId > :after)')
             ->setParameter('at', $since)->setParameter('after', $afterIn(2))
-            ->orderBy('x.deletedAt', 'ASC')->addOrderBy('x.documentId', 'ASC')->setMaxResults($limit + 1)
+            ->orderBy('x.deletedAt', \SortDirection::Ascending)->addOrderBy('x.documentId', \SortDirection::Ascending)->setMaxResults($limit + 1)
             ->getQuery()->getResult();
         foreach ($deletions as $x) {
             $stream[] = [$x->getDeletedAt()->format('Y-m-d H:i:s'), 2, $x->getDocumentId(), $x];

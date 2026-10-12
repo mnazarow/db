@@ -114,6 +114,7 @@ final class AiQuestionRepository extends ServiceEntityRepository
                 'asked' => (int) $r['asked'],
                 'users' => $usersByTopic[(string) $r['topic']] ?? [],
                 'last_at' => (string) $r['last_at'],
+                'last_id' => (int) $r['last_id'],
                 'answered_at' => (string) $r['answered_at'],
             ];
             $candidates = [];
@@ -128,8 +129,10 @@ final class AiQuestionRepository extends ServiceEntityRepository
                 if (self::similar($cluster['stems'], $stems)) {
                     $clusters[$i]['asked'] += $entry['asked'];
                     $clusters[$i]['users'] = array_values(array_unique([...$cluster['users'], ...$entry['users']]));
-                    if ($entry['last_at'] > $cluster['last_at']) {
+                    // Время хранится с точностью до секунды: при равном времени позже задан вопрос с большим id.
+                    if ([$entry['last_at'], $entry['last_id']] > [$cluster['last_at'], $cluster['last_id']]) {
                         $clusters[$i]['last_at'] = $entry['last_at'];
+                        $clusters[$i]['last_id'] = $entry['last_id'];
                         $clusters[$i]['question'] = $entry['question'];
                     }
                     $clusters[$i]['answered_at'] = max($cluster['answered_at'], $entry['answered_at']);
@@ -196,7 +199,7 @@ final class AiQuestionRepository extends ServiceEntityRepository
      */
     public function unhelpful(?\DateTimeImmutable $since, int $limit = 200): array
     {
-        $qb = $this->createQueryBuilder('q')->andWhere('q.rating = -1')->orderBy('q.createdAt', 'DESC')->setMaxResults($limit);
+        $qb = $this->createQueryBuilder('q')->andWhere('q.rating = -1')->orderBy('q.createdAt', \SortDirection::Descending)->setMaxResults($limit);
         if (null !== $since) {
             $qb->andWhere('q.createdAt >= :since')->setParameter('since', $since);
         }
@@ -211,7 +214,7 @@ final class AiQuestionRepository extends ServiceEntityRepository
      */
     public function recent(?\DateTimeImmutable $since, int $limit = 200): array
     {
-        $qb = $this->createQueryBuilder('q')->orderBy('q.createdAt', 'DESC')->addOrderBy('q.id', 'DESC')->setMaxResults($limit);
+        $qb = $this->createQueryBuilder('q')->orderBy('q.createdAt', \SortDirection::Descending)->addOrderBy('q.id', \SortDirection::Descending)->setMaxResults($limit);
         if (null !== $since) {
             $qb->andWhere('q.createdAt >= :since')->setParameter('since', $since);
         }

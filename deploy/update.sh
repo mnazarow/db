@@ -488,6 +488,15 @@ if [[ "${INSTALL_MODE}" == "native" ]]; then
     if ! grep -q '^IMPORT_DIR=' "${APP_DIR}/shared/.env.local" 2>/dev/null; then
         printf '\n# Каталог импорта: положите сюда папки с документами и запустите импорт в панели администратора.\nIMPORT_DIR=%s/shared/import\n' "${APP_DIR}" >> "${APP_DIR}/shared/.env.local"
     fi
+    # serverVersion=8.0 Doctrine читает как «MySQL младше 8.0.0» (особенности сравнения версий) и
+    # работает с MySQL 8 по правилам 5.7; полная версия 8.0.0 выбирает правильный диалект.
+    if grep -q 'serverVersion=8\.0&' "${APP_DIR}/shared/.env.local" 2>/dev/null; then
+        sed -i 's/serverVersion=8\.0&/serverVersion=8.0.0\&/' "${APP_DIR}/shared/.env.local" \
+            && info "DATABASE_URL: serverVersion=8.0 заменён на 8.0.0." || warn "Не удалось исправить serverVersion в ${APP_DIR}/shared/.env.local (укажите serverVersion=8.0.0 вручную)."
+    fi
+    # С 1.8.0 предупреждения об устаревании пишутся по дням (неделя хранения); прежний общий файл рос
+    # без ограничения и больше не нужен.
+    rm -f "${APP_DIR}/shared/log/deprecations.log" 2>/dev/null || true
     chown "${SERVICE_USER}:${SERVICE_USER}" "${APP_DIR}/shared/import" && chmod 2770 "${APP_DIR}/shared/import"
     chown -R root:"${SERVICE_USER}" "${NEW_RELEASE}"
     chown -R "${SERVICE_USER}:${SERVICE_USER}" "${NEW_RELEASE}/var"
@@ -598,6 +607,8 @@ else
     docker compose exec -T web nginx -s reload >>"${LOG_FILE}" 2>&1 || true
     health || die "Новая версия не отвечает."
     maintenance_end
+    # Прежний общий файл предупреждений об устаревании (с 1.8.0 — по дням, неделя хранения).
+    docker compose exec -T app rm -f var/log/deprecations.log >>"${LOG_FILE}" 2>&1 || true
     install_cli_wrapper && info "Команда управления ${APP_ID} обновлена."
     # Задания приложения выполняет контейнер cron; на сервере остаётся только резервное копирование.
     ensure_cron_entries

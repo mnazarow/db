@@ -134,6 +134,14 @@
                 <source>Please enter a valid week.</source>
                 <target>Proszę wybrać prawidłowy tydzień.</target>
             </trans-unit>
+            <trans-unit id="129">
+                <source>Please enter a valid UUID.</source>
+                <target>Proszę podać prawidłowy UUID.</target>
+            </trans-unit>
+            <trans-unit id="130">
+                <source>The lower bound must not be greater than the upper bound.</source>
+                <target>Dolna granica nie może być większa niż górna granica.</target>
+            </trans-unit>
         </body>
     </file>
 </xliff>

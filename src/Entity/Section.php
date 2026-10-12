@@ -303,7 +303,7 @@ class Section
     public function getModeratorUsers(): array
     {
         $users = [];
-        foreach ($this->moderators->matching(Criteria::create()) as $m) {
+        foreach ($this->moderators->matching(Criteria::create(true)) as $m) {
             $users[] = $m->getUser();
         }
 

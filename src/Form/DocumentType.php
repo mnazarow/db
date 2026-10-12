@@ -41,7 +41,7 @@ final class DocumentType extends AbstractType
                 'class' => DocumentKind::class,
                 'choice_label' => 'name',
                 'query_builder' => static fn (DocumentKindRepository $repository) => $repository->createQueryBuilder('k')
-                    ->orderBy('k.position', 'ASC')->addOrderBy('k.name', 'ASC'),
+                    ->orderBy('k.position', \SortDirection::Ascending)->addOrderBy('k.name', \SortDirection::Ascending),
                 'required' => false,
                 'placeholder' => 'Определить автоматически',
                 'help' => 'Каталоги и брошюры, паспорта и руководства, опросные листы и ТКП, фотографии… Если не выбрать, портал определит тип по названию и расширению файла.',
@@ -80,7 +80,7 @@ final class DocumentType extends AbstractType
                 'expanded' => false,
                 'choice_label' => static fn (User $user): string => $user->getDisplayName().($user->getDepartment() ? ' — '.$user->getDepartment() : ''),
                 'query_builder' => static fn (UserRepository $repository) => $repository->createQueryBuilder('u')
-                    ->andWhere('u.active = true')->orderBy('u.displayName', 'ASC'),
+                    ->andWhere('u.active = true')->orderBy('u.displayName', \SortDirection::Ascending),
                 'attr' => ['size' => 8],
                 'help' => 'Держите Ctrl (⌘), чтобы выбрать несколько.',
             ])

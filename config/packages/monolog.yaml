@@ -69,7 +69,10 @@ when@prod:
                 type: console
                 process_psr_3_messages: false
                 channels: ['!event', '!doctrine']
+            # Предупреждения об устаревании (нужны при обновлении библиотек) — по файлу в день, неделя
+            # хранения: прежде один файл рос без ограничения.
             deprecation:
-                type: stream
+                type: rotating_file
                 channels: [deprecation]
                 path: '%kernel.logs_dir%/deprecations.log'
+                max_files: 7

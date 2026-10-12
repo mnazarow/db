@@ -23,7 +23,7 @@ final class SectionRepository extends ServiceEntityRepository
     {
         return $this->createQueryBuilder('s')
             ->andWhere('s.parent IS NULL')
-            ->orderBy('s.position', 'ASC')->addOrderBy('s.name', 'ASC')
+            ->orderBy('s.position', \SortDirection::Ascending)->addOrderBy('s.name', \SortDirection::Ascending)
             ->getQuery()->getResult();
     }
 
@@ -37,7 +37,7 @@ final class SectionRepository extends ServiceEntityRepository
         /** @var list<Section> $all */
         $all = $this->createQueryBuilder('s')
             ->leftJoin('s.parent', 'p')->addSelect('p')
-            ->orderBy('s.depth', 'ASC')->addOrderBy('s.position', 'ASC')->addOrderBy('s.name', 'ASC')
+            ->orderBy('s.depth', \SortDirection::Ascending)->addOrderBy('s.position', \SortDirection::Ascending)->addOrderBy('s.name', \SortDirection::Ascending)
             ->getQuery()->getResult();
 
         return self::sortTree($all);
@@ -77,7 +77,7 @@ final class SectionRepository extends ServiceEntityRepository
     {
         return $this->createQueryBuilder('s')
             ->andWhere('s.path LIKE :path')->setParameter('path', $root->getPath().'%')
-            ->orderBy('s.depth', 'ASC')->addOrderBy('s.position', 'ASC')
+            ->orderBy('s.depth', \SortDirection::Ascending)->addOrderBy('s.position', \SortDirection::Ascending)
             ->getQuery()->getResult();
     }
 
@@ -101,7 +101,7 @@ final class SectionRepository extends ServiceEntityRepository
     {
         $qb = $this->createQueryBuilder('s')
             ->andWhere('LOWER(s.name) = :name')->setParameter('name', mb_strtolower(trim($name)))
-            ->orderBy('s.position', 'ASC')->addOrderBy('s.id', 'ASC')
+            ->orderBy('s.position', \SortDirection::Ascending)->addOrderBy('s.id', \SortDirection::Ascending)
             ->setMaxResults(1);
         if (null === $parent) {
             $qb->andWhere('s.parent IS NULL');

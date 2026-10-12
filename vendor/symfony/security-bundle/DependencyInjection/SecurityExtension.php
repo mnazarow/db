@@ -207,7 +207,7 @@ class SecurityExtension extends Extension implements PrependExtensionInterface
 
     private function createRoleHierarchy(array $config, ContainerBuilder $container): void
     {
-        if (!isset($config['role_hierarchy']) || 0 === \count($config['role_hierarchy'])) {
+        if (!isset($config['role_hierarchy']) || !$config['role_hierarchy']) {
             $container->removeDefinition('security.access.role_hierarchy_voter');
 
             return;
@@ -262,7 +262,7 @@ class SecurityExtension extends Extension implements PrependExtensionInterface
         }
 
         // allow cache warm-up for expressions
-        if (\count($this->expressions)) {
+        if ($this->expressions) {
             $container->getDefinition('security.cache_warmer.expression')
                 ->replaceArgument(0, new IteratorArgument(array_values($this->expressions)));
         } else {
@@ -308,7 +308,7 @@ class SecurityExtension extends Extension implements PrependExtensionInterface
 
         // load firewall map
         $mapDef = $container->getDefinition('security.firewall.map');
-        $map = $authenticationProviders = $contextRefs = $authenticators = [];
+        $map = $authenticationProviders = $contextRefs = $authenticators = $firewallConfigRefs = [];
         foreach ($firewalls as $name => $firewall) {
             if (isset($firewall['user_checker']) && 'security.user_checker' !== $firewall['user_checker']) {
                 $customUserChecker = true;
@@ -340,6 +340,7 @@ class SecurityExtension extends Extension implements PrependExtensionInterface
 
             $contextRefs[$contextId] = new Reference($contextId);
             $map[$contextId] = $matcher;
+            $firewallConfigRefs[$name] = new Reference($configId);
         }
         $container
             ->getDefinition('security.helper')
@@ -347,6 +348,7 @@ class SecurityExtension extends Extension implements PrependExtensionInterface
         ;
 
         $container->setAlias('security.firewall.context_locator', (string) ServiceLocatorTagPass::register($container, $contextRefs));
+        $container->setAlias('security.firewall_config_locator', (string) ServiceLocatorTagPass::register($container, $firewallConfigRefs));
 
         $mapDef->replaceArgument(0, new Reference('security.firewall.context_locator'));
         $mapDef->replaceArgument(1, new IteratorArgument($map));
@@ -378,7 +380,7 @@ class SecurityExtension extends Extension implements PrependExtensionInterface
         $config->replaceArgument(3, $firewall['security']);
 
         // Security disabled?
-        if (false === $firewall['security']) {
+        if (!$firewall['security']) {
             return [$matcher, [], null, null, []];
         }
 
@@ -427,7 +429,7 @@ class SecurityExtension extends Extension implements PrependExtensionInterface
 
         $contextKey = null;
         // Context serializer listener
-        if (false === $firewall['stateless']) {
+        if (!$firewall['stateless']) {
             $contextKey = $firewall['context'] ?? $id;
             $listeners[] = new Reference($this->createContextListener($container, $contextKey, $firewallEventDispatcherId));
             $sessionStrategyId = 'security.authentication.session_strategy';
@@ -464,13 +466,13 @@ class SecurityExtension extends Extension implements PrependExtensionInterface
             }
 
             // add session logout listener
-            if (true === $firewall['logout']['invalidate_session'] && false === $firewall['stateless']) {
+            if ($firewall['logout']['invalidate_session'] && !$firewall['stateless']) {
                 $container->setDefinition('security.logout.listener.session.'.$id, new ChildDefinition('security.logout.listener.session'))
                     ->addTag('kernel.event_subscriber', ['dispatcher' => $firewallEventDispatcherId]);
             }
 
             // add cookie logout listener
-            if (\count($firewall['logout']['delete_cookies']) > 0) {
+            if ($firewall['logout']['delete_cookies']) {
                 $container->setDefinition('security.logout.listener.cookie_clearing.'.$id, new ChildDefinition('security.logout.listener.cookie_clearing'))
                     ->addArgument($firewall['logout']['delete_cookies'])
                     ->addTag('kernel.event_subscriber', ['dispatcher' => $firewallEventDispatcherId]);
@@ -492,7 +494,7 @@ class SecurityExtension extends Extension implements PrependExtensionInterface
                     $firewall['logout']['csrf_token_id'],
                     $firewall['logout']['csrf_parameter'],
                     isset($firewall['logout']['csrf_token_manager']) ? new Reference($firewall['logout']['csrf_token_manager']) : null,
-                    false === $firewall['stateless'] && isset($firewall['context']) ? $firewall['context'] : null,
+                    !$firewall['stateless'] && isset($firewall['context']) ? $firewall['context'] : null,
                 ])
             ;
 
@@ -597,19 +599,21 @@ class SecurityExtension extends Extension implements PrependExtensionInterface
 
     private function createContextListener(ContainerBuilder $container, string $contextKey, ?string $firewallEventDispatcherId): string
     {
-        if (isset($this->contextListeners[$contextKey])) {
-            return $this->contextListeners[$contextKey];
-        }
-
         $listenerId = 'security.context_listener.'.\count($this->contextListeners);
         $listener = $container->setDefinition($listenerId, new ChildDefinition('security.context_listener'));
         $listener->replaceArgument(2, $contextKey);
         if (null !== $firewallEventDispatcherId) {
             $listener->replaceArgument(4, new Reference($firewallEventDispatcherId));
-            $listener->addTag('kernel.event_listener', ['event' => KernelEvents::RESPONSE, 'method' => 'onKernelResponse']);
+
+            // the firewalls sharing a context share its session key, so one listener per context is enough to write it
+            if (!\in_array($contextKey, $this->contextListeners, true)) {
+                $listener->addTag('kernel.event_listener', ['event' => KernelEvents::RESPONSE, 'method' => 'onKernelResponse']);
+            }
         }
 
-        return $this->contextListeners[$contextKey] = $listenerId;
+        $this->contextListeners[$listenerId] = $contextKey;
+
+        return $listenerId;
     }
 
     private function createAuthenticationListeners(ContainerBuilder $container, string $id, array $firewall, array &$authenticationProviders, ?string $defaultProvider, array $providerIds, ?string $defaultEntryPoint): array
@@ -859,7 +863,7 @@ class SecurityExtension extends Extension implements PrependExtensionInterface
         foreach ($this->userProviderFactories as $factory) {
             $key = str_replace('-', '_', $factory->getKey());
 
-            if (!empty($provider[$key])) {
+            if (\array_key_exists($key, $provider)) {
                 $factory->create($container, $name, $provider[$key]);
 
                 return $name;

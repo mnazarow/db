@@ -95,7 +95,7 @@ final class TextIndexer
         do {
             $ids = array_map(static fn (array $r): int => (int) $r['id'], $this->documents->createQueryBuilder('d')->select('d.id')
                 ->andWhere('d.currentVersion IS NOT NULL')->andWhere('d.id > :last')->setParameter('last', $lastId)
-                ->orderBy('d.id', 'ASC')->setMaxResults($limit)->getQuery()->getArrayResult());
+                ->orderBy('d.id', \SortDirection::Ascending)->setMaxResults($limit)->getQuery()->getArrayResult());
             $this->process($ids, $stats, $onProgress);
             if ([] !== $ids) {
                 $lastId = max($ids);

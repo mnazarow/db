@@ -25,6 +25,10 @@ framework:
     validation:
         email_validation_mode: html5
 
+    # Явно, как будет по умолчанию в Symfony 8 (иначе — предупреждение об устаревании в журнале).
+    property_info:
+        with_constructor_extractor: true
+
     # Ограничение попыток входа (защита от перебора паролей).
     # login_local — по паре «логин + IP», login_global — по IP.
     rate_limiter:

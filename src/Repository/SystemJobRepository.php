@@ -22,7 +22,7 @@ final class SystemJobRepository extends ServiceEntityRepository
     public function allByName(): array
     {
         $out = [];
-        foreach ($this->createQueryBuilder('j')->orderBy('j.name', 'ASC')->getQuery()->getResult() as $job) {
+        foreach ($this->createQueryBuilder('j')->orderBy('j.name', \SortDirection::Ascending)->getQuery()->getResult() as $job) {
             $out[$job->getName()] = $job;
         }
 

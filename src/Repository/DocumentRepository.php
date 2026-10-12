@@ -113,11 +113,11 @@ final class DocumentRepository extends ServiceEntityRepository
     private function applySort(QueryBuilder $qb, string $sort): void
     {
         match ($sort) {
-            'updated' => $qb->orderBy('d.updatedAt', 'DESC'),
-            'valid' => $qb->addSelect('CASE WHEN d.validUntil IS NULL THEN 1 ELSE 0 END AS HIDDEN vnull')->orderBy('vnull', 'ASC')->addOrderBy('d.validUntil', 'ASC'),
-            'views' => $qb->orderBy('d.viewCount', 'DESC'),
-            'code' => $qb->orderBy('d.code', 'ASC')->addOrderBy('d.title', 'ASC'),
-            default => $qb->orderBy('d.title', 'ASC'),
+            'updated' => $qb->orderBy('d.updatedAt', \SortDirection::Descending),
+            'valid' => $qb->addSelect('CASE WHEN d.validUntil IS NULL THEN 1 ELSE 0 END AS HIDDEN vnull')->orderBy('vnull', \SortDirection::Ascending)->addOrderBy('d.validUntil', \SortDirection::Ascending),
+            'views' => $qb->orderBy('d.viewCount', \SortDirection::Descending),
+            'code' => $qb->orderBy('d.code', \SortDirection::Ascending)->addOrderBy('d.title', \SortDirection::Ascending),
+            default => $qb->orderBy('d.title', \SortDirection::Ascending),
         };
     }
 
@@ -130,7 +130,7 @@ final class DocumentRepository extends ServiceEntityRepository
         }
         $this->applyRestrictions($qb, $viewer);
 
-        return $qb->orderBy('d.updatedAt', 'DESC')->setMaxResults($limit)->getQuery()->getResult();
+        return $qb->orderBy('d.updatedAt', \SortDirection::Descending)->setMaxResults($limit)->getQuery()->getResult();
     }
 
     /**
@@ -155,7 +155,7 @@ final class DocumentRepository extends ServiceEntityRepository
             }
             $qb->andWhere('d.section IN (:ids)')->setParameter('ids', $sectionIds);
         }
-        $qb->orderBy('d.validUntil', 'ASC');
+        $qb->orderBy('d.validUntil', \SortDirection::Ascending);
         if ($limit > 0) {
             $qb->setMaxResults($limit);
         }
@@ -166,7 +166,7 @@ final class DocumentRepository extends ServiceEntityRepository
     /** @return list<Document> черновики и документы на согласовании в разделах (для блока «требуют внимания») */
     public function findDrafts(?array $sectionIds = null, int $limit = 10): array
     {
-        $qb = $this->baseQb()->andWhere('d.status IN (:st)')->setParameter('st', [Document::STATUS_DRAFT, Document::STATUS_REVIEW])->orderBy('d.updatedAt', 'DESC');
+        $qb = $this->baseQb()->andWhere('d.status IN (:st)')->setParameter('st', [Document::STATUS_DRAFT, Document::STATUS_REVIEW])->orderBy('d.updatedAt', \SortDirection::Descending);
         if (null !== $sectionIds) {
             if ([] === $sectionIds) {
                 return [];
@@ -214,7 +214,7 @@ final class DocumentRepository extends ServiceEntityRepository
         }
         $this->applyRestrictions($qb, $viewer);
 
-        return $qb->orderBy('d.updatedAt', 'DESC')->setMaxResults($limit)->getQuery()->getResult();
+        return $qb->orderBy('d.updatedAt', \SortDirection::Descending)->setMaxResults($limit)->getQuery()->getResult();
     }
 
     /**
@@ -505,7 +505,7 @@ final class DocumentRepository extends ServiceEntityRepository
         $qb = $this->apiQb($filters);
         $count = (clone $qb)->select('COUNT(d.id)')->resetDQLPart('orderBy');
         $total = (int) $count->getQuery()->getSingleScalarResult();
-        $items = $qb->orderBy('d.updatedAt', 'ASC')->addOrderBy('d.id', 'ASC')
+        $items = $qb->orderBy('d.updatedAt', \SortDirection::Ascending)->addOrderBy('d.id', \SortDirection::Ascending)
             ->setFirstResult(($page - 1) * $perPage)->setMaxResults($perPage)
             ->getQuery()->getResult();
 
@@ -527,7 +527,7 @@ final class DocumentRepository extends ServiceEntityRepository
             ->andWhere('d.updatedAt > :at OR (d.updatedAt = :at AND d.id > :after)')
             ->setParameter('at', $at)->setParameter('after', $afterId);
 
-        return $qb->orderBy('d.updatedAt', 'ASC')->addOrderBy('d.id', 'ASC')->setMaxResults($limit + 1)->getQuery()->getResult();
+        return $qb->orderBy('d.updatedAt', \SortDirection::Ascending)->addOrderBy('d.id', \SortDirection::Ascending)->setMaxResults($limit + 1)->getQuery()->getResult();
     }
 
     /**
@@ -547,7 +547,7 @@ final class DocumentRepository extends ServiceEntityRepository
             $hidden = '('.$hidden.' OR d.isPublic = false)';
         }
 
-        return $qb->andWhere($hidden)->orderBy('d.updatedAt', 'ASC')->addOrderBy('d.id', 'ASC')->setMaxResults($limit + 1)->getQuery()->getResult();
+        return $qb->andWhere($hidden)->orderBy('d.updatedAt', \SortDirection::Ascending)->addOrderBy('d.id', \SortDirection::Ascending)->setMaxResults($limit + 1)->getQuery()->getResult();
     }
 
     /**
@@ -567,7 +567,7 @@ final class DocumentRepository extends ServiceEntityRepository
             $hidden = '('.$hidden.' OR d.isPublic = false)';
         }
 
-        return $qb->andWhere($hidden)->orderBy('d.updatedAt', 'ASC')->setMaxResults($limit)->getQuery()->getResult();
+        return $qb->andWhere($hidden)->orderBy('d.updatedAt', \SortDirection::Ascending)->setMaxResults($limit)->getQuery()->getResult();
     }
 
     /** @param array{statuses: list<string>, public_only: bool, section?: ?Section, subtree?: bool, type?: ?string, updated_since?: ?\DateTimeImmutable, tag?: ?string, q?: ?string} $filters */
@@ -634,7 +634,7 @@ final class DocumentRepository extends ServiceEntityRepository
             $qb->andWhere('s.path LIKE :path')->setParameter('path', $section->getPath().'%');
         }
 
-        return $qb->orderBy('d.id', 'ASC')->setMaxResults($limit)->getQuery()->getResult();
+        return $qb->orderBy('d.id', \SortDirection::Ascending)->setMaxResults($limit)->getQuery()->getResult();
     }
 
     /** @return array{total: int, with_description: int, llm: int, without: int} сводка по описаниям (без архива) */
@@ -656,7 +656,7 @@ final class DocumentRepository extends ServiceEntityRepository
     public function findTopByViews(int $limit = 10): array
     {
         return $this->baseQb()->andWhere('d.status = :st')->setParameter('st', Document::STATUS_PUBLISHED)
-            ->orderBy('d.viewCount', 'DESC')->addOrderBy('d.downloadCount', 'DESC')->setMaxResults($limit)->getQuery()->getResult();
+            ->orderBy('d.viewCount', \SortDirection::Descending)->addOrderBy('d.downloadCount', \SortDirection::Descending)->setMaxResults($limit)->getQuery()->getResult();
     }
 
     /** @return list<Document> опубликованные документы, которые никто не открывал N дней */
@@ -664,7 +664,7 @@ final class DocumentRepository extends ServiceEntityRepository
     {
         return $this->baseQb()->andWhere('d.status = :st')->setParameter('st', Document::STATUS_PUBLISHED)
             ->andWhere('(d.lastViewedAt IS NULL AND d.publishedAt < :since) OR d.lastViewedAt < :since')->setParameter('since', $since)
-            ->orderBy('d.lastViewedAt', 'ASC')->setMaxResults($limit)->getQuery()->getResult();
+            ->orderBy('d.lastViewedAt', \SortDirection::Ascending)->setMaxResults($limit)->getQuery()->getResult();
     }
 
     public function countAll(): int
@@ -702,7 +702,7 @@ final class DocumentRepository extends ServiceEntityRepository
             ->andWhere('d.type = :type')->setParameter('type', Document::TYPE_FILE)
             ->andWhere('d.status <> :archived')->setParameter('archived', Document::STATUS_ARCHIVED)
             ->andWhere('LOWER(cv.originalName) = :name')->setParameter('name', mb_strtolower($originalName))
-            ->orderBy('d.updatedAt', 'DESC')->addOrderBy('d.id', 'DESC')
+            ->orderBy('d.updatedAt', \SortDirection::Descending)->addOrderBy('d.id', \SortDirection::Descending)
             ->setMaxResults(1)
             ->getQuery()->getOneOrNullResult();
     }

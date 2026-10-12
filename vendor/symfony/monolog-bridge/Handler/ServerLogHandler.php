@@ -58,7 +58,7 @@ final class ServerLogHandler extends AbstractProcessingHandler
 
         try {
             if (!$this->socket = $this->socket ?: $this->createSocket()) {
-                return false === $this->bubble;
+                return !$this->bubble;
             }
         } finally {
             restore_error_handler();
@@ -115,6 +115,10 @@ final class ServerLogHandler extends AbstractProcessingHandler
                 $recordFormatted['log_id'] = $record->extra[$key];
                 break;
             }
+        }
+
+        if (isset($recordFormatted['datetime']) && $recordFormatted['datetime'] instanceof \DateTimeInterface) {
+            $recordFormatted['datetime'] = $recordFormatted['datetime']->format('Y-m-d\TH:i:s.uP');
         }
 
         return base64_encode(serialize($recordFormatted))."\n";

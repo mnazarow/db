@@ -142,7 +142,7 @@ abstract class FileLoader extends BaseFileLoader
                 if (strpos($serialized, 'O:48:"Symfony\Component\DependencyInjection\Definition"')
                     || strpos($serialized, 'O:53:"Symfony\Component\DependencyInjection\ChildDefinition"')
                 ) {
-                    $getPrototype = static fn () => $getPrototype()->{'set'.$key}(unserialize($serialized));
+                    $getPrototype = static fn () => $getPrototype()->{'set'.$key}(unserialize($serialized, ['allowed_classes' => true]));
                 }
             }
         }
@@ -203,7 +203,6 @@ abstract class FileLoader extends BaseFileLoader
                 if ($r->isInterface()) {
                     $this->interfaces[] = $class;
                 }
-                $autoconfigureAttributes?->processClass($this->container, $r);
                 $definition->setAbstract(true)
                     ->addTag('container.excluded', ['source' => 'because the class is abstract']);
                 continue;

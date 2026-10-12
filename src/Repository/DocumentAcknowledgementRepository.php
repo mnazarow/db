@@ -67,7 +67,7 @@ final class DocumentAcknowledgementRepository extends ServiceEntityRepository
             ->andWhere('a.user = :u')->setParameter('u', $user)
             ->andWhere('a.confirmedAt IS NULL')
             ->andWhere(self::NOT_SUPERSEDED)
-            ->orderBy('a.versionNumber', 'DESC')
+            ->orderBy('a.versionNumber', \SortDirection::Descending)
             ->setMaxResults(1)
             ->getQuery()->getOneOrNullResult();
     }
@@ -87,8 +87,8 @@ final class DocumentAcknowledgementRepository extends ServiceEntityRepository
         $qb = $this->createQueryBuilder('a')
             ->join('a.user', 'u')->addSelect('u')
             ->andWhere('a.document = :d')->setParameter('d', $document)
-            ->orderBy('a.versionNumber', 'DESC')
-            ->addOrderBy('u.displayName', 'ASC');
+            ->orderBy('a.versionNumber', \SortDirection::Descending)
+            ->addOrderBy('u.displayName', \SortDirection::Ascending);
         if (null !== $versionNumber) {
             $qb->andWhere('a.versionNumber = :v')->setParameter('v', $versionNumber);
         }
@@ -109,7 +109,7 @@ final class DocumentAcknowledgementRepository extends ServiceEntityRepository
             ->andWhere('a.user = :u_id')->setParameter('u_id', $user)
             ->andWhere('a.confirmedAt IS NULL')
             ->andWhere(self::NOT_SUPERSEDED)
-            ->orderBy('a.dueAt', 'ASC')->addOrderBy('a.assignedAt', 'ASC')
+            ->orderBy('a.dueAt', \SortDirection::Ascending)->addOrderBy('a.assignedAt', \SortDirection::Ascending)
             ->setMaxResults($limit);
         $this->applyReadable($qb, $user, $viewer);
 
@@ -128,7 +128,7 @@ final class DocumentAcknowledgementRepository extends ServiceEntityRepository
             ->join('d.section', 's')->addSelect('s')
             ->andWhere('a.user = :u')->setParameter('u', $user)
             ->andWhere('a.confirmedAt IS NOT NULL')
-            ->orderBy('a.confirmedAt', 'DESC')
+            ->orderBy('a.confirmedAt', \SortDirection::Descending)
             ->setMaxResults($limit)
             ->getQuery()->getResult();
     }
@@ -149,7 +149,7 @@ final class DocumentAcknowledgementRepository extends ServiceEntityRepository
             ->andWhere(self::NOT_SUPERSEDED)
             ->andWhere("d.status = 'published'")
             ->andWhere('u.active = true')
-            ->orderBy('u.id', 'ASC')->addOrderBy('a.dueAt', 'ASC');
+            ->orderBy('u.id', \SortDirection::Ascending)->addOrderBy('a.dueAt', \SortDirection::Ascending);
         $soon = $today->modify('+'.max(0, $soonDays).' days');
         if (null === $remindedBefore) {
             $qb->andWhere('a.dueAt IS NULL OR a.dueAt <= :soon')->setParameter('soon', $soon);
@@ -197,7 +197,7 @@ final class DocumentAcknowledgementRepository extends ServiceEntityRepository
                 'MAX(a.assignedAt) AS last_assigned')
             ->setParameter('today', new \DateTimeImmutable('today'))
             ->groupBy('document_id', 'a.versionNumber')
-            ->orderBy('last_assigned', 'DESC')
+            ->orderBy('last_assigned', \SortDirection::Descending)
             ->setMaxResults($limit)
             ->getQuery()->getArrayResult();
         if ([] === $rows) {

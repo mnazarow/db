@@ -22,13 +22,13 @@ final class DocumentTemplateRepository extends ServiceEntityRepository
     /** @return list<DocumentTemplate> */
     public function findAllOrdered(): array
     {
-        return $this->createQueryBuilder('t')->orderBy('t.active', 'DESC')->addOrderBy('t.name', 'ASC')->getQuery()->getResult();
+        return $this->createQueryBuilder('t')->orderBy('t.active', \SortDirection::Descending)->addOrderBy('t.name', \SortDirection::Ascending)->getQuery()->getResult();
     }
 
     /** @return list<DocumentTemplate> */
     public function findActive(): array
     {
-        return $this->createQueryBuilder('t')->andWhere('t.active = true')->orderBy('t.name', 'ASC')->getQuery()->getResult();
+        return $this->createQueryBuilder('t')->andWhere('t.active = true')->orderBy('t.name', \SortDirection::Ascending)->getQuery()->getResult();
     }
 
     /**

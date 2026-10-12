@@ -46,7 +46,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: "mysql://${MYSQL_USER:-docportal}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE:-docportal}?serverVersion=8.0&charset=utf8mb4"
+      DATABASE_URL: "mysql://${MYSQL_USER:-docportal}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE:-docportal}?serverVersion=8.0.0&charset=utf8mb4"
       STORAGE_DIR: /var/www/html/var/storage
       IMPORT_DIR: /var/www/html/var/import
     volumes:
@@ -70,7 +70,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: "mysql://${MYSQL_USER:-docportal}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE:-docportal}?serverVersion=8.0&charset=utf8mb4"
+      DATABASE_URL: "mysql://${MYSQL_USER:-docportal}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE:-docportal}?serverVersion=8.0.0&charset=utf8mb4"
       STORAGE_DIR: /var/www/html/var/storage
       IMPORT_DIR: /var/www/html/var/import
       EXPIRY_CRON: ${EXPIRY_CRON:-0 8 * * *}

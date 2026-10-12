@@ -44,7 +44,7 @@
             </trans-unit>
             <trans-unit id="106">
                 <source>Please choose a valid date interval.</source>
-                <target>Kies een geldig tijdinterval.</target>
+                <target>Kies een geldig tijdsinterval.</target>
             </trans-unit>
             <trans-unit id="107">
                 <source>Please enter a valid date and time.</source>
@@ -133,6 +133,14 @@
             <trans-unit id="128">
                 <source>Please enter a valid week.</source>
                 <target>Vul een geldige week in.</target>
+            </trans-unit>
+            <trans-unit id="129">
+                <source>Please enter a valid UUID.</source>
+                <target>Vul een geldige UUID in.</target>
+            </trans-unit>
+            <trans-unit id="130">
+                <source>The lower bound must not be greater than the upper bound.</source>
+                <target>De ondergrens mag niet groter zijn dan de bovengrens.</target>
             </trans-unit>
         </body>
     </file>

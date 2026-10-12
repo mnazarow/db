@@ -21,7 +21,7 @@ final class DocumentKindRepository extends ServiceEntityRepository
     /** @return list<DocumentKind> типы в порядке показа */
     public function findOrdered(): array
     {
-        return $this->createQueryBuilder('k')->orderBy('k.position', 'ASC')->addOrderBy('k.name', 'ASC')->getQuery()->getResult();
+        return $this->createQueryBuilder('k')->orderBy('k.position', \SortDirection::Ascending)->addOrderBy('k.name', \SortDirection::Ascending)->getQuery()->getResult();
     }
 
     /** Поиск по названию без учёта регистра и лишних пробелов. */

@@ -134,6 +134,14 @@
                 <source>Please enter a valid week.</source>
                 <target>Ве молиме внесете валидна недела.</target>
             </trans-unit>
+            <trans-unit id="129">
+                <source>Please enter a valid UUID.</source>
+                <target>Ве молиме внесете валиден UUID.</target>
+            </trans-unit>
+            <trans-unit id="130">
+                <source>The lower bound must not be greater than the upper bound.</source>
+                <target>Долната граница не смее да биде поголема од горната граница.</target>
+            </trans-unit>
         </body>
     </file>
 </xliff>

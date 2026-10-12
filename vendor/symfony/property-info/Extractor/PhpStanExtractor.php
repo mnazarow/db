@@ -88,7 +88,7 @@ final class PhpStanExtractor implements PropertyDescriptionExtractorInterface, P
             $this->phpDocParser = new PhpDocParser($parserConfig, new TypeParser($parserConfig, new ConstExprParser($parserConfig)), new ConstExprParser($parserConfig));
             $this->lexer = new Lexer($parserConfig);
         } else {
-            $this->phpDocParser = new PhpDocParser(new TypeParser(new ConstExprParser()), new ConstExprParser());
+            $this->phpDocParser = new PhpDocParser(new TypeParser($constExprParser = new ConstExprParser(true, true), true), $constExprParser);
             $this->lexer = new Lexer();
         }
         $this->stringTypeResolver = new StringTypeResolver();
@@ -535,22 +535,28 @@ final class PhpStanExtractor implements PropertyDescriptionExtractorInterface, P
             try {
                 $method = new \ReflectionMethod($class, $methodName);
                 if ($method->isStatic()) {
+                    $method = null;
+
                     continue;
                 }
 
                 if (self::ACCESSOR === $type && \in_array((string) $method->getReturnType(), ['void', 'never'], true)) {
+                    $method = null;
+
                     continue;
                 }
 
                 if (
                     (
                         (self::ACCESSOR === $type && !$method->getNumberOfRequiredParameters())
-                        || (self::MUTATOR === $type && $method->getNumberOfParameters() >= 1)
+                        || (self::MUTATOR === $type && $method->getNumberOfParameters() >= 1 && $method->getNumberOfRequiredParameters() <= 1)
                     )
                     && $this->canAccessMemberBasedOnItsVisibility($method)
                 ) {
                     break;
                 }
+
+                $method = null;
             } catch (\ReflectionException) {
                 // Try the next prefix if the method doesn't exist
             }
