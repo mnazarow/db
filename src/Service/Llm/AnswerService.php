@@ -17,6 +17,7 @@ use App\Service\Video\VideoApi;
 use Doctrine\ORM\EntityManagerInterface;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
+use Symfony\Contracts\Service\ResetInterface;
 
 /**
  * Ответы на вопросы сотрудников по документам и видео портала (страница поиска, кнопка «Ответить»).
@@ -33,7 +34,7 @@ use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
  * Каждый вопрос с итогом (ответ, «в документах ответа нет», ничего не найдено, ошибка) пишется в журнал
  * (AiQuestion), если он включён: сотрудник оценивает ответ, администратор видит вопросы без ответа.
  */
-final class AnswerService
+final class AnswerService implements ResetInterface
 {
     /** Документов-источников в одном ответе. */
     public const MAX_DOCUMENTS = 5;
@@ -55,8 +56,12 @@ final class AnswerService
     private const EMBED_TIMEOUT_SIMILAR = 4;
 
     /** Модель эмбеддингов не ответила — минуту поиск по смыслу не пробуется (страницы не ждут тайм-аута). */
-    private const EMBED_PAUSE_SECONDS = 60;
-    private const EMBED_PAUSE_KEY = 'semantic_search_paused';
+    /** После сбоя модели эмбеддингов поиск по смыслу (и сравнение проверенных ответов по смыслу) — на паузе. */
+    public const EMBED_PAUSE_SECONDS = 60;
+    public const EMBED_PAUSE_KEY = 'semantic_search_paused';
+
+    /** @var array<string, list<float>|null> векторы вопросов в пределах запроса */
+    private array $vectorMemo = [];
 
     /** Признак ответа «в документах ответа нет» (инструкция модели просит именно эти слова). */
     private const NOT_FOUND_PATTERN = '/(ответа|ответ)\s+не\s+нашл|не\s+нашлось\s+ответа|нет\s+(сведений|информации|ответа)/iu';
@@ -179,8 +184,12 @@ final class AnswerService
         }
         $question = mb_substr($question, 0, AiQuestion::MAX_QUESTION);
         $verified = null;
+        $byMeaning = false;
         try {
-            $verified = $this->verified?->match($question, $user, true);
+            // По смыслу — только если по словам не подошёл; вектор вопроса потом пригодится и поиску источников.
+            $match = $this->verified?->explain($question, $user, true, fn (): ?array => null !== $this->semantic && $this->semantic->isEnabled() ? $this->questionVector($question, self::EMBED_TIMEOUT_ANSWER) : null);
+            $verified = $match['answer'] ?? null;
+            $byMeaning = 'meaning' === ($match['how'] ?? null);
         } catch (\Throwable $e) {
             $this->logger->warning('Проверенные ответы недоступны', ['error' => $e->getMessage()]);
         }
@@ -188,7 +197,7 @@ final class AnswerService
         // ему не выдаётся (match() их пропускает) — отвечает модель по доступным ему документам.
         if (null !== $verified) {
             $verified->markUsed();
-            $result = $this->finish($user, $question, $started, AiQuestion::STATUS_VERIFIED, $verified->getAnswer(), $this->verified->sourcesFor($verified, $user), false, null);
+            $result = $this->finish($user, $question, $started, AiQuestion::STATUS_VERIFIED, $verified->getAnswer(), $this->verified->sourcesFor($verified, $user), $byMeaning, null);
             try {
                 $this->em?->flush();
             } catch (\Throwable) {
@@ -456,6 +465,39 @@ final class AnswerService
         return ['sources' => $sources, 'semantic' => [] !== $semanticHits];
     }
 
+    public function reset(): void
+    {
+        $this->vectorMemo = [];
+    }
+
+    /**
+     * Вектор вопроса для поиска по смыслу (один запрос к модели на вопрос — его используют и проверенные ответы, и
+     * поиск источников). Модель не ответила — минуту поиск по смыслу не пробуется (ответы ищутся по словам).
+     *
+     * @return list<float>|null
+     */
+    private function questionVector(string $question, int $timeout): ?array
+    {
+        if (\array_key_exists($question, $this->vectorMemo)) {
+            return $this->vectorMemo[$question];
+        }
+        if ($this->llm->cacheHas(self::EMBED_PAUSE_KEY)) {
+            return null;
+        }
+        try {
+            $vector = $this->llm->embed([$question], $timeout)[0] ?? null;
+        } catch (LlmException $e) {
+            $this->llm->cacheSet(self::EMBED_PAUSE_KEY, self::EMBED_PAUSE_SECONDS);
+            $this->logger->warning('Поиск по смыслу недоступен — минуту ищем только по словам', ['error' => $e->getMessage()]);
+            $vector = null;
+        }
+        if (\count($this->vectorMemo) > 20) {
+            $this->vectorMemo = [];
+        }
+
+        return $this->vectorMemo[$question] = $vector;
+    }
+
     /**
      * Документы, ближайшие к вопросу по смыслу, с лучшими фрагментами (только доступные сотруднику).
      *
@@ -463,15 +505,8 @@ final class AnswerService
      */
     private function semanticHits(User $user, string $question, int $limit, int $timeout): array
     {
-        if (null === $this->semantic || $this->llm->cacheHas(self::EMBED_PAUSE_KEY)) {
-            return [];
-        }
-        try {
-            $vector = $this->llm->embed([$question], $timeout)[0];
-        } catch (LlmException $e) {
-            $this->llm->cacheSet(self::EMBED_PAUSE_KEY, self::EMBED_PAUSE_SECONDS);
-            $this->logger->warning('Поиск по смыслу недоступен — минуту ищем только по словам', ['error' => $e->getMessage()]);
-
+        $vector = null !== $this->semantic ? $this->questionVector($question, $timeout) : null;
+        if (null === $vector) {
             return [];
         }
         // Шаг 1 — кандидаты по векторам документов; шаг 2 — их фрагменты: место документа решает лучший фрагмент

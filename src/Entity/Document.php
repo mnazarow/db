@@ -125,7 +125,7 @@ class Document
 
     /** @var Collection<int, DocumentVersion> */
     #[ORM\OneToMany(targetEntity: DocumentVersion::class, mappedBy: 'document', cascade: ['persist', 'remove'])]
-    #[ORM\OrderBy(['number' => 'DESC'])]
+    #[ORM\OrderBy(['number' => \SortDirection::Descending])]
     private Collection $versions;
 
     /**

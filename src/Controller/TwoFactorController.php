@@ -12,6 +12,7 @@ use Doctrine\ORM\EntityManagerInterface;
 use Psr\Log\LoggerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Bundle\SecurityBundle\Security;
+use Symfony\Component\DependencyInjection\Attribute\Target;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\RateLimiter\RateLimiterFactoryInterface;
@@ -28,6 +29,7 @@ final class TwoFactorController extends AbstractController
         private readonly EntityManagerInterface $em,
         private readonly LoggerInterface $auditLogger,
         private readonly Security $security,
+        #[Target]
         private readonly RateLimiterFactoryInterface $twoFactorLimiter,
         private readonly string $appName,
     ) {

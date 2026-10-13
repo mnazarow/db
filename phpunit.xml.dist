@@ -6,13 +6,15 @@
          bootstrap="tests/bootstrap.php"
          cacheDirectory="var/cache/.phpunit.cache"
          failOnDeprecation="false"
-         displayDetailsOnTestsThatTriggerDeprecations="false">
+         displayDetailsOnTestsThatTriggerDeprecations="true">
     <php>
         <ini name="display_errors" value="1"/>
         <ini name="error_reporting" value="-1"/>
         <server name="APP_ENV" value="test" force="true"/>
         <server name="KERNEL_CLASS" value="App\Kernel"/>
         <server name="SHELL_VERBOSITY" value="-1"/>
+        <!-- Устаревшие вызовы Doctrine — в отчёт PHPUnit (в CI на PHP 8.5 и в пробе Symfony 8 они роняют сборку). -->
+        <server name="DOCTRINE_DEPRECATIONS" value="trigger"/>
         <!-- Раздел «Видео»: проверка сессии для видеопортала (tests/Functional/VideoSessionTest.php). -->
         <server name="VIDEO_ENABLED" value="1"/>
         <server name="VIDEO_SHARED_SECRET" value="test-video-secret-0123456789abcdef"/>
@@ -22,7 +24,7 @@
             <directory>tests</directory>
         </testsuite>
     </testsuites>
-    <source>
+    <source ignoreSuppressionOfDeprecations="true">
         <include>
             <directory>src</directory>
         </include>

@@ -1,6 +1,7 @@
 # Проверки портала на каждое изменение: синтаксис конфигурации и шаблонов, соответствие миграций
-# схеме, автотесты PHPUnit на MariaDB 10.11 и MySQL 8.0 / 8.4, раздел «Видео» (тесты связки с порталом на
-# PostgreSQL, сборка интерфейса, тесты API видеопортала) и проверка скриптов развёртывания shellcheck.
+# схеме, автотесты PHPUnit на PHP 8.2–8.5 с MariaDB 10.11 и MySQL 8.0 / 8.4, проба Symfony 8, раздел «Видео»
+# (тесты связки с порталом на PostgreSQL, сборка интерфейса, тесты API видеопортала) и проверка скриптов
+# развёртывания shellcheck.
 # Установка на чистый сервер — .github/workflows/e2e.yml, выпуск версии — .github/workflows/release.yml,
 # уязвимости в зависимостях — .github/workflows/security.yml.
 name: CI
@@ -11,7 +12,8 @@ on:
 
 jobs:
   # Серверы баз данных, на которых работает портал: MariaDB — в Debian и Ubuntu (установка без Docker),
-  # MySQL 8 — в режиме Docker. Миграции и все автотесты проходят на каждом.
+  # MySQL 8 — в режиме Docker. Миграции и все автотесты проходят на каждом. На самой новой версии PHP
+  # сборка падает и от устаревших вызовов (deprecations) — их убирают заранее, до перехода на Symfony 8.
   php:
     name: PHPUnit и проверки Symfony (PHP ${{ matrix.php }}, ${{ matrix.db.name }})
     runs-on: ubuntu-24.04
@@ -27,6 +29,9 @@ jobs:
             db: { name: MySQL 8.0, image: 'mysql:8.0', version: 8.0.0, health: 'mysqladmin ping -h 127.0.0.1 -uroot -proot' }
           - php: '8.4'
             db: { name: MySQL 8.4, image: 'mysql:8.4', version: 8.4.0, health: 'mysqladmin ping -h 127.0.0.1 -uroot -proot' }
+          - php: '8.5'
+            strict: true
+            db: { name: MariaDB 10.11, image: 'mariadb:10.11', version: 10.11.14-MariaDB, health: 'healthcheck.sh --connect --innodb_initialized' }
     services:
       db:
         image: ${{ matrix.db.image }}
@@ -66,7 +71,39 @@ jobs:
       - name: Автотесты
         run: |
           rm -rf var/cache/test
-          vendor/bin/phpunit
+          vendor/bin/phpunit ${{ matrix.strict && '--fail-on-deprecation' || '' }}
+
+  # Проба следующей мажорной версии Symfony (РУКОВОДСТВО, 8.4): зависимости обновляются до Symfony 8,
+  # DoctrineBundle 3 и MonologBundle 4, автотесты (SQLite) должны пройти без устаревших вызовов. Это сигнал
+  # «к переходу готовы», а не блокировка: падение задания не останавливает остальную сборку.
+  symfony-next:
+    name: Проба Symfony 8 (PHP 8.5)
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    env:
+      APP_ENV: test
+      DATABASE_URL: sqlite:///%kernel.project_dir%/var/test.db
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          extensions: intl, pdo_mysql, pdo_sqlite, zip, gd, ldap, mbstring, xml, curl, fileinfo
+          tools: composer:v2
+          coverage: none
+      - name: Инструменты для проверок извлечения текста
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends poppler-utils fonts-dejavu-core
+      - name: Зависимости Symfony 8
+        run: bash scripts/symfony-next.sh 8.1
+      - name: Конфигурация и шаблоны
+        run: |
+          php bin/console lint:container
+          php bin/console lint:twig templates
+          php bin/console doctrine:schema:validate --skip-sync
+      - name: Автотесты без устаревших вызовов
+        run: |
+          rm -rf var/cache/test
+          vendor/bin/phpunit --fail-on-deprecation
 
   video:
     name: Раздел «Видео» (Node.js, PostgreSQL)

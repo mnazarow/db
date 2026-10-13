@@ -364,7 +364,6 @@ final class AcknowledgementService
         $docs = $this->acknowledgements->userRows(null, array_map(static fn (array $s): int => (int) $s['user']->getId(), $subordinates));
         $videoAvailable = null !== $video;
         $video ??= [];
-        $today = new \DateTimeImmutable('today');
         $people = [];
         $totals = ['people' => 0, 'pending' => 0, 'overdue' => 0, 'docs_assigned' => 0, 'docs_confirmed' => 0, 'video_assigned' => 0, 'video_completed' => 0];
         foreach ($subordinates as ['user' => $user, 'depth' => $depth]) {
@@ -372,20 +371,7 @@ final class AcknowledgementService
             $d = $docs[$id] ?? ['assigned' => 0, 'confirmed' => 0, 'overdue' => 0];
             $v = $video[$id] ?? ['assigned' => 0, 'completed' => 0, 'overdue' => 0];
             $pending = ($d['assigned'] - $d['confirmed']) + ($v['assigned'] - $v['completed']);
-            $documents = [];
-            if ($details && $d['assigned'] > $d['confirmed']) {
-                foreach ($this->acknowledgements->findPendingForUser($user, 30) as $ack) {
-                    $document = $ack->getDocument();
-                    $visible = null === $this->access || $this->access->canViewDocument($manager, $document);
-                    $due = $ack->getDueAt();
-                    $documents[] = [
-                        'title' => $visible ? $document->getTitle() : null,
-                        'url_id' => $visible ? $document->getId() : null,
-                        'due' => $due,
-                        'overdue' => null !== $due && $due < $today,
-                    ];
-                }
-            }
+            $documents = $details && $d['assigned'] > $d['confirmed'] ? $this->pendingDocumentsFor($manager, $user) : [];
             $people[] = ['user' => $user, 'depth' => $depth, 'docs' => $d, 'video' => $v, 'pending' => $pending, 'overdue' => $d['overdue'] + $v['overdue'], 'documents' => $documents];
             ++$totals['people'];
             $totals['pending'] += $pending;
@@ -397,6 +383,31 @@ final class AcknowledgementService
         }
 
         return ['people' => $people, 'totals' => $totals, 'video_available' => $videoAvailable];
+    }
+
+    /**
+     * Неподтверждённые ознакомления сотрудника (не больше $limit, ближайшие сроки первыми) так, как их видит
+     * руководитель: названия документов, которые ему не открыты, скрыты.
+     *
+     * @return list<array{title: ?string, url_id: ?int, due: ?\DateTimeImmutable, overdue: bool}>
+     */
+    public function pendingDocumentsFor(User $viewer, User $user, int $limit = 30): array
+    {
+        $today = new \DateTimeImmutable('today');
+        $documents = [];
+        foreach ($this->acknowledgements->findPendingForUser($user, $limit) as $ack) {
+            $document = $ack->getDocument();
+            $visible = null === $this->access || $this->access->canViewDocument($viewer, $document);
+            $due = $ack->getDueAt();
+            $documents[] = [
+                'title' => $visible ? $document->getTitle() : null,
+                'url_id' => $visible ? $document->getId() : null,
+                'due' => $due,
+                'overdue' => null !== $due && $due < $today,
+            ];
+        }
+
+        return $documents;
     }
 
     private static function startsUpper(string $name): bool

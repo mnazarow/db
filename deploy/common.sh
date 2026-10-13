@@ -634,6 +634,7 @@ cron_app_jobs() {
 30 8 * * * root /usr/local/bin/${APP_ID} console app:documents:acknowledge-remind --no-interaction >> ${LOG_DIR}/acknowledge-cron.log 2>&1
 * * * * * root /usr/local/bin/${APP_ID} console app:telegram:poll --no-interaction >> ${LOG_DIR}/telegram-cron.log 2>&1
 10 9 * * 1 root /usr/local/bin/${APP_ID} console app:materials:remind --no-interaction >> ${LOG_DIR}/materials-remind-cron.log 2>&1
+40 8 * * 1 root /usr/local/bin/${APP_ID} console app:team:digest --no-interaction >> ${LOG_DIR}/team-digest-cron.log 2>&1
 EOF
 }
 
@@ -774,6 +775,9 @@ if [[ "\${INSTALL_MODE}" == "docker" ]]; then DEPLOY="\${APP_DIR}/deploy"; else 
 # без терминала (cron, конвейер) — без псевдотерминала.
 DEXEC=(docker compose exec -u www-data)
 [[ -t 0 && -t 1 ]] || DEXEC+=(-T)
+# Консоль — той же версией PHP, что и PHP-FPM (php8.3, php8.4…), а не той, на которую указывает «php»:
+# на сервере может стоять и другая версия.
+PHPX=\$(command -v "php\${PHP_VERSION:-}" 2>/dev/null || command -v php 2>/dev/null || echo php)
 cmd="\${1:-help}"; shift || true
 case "\${cmd}" in
     update|backup|restore|uninstall|status|doctor|maintenance|verify-backup|remote-backup|video|auto-update|kerberos)
@@ -783,7 +787,7 @@ case "\${cmd}" in
         if [[ "\${INSTALL_MODE}" == "docker" ]]; then
             cd "\${APP_DIR}/docker" && exec "\${DEXEC[@]}" app php bin/console "\$@"
         else
-            exec runuser -u "\${SERVICE_USER}" -- php "\${APP_DIR}/current/bin/console" "\$@"
+            exec runuser -u "\${SERVICE_USER}" -- "\${PHPX}" "\${APP_DIR}/current/bin/console" "\$@"
         fi ;;
     import)
         # import [КАТАЛОГ] [параметры app:import:directory]: папки → разделы, файлы → документы.
@@ -799,11 +803,11 @@ case "\${cmd}" in
             "\${DEXEC[@]}" app php bin/console app:import:directory "/var/www/html/var/import/\${NAME}" --root-as-section "\$@" || exit \$?
             exec docker compose exec -T app rm -rf "/var/www/html/var/import/\${NAME}"
         fi
-        if [[ -z "\${SRC}" ]]; then exec runuser -u "\${SERVICE_USER}" -- php "\${APP_DIR}/current/bin/console" app:import:directory "\$@"; fi
+        if [[ -z "\${SRC}" ]]; then exec runuser -u "\${SERVICE_USER}" -- "\${PHPX}" "\${APP_DIR}/current/bin/console" app:import:directory "\$@"; fi
         [[ -d "\${SRC}" ]] || { echo "Каталог не найден: \${SRC}" >&2; exit 1; }
         SRC=\$(cd "\${SRC}" && pwd)
         # Пользователь службы должен читать каталог: при необходимости скопируйте его в \${APP_DIR}/shared/import.
-        exec runuser -u "\${SERVICE_USER}" -- php "\${APP_DIR}/current/bin/console" app:import:directory "\${SRC}" --root-as-section "\$@" ;;
+        exec runuser -u "\${SERVICE_USER}" -- "\${PHPX}" "\${APP_DIR}/current/bin/console" app:import:directory "\${SRC}" --root-as-section "\$@" ;;
     org-import)
         # org-import ФАЙЛ [параметры app:org:import]: оргструктура из выгрузки 1С:ЗУП (CSV или Excel).
         # Файл копируется туда, где его прочитает пользователь службы (в Docker — в контейнер), и после загрузки удаляется.
@@ -821,13 +825,14 @@ case "\${cmd}" in
         fi
         TMPDIR_ORG=\$(mktemp -d) || exit 1
         install -m 0644 "\${SRC}" "\${TMPDIR_ORG}/\${TMPNAME}" && chmod 0755 "\${TMPDIR_ORG}" || { rm -rf "\${TMPDIR_ORG}"; exit 1; }
-        runuser -u "\${SERVICE_USER}" -- php "\${APP_DIR}/current/bin/console" app:org:import "\${TMPDIR_ORG}/\${TMPNAME}" "\$@" || rc=\$?
+        runuser -u "\${SERVICE_USER}" -- "\${PHPX}" "\${APP_DIR}/current/bin/console" app:org:import "\${TMPDIR_ORG}/\${TMPNAME}" "\$@" || rc=\$?
         rm -rf "\${TMPDIR_ORG}"
         exit "\${rc}" ;;
-    api-key|describe|reindex|acknowledge-remind|telegram|ai-index)
+    api-key|describe|reindex|acknowledge-remind|telegram|ai-index|team-digest)
         # api-key — ключи REST API; describe — описания через LLM; reindex — индекс поиска по содержимому;
         # ai-index — смысловой индекс для ответов ИИ (поиск по смыслу) и очистка журнала вопросов к ИИ;
         # acknowledge-remind — напоминания сотрудникам о неподтверждённом ознакомлении;
+        # team-digest — еженедельная сводка руководителям (кто из сотрудников не ознакомился);
         # telegram — разбор сообщений бота и проверка связи.
         SUB="app:api-key"
         [[ "\${cmd}" == "describe" ]] && SUB="app:documents:describe"
@@ -835,10 +840,11 @@ case "\${cmd}" in
         [[ "\${cmd}" == "acknowledge-remind" ]] && SUB="app:documents:acknowledge-remind"
         [[ "\${cmd}" == "telegram" ]] && SUB="app:telegram:poll"
         [[ "\${cmd}" == "ai-index" ]] && SUB="app:ai:index"
+        [[ "\${cmd}" == "team-digest" ]] && SUB="app:team:digest"
         if [[ "\${INSTALL_MODE}" == "docker" ]]; then
             cd "\${APP_DIR}/docker" && exec "\${DEXEC[@]}" app php bin/console "\${SUB}" "\$@"
         else
-            exec runuser -u "\${SERVICE_USER}" -- php "\${APP_DIR}/current/bin/console" "\${SUB}" "\$@"
+            exec runuser -u "\${SERVICE_USER}" -- "\${PHPX}" "\${APP_DIR}/current/bin/console" "\${SUB}" "\$@"
         fi ;;
     logs)
         if [[ "\${INSTALL_MODE}" == "docker" ]]; then cd "\${APP_DIR}/docker" && exec docker compose logs -f --tail=200 "\$@";
@@ -869,6 +875,7 @@ case "\${cmd}" in
   reindex             Индекс полнотекстового поиска по содержимому файлов (--all — всё заново, --status — состояние)
   ai-index            Смысловой индекс для ответов ИИ (поиск по смыслу; --all — заново, --status — состояние)
   acknowledge-remind  Напоминания о неподтверждённом ознакомлении (--days=N, --dry-run)
+  team-digest         Сводка руководителям о сотрудниках (--dry-run, --force, --manager=ЛОГИН — письмо одному)
   telegram            Уведомления в Telegram: разбор сообщений бота (--status, --check, --send "текст" --user ЛОГИН)
   kerberos on|off|status   Вход через Windows без пароля (Kerberos/SPNEGO в nginx):
                       on --keytab ФАЙЛ --service HTTP/имя.портала [--realm ОБЛАСТЬ] [--auto]

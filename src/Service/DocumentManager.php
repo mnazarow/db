@@ -19,6 +19,7 @@ use App\Service\Text\TextIndexer;
 use Doctrine\DBAL\LockMode;
 use Doctrine\ORM\EntityManagerInterface;
 use Psr\Log\LoggerInterface;
+use Symfony\Component\DependencyInjection\Attribute\Target;
 use Symfony\Component\HtmlSanitizer\HtmlSanitizerInterface;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
 
@@ -31,6 +32,7 @@ final class DocumentManager
     public function __construct(
         private readonly EntityManagerInterface $em,
         private readonly FileStorage $storage,
+        #[Target]
         private readonly HtmlSanitizerInterface $documentPage,
         private readonly LoggerInterface $auditLogger,
         private readonly TextIndexer $indexer,

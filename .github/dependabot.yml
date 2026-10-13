@@ -19,8 +19,13 @@ updates:
       doctrine:
         patterns: ['doctrine/*']
     ignore:
-      # Переход на новую основную версию Symfony (8.x) — отдельная работа, не еженедельное обновление.
+      # Переход на новую основную версию Symfony (8.x) — отдельная работа, не еженедельное обновление
+      # (РУКОВОДСТВО, 8.4). DoctrineBundle 3 и DoctrineMigrationsBundle 4 требуют PHP 8.4 и идут вместе с ним.
       - dependency-name: 'symfony/*'
+        update-types: ['version-update:semver-major']
+      - dependency-name: 'doctrine/doctrine-bundle'
+        update-types: ['version-update:semver-major']
+      - dependency-name: 'doctrine/doctrine-migrations-bundle'
         update-types: ['version-update:semver-major']
 
   - package-ecosystem: npm

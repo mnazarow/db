@@ -612,7 +612,8 @@ final class PdfDocument
 
     private static function toJpeg(string $bytes, int $width, int $height): ?string
     {
-        if (!\function_exists('imagecreatefromstring') || $width * $height > self::MAX_DECODE_PIXELS) {
+        // Сборка PHP без JPEG в GD (imagejpeg нет) — изображение пропускается, а не роняет выгрузку.
+        if (!\function_exists('imagecreatefromstring') || !\function_exists('imagejpeg') || $width * $height > self::MAX_DECODE_PIXELS) {
             return null;
         }
         $source = @imagecreatefromstring($bytes);
@@ -626,11 +627,11 @@ final class PdfDocument
         $canvas = imagecreatetruecolor($targetWidth, $targetHeight);
         imagefill($canvas, 0, 0, (int) imagecolorallocate($canvas, 255, 255, 255));
         imagecopyresampled($canvas, $source, 0, 0, 0, 0, $targetWidth, $targetHeight, imagesx($source), imagesy($source));
-        imagedestroy($source);
+        unset($source);
         ob_start();
         imagejpeg($canvas, null, 88);
         $jpeg = (string) ob_get_clean();
-        imagedestroy($canvas);
+        unset($canvas);
 
         return '' !== $jpeg ? $jpeg : null;
     }

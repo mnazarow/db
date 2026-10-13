@@ -46,7 +46,7 @@ else
     fi
     check "Подключение к базе данных" mysql_exec "${DB_HOST}" "${DB_PORT}" "${DB_USER}" "${DB_PASSWORD}" "SELECT 1"
     info "Проверка приложения (app:check):"
-    if check_out=$(runuser -u "${SERVICE_USER}" -- php "${APP_DIR}/current/bin/console" app:check --env=prod --no-interaction 2>&1); then
+    if check_out=$(runuser -u "${SERVICE_USER}" -- "$(php_bin_for "${PHP_VERSION:-}" || echo php)" "${APP_DIR}/current/bin/console" app:check --env=prod --no-interaction 2>&1); then
         printf '%s\n' "${check_out}" | sed 's/^/   /'
     else
         printf '%s\n' "${check_out}" | sed 's/^/   /'

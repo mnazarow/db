@@ -63,6 +63,9 @@ final class PortalSettings
     /** Минимальное сходство (косинус) документа с вопросом: ниже — документ не считается найденным по смыслу. */
     public const EMBED_MIN_SCORE = 'llm.embed.min_score';
     public const EMBED_DEFAULT_MIN_SCORE = 0.3;
+    /** Сходство по смыслу, с которым вопрос сотрудника закрывается проверенным ответом. */
+    public const EMBED_VERIFIED_MIN = 'llm.embed.verified_min';
+    public const EMBED_DEFAULT_VERIFIED_MIN = 0.85;
     public const EMBED_DEFAULT_MODEL = 'text-embedding-3-small';
     /** Сколько дней хранить вопросы к ИИ и оценки ответов (0 — не сохранять). */
     public const AI_LOG_DAYS = 'ai.log_days';
@@ -190,6 +193,9 @@ final class PortalSettings
     public const MATERIALS_REMIND_STATES = 'materials.remind.states';
     public const MATERIALS_REMIND_LAST_RUN = 'materials.remind.last_run';
     public const MATERIALS_REMIND_DEFAULT_STATES = ['Не соответствует', 'Отсутствует'];
+    public const TEAM_DIGEST_ENABLED = 'team.digest.enabled';
+    public const TEAM_DIGEST_ONLY_PENDING = 'team.digest.only_pending';
+    public const TEAM_DIGEST_LAST_RUN = 'team.digest.last_run';
 
     public const OCR_DEFAULT_MAX_PAGES = 20;
     public const OCR_DEFAULT_DPI = 200;
@@ -198,7 +204,7 @@ final class PortalSettings
     private const SECRET_NAMES = [self::WEBHOOK_SECRET, self::LLM_API_KEY, self::EMBED_API_KEY, self::SSO_CLIENT_SECRET, self::TELEGRAM_TOKEN, self::MONITORING_TOKEN, self::ONLYOFFICE_SECRET, self::PUSH_PRIVATE_KEY];
 
     /** Служебные значения, которые портал меняет сам (в журнал аудита не пишутся). */
-    private const INTERNAL_NAMES = [self::TELEGRAM_OFFSET, self::MATERIALS_REMIND_LAST_RUN, self::ONLYOFFICE_LINK_KEY];
+    private const INTERNAL_NAMES = [self::TELEGRAM_OFFSET, self::MATERIALS_REMIND_LAST_RUN, self::TEAM_DIGEST_LAST_RUN, self::ONLYOFFICE_LINK_KEY];
 
     private const CACHE_KEY = 'portal_settings';
 
@@ -364,6 +370,7 @@ final class PortalSettings
             'own_api_key' => $ownKey,
             'dimensions' => max(0, min(4096, (int) $this->get(self::EMBED_DIMENSIONS, 0))),
             'min_score' => max(0.0, min(1.0, (float) $this->get(self::EMBED_MIN_SCORE, self::EMBED_DEFAULT_MIN_SCORE))),
+            'verified_min' => max(0.0, min(1.0, (float) $this->get(self::EMBED_VERIFIED_MIN, self::EMBED_DEFAULT_VERIFIED_MIN))),
             'timeout' => $llm['timeout'],
             'log_days' => max(0, min(3650, (int) $this->get(self::AI_LOG_DAYS, self::AI_LOG_DEFAULT_DAYS))),
         ];
@@ -396,6 +403,13 @@ final class PortalSettings
                 throw new \InvalidArgumentException('Минимальное сходство — число от 0 до 1 (например, 0,3).');
             }
             $set[self::EMBED_MIN_SCORE] = $minScore;
+        }
+        if (\array_key_exists('verified_min', $values)) {
+            $verifiedMin = (float) str_replace(',', '.', (string) $values['verified_min']);
+            if ($verifiedMin < 0.5 || $verifiedMin >= 1) {
+                throw new \InvalidArgumentException('Сходство для проверенных ответов — число от 0,5 до 0,99 (например, 0,85).');
+            }
+            $set[self::EMBED_VERIFIED_MIN] = $verifiedMin;
         }
         if (\array_key_exists('log_days', $values)) {
             $set[self::AI_LOG_DAYS] = max(0, min(3650, (int) $values['log_days']));
@@ -1059,5 +1073,26 @@ final class PortalSettings
             self::MATERIALS_REMIND_ENABLED => $enabled,
             self::MATERIALS_REMIND_STATES => array_values(array_unique(array_filter(array_map(static fn ($s): string => trim((string) $s), $states)))),
         ], $by);
+    }
+
+    // ---- Еженедельная сводка руководителям ------------------------------------------------------------------
+
+    /**
+     * only_pending — писать только руководителям, у сотрудников которых есть невыполненное.
+     *
+     * @return array{enabled: bool, only_pending: bool, last_run: ?string}
+     */
+    public function teamDigest(): array
+    {
+        return [
+            'enabled' => (bool) $this->get(self::TEAM_DIGEST_ENABLED, false),
+            'only_pending' => (bool) $this->get(self::TEAM_DIGEST_ONLY_PENDING, true),
+            'last_run' => ($last = $this->get(self::TEAM_DIGEST_LAST_RUN)) ? (string) $last : null,
+        ];
+    }
+
+    public function setTeamDigest(bool $enabled, bool $onlyPending, ?User $by = null): void
+    {
+        $this->setMany([self::TEAM_DIGEST_ENABLED => $enabled, self::TEAM_DIGEST_ONLY_PENDING => $onlyPending], $by);
     }
 }

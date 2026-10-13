@@ -387,6 +387,7 @@ final class IntegrationsController extends AbstractController
                 'api_key' => '' !== $apiKey ? $apiKey : null,
                 'dimensions' => (int) $request->request->get('dimensions', 0),
                 'min_score' => (string) $request->request->get('min_score', (string) PortalSettings::EMBED_DEFAULT_MIN_SCORE),
+                'verified_min' => (string) $request->request->get('verified_min', (string) PortalSettings::EMBED_DEFAULT_VERIFIED_MIN),
                 'log_days' => (int) $request->request->get('log_days', PortalSettings::AI_LOG_DEFAULT_DAYS),
             ], $user);
             if ((bool) $request->request->get('clear_api_key', false)) {

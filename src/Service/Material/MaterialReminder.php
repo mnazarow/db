@@ -14,6 +14,7 @@ use App\Repository\UserRepository;
 use App\Service\Notification\TelegramNotifier;
 use App\Service\PortalSettings;
 use App\Service\PortalUrl;
+use App\Service\ProcessLock;
 use Psr\Log\LoggerInterface;
 use Symfony\Bridge\Twig\Mime\TemplatedEmail;
 use Symfony\Component\Mailer\MailerInterface;
@@ -50,7 +51,7 @@ final class MaterialReminder
         private readonly LoggerInterface $auditLogger,
         private readonly string $mailFrom,
         private readonly string $appName,
-        private readonly string $projectDir = '',
+        private readonly ProcessLock $locks,
     ) {
     }
 
@@ -116,13 +117,16 @@ final class MaterialReminder
         if (!$config['enabled'] && !$force) {
             return ['status' => 'disabled', 'message' => 'Сводка по таблицам материалов выключена (панель администратора → Материалы).'] + $result;
         }
-        $lock = null;
-        if (!$dryRun) {
-            // Одна рассылка за раз: запуск по расписанию и «Отправить сейчас» (или двойной щелчок) не дублируют письма.
-            $lock = @fopen(rtrim('' !== $this->projectDir ? $this->projectDir : sys_get_temp_dir(), '/').'/var/materials-remind.lock', 'c');
-            if (false === $lock || !flock($lock, \LOCK_EX | \LOCK_NB)) {
-                return ['status' => 'skipped', 'message' => 'Сводка уже отправляется — дождитесь окончания.'] + $result;
-            }
+        if ($dryRun) {
+            return $this->send($config, $result, true);
+        }
+        // Одна рассылка за раз (блокировка в базе — общая для cron и веб-интерфейса и в Docker): запуск по
+        // расписанию и «Отправить сейчас» (или двойной щелчок) не дублируют письма.
+        $release = $this->locks->acquire('materials-remind');
+        if (null === $release) {
+            return ['status' => 'skipped', 'message' => 'Сводка уже отправляется — дождитесь окончания.'] + $result;
+        }
+        try {
             $lastRun = $this->settings->fresh(PortalSettings::MATERIALS_REMIND_LAST_RUN);
             $last = \is_string($lastRun) ? strtotime($lastRun) : false;
             if (false !== $last && !$force && time() - $last < self::MIN_INTERVAL_HOURS * 3600) {
@@ -133,15 +137,10 @@ final class MaterialReminder
             }
             // Запуск отмечается до рассылки: если он прервётся, повтор по расписанию не разошлёт письма второй раз.
             $this->settings->set(PortalSettings::MATERIALS_REMIND_LAST_RUN, date('Y-m-d H:i:s'));
-        }
 
-        try {
-            return $this->send($config, $result, $dryRun);
+            return $this->send($config, $result, false);
         } finally {
-            if (\is_resource($lock)) {
-                flock($lock, \LOCK_UN);
-                fclose($lock);
-            }
+            $release();
         }
     }
 

@@ -14,6 +14,7 @@ use App\Repository\DocumentSubscriptionRepository;
 use App\Security\Access;
 use App\Service\PortalSettings;
 use Doctrine\Bundle\DoctrineBundle\Attribute\AsDoctrineListener;
+use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Event\PostPersistEventArgs;
 use Doctrine\ORM\Events;
 use Psr\Log\LoggerInterface;
@@ -78,6 +79,7 @@ final class SubscriptionNotifier implements EventSubscriberInterface
         private readonly string $mailFrom,
         private readonly string $appName,
         private readonly PortalUrl $portalUrl,
+        private readonly ?EntityManagerInterface $em = null,
     ) {
     }
 
@@ -131,11 +133,12 @@ final class SubscriptionNotifier implements EventSubscriberInterface
         $this->pending = [];
         try {
             foreach ($pending as $entry) {
-                $document = $entry['document'];
                 // Документ, удалённый в этом же запросе, уже не существует — уведомлять о нём нечего.
-                if (null === $document->getId()) {
+                if (null === $entry['document']->getId() || null === $document = $this->managed($entry['document'])) {
                     continue;
                 }
+                $entry['document'] = $document;
+                $entry['comments'] = array_values(array_filter(array_map($this->managed(...), $entry['comments'])));
                 // Черновики и документы на согласовании подписчикам не анонсируем: событие о них придёт при публикации.
                 if (!$document->isPublished() && [] === $entry['comments']) {
                     continue;
@@ -156,6 +159,26 @@ final class SubscriptionNotifier implements EventSubscriberInterface
         }
 
         return $stats;
+    }
+
+    /**
+     * Сущность из очереди, но «отцепленная» от EntityManager (его очистили между запросами долгоживущего процесса
+     * или между пакетами импорта), загружается заново: ленивые связи старого объекта уже не инициализировать.
+     *
+     * @template T of object
+     *
+     * @param T $entity
+     *
+     * @return T|null
+     */
+    private function managed(object $entity): ?object
+    {
+        if (null === $this->em || $this->em->contains($entity)) {
+            return $entity;
+        }
+        $id = method_exists($entity, 'getId') ? $entity->getId() : null;
+
+        return null !== $id ? $this->em->find($this->em->getClassMetadata($entity::class)->getName(), $id) : null;
     }
 
     /**

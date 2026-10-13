@@ -119,6 +119,20 @@ final class UserRepository extends ServiceEntityRepository
     }
 
     /**
+     * Руководители: активные сотрудники, у которых есть хотя бы один активный подчинённый (по оргструктуре).
+     *
+     * @return list<User>
+     */
+    public function findManagers(): array
+    {
+        return $this->createQueryBuilder('m')
+            ->andWhere('m.active = true')
+            ->andWhere('EXISTS (SELECT 1 FROM '.User::class.' s WHERE s.manager = m AND s.active = true)')
+            ->orderBy('m.displayName', \SortDirection::Ascending)
+            ->getQuery()->getResult();
+    }
+
+    /**
      * Подчинённые руководителя — прямые и их подчинённые (до $maxDepth уровней), только активные; depth 1 — прямые.
      *
      * @return list<array{user: User, depth: int}>

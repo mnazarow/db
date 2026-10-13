@@ -87,7 +87,7 @@ final class DocumentAdminController extends AbstractController
         $response = new StreamedResponse(function () use ($documents): void {
             $out = fopen('php://output', 'w');
             fwrite($out, "\xEF\xBB\xBF"); // BOM для Excel
-            fputcsv($out, ['ID', 'Обозначение', 'Название', 'Раздел', 'Вид', 'Тип файла', 'Статус', 'Доступ', 'Версия', 'Актуален до', 'Состояние', 'Владелец', 'Создан', 'Обновлён', 'Просмотры', 'Скачивания', 'Теги'], ';');
+            fputcsv($out, ['ID', 'Обозначение', 'Название', 'Раздел', 'Вид', 'Тип файла', 'Статус', 'Доступ', 'Версия', 'Актуален до', 'Состояние', 'Владелец', 'Создан', 'Обновлён', 'Просмотры', 'Скачивания', 'Теги'], ';', '"', '');
             foreach ($documents as $d) {
                 Csv::put($out, [
                     $d->getId(), $d->getCode(), $d->getTitle(), $d->getSection()->getFullName(),

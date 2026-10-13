@@ -517,7 +517,7 @@ HTML, true, [
             }
             imagestring($im, 5, 40, 40, 'DEMO SCHEME - '.strtoupper(pathinfo($name, \PATHINFO_FILENAME)), $blue);
             imagepng($im, $path);
-            imagedestroy($im);
+            unset($im);
         } else {
             file_put_contents($path, base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='));
         }

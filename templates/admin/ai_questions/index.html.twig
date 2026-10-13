@@ -77,7 +77,8 @@
         <input class="form-control form-control--inline" id="ai-check" name="check" value="{{ verified_check ? verified_check.question }}" placeholder="Как его задаст сотрудник" maxlength="500">
         <button class="btn btn--ghost btn--small" type="submit">Проверить</button>
         {% if verified_check %}
-            <span class="toolbar__summary ai-verified-check">{% if verified_check.answer %}Получит ответ: <a href="{{ path('admin_ai_verified_edit', {id: verified_check.answer.id}) }}">{{ verified_check.answer.question }}</a>{% else %}Проверенного ответа нет — ответит языковая модель.{% endif %}</span>
+            {% set how = {exact: 'та же формулировка', words: 'те же значимые слова', meaning: 'по смыслу'} %}
+            <span class="toolbar__summary ai-verified-check">{% if verified_check.answer %}Получит ответ: <a href="{{ path('admin_ai_verified_edit', {id: verified_check.answer.id}) }}">{{ verified_check.answer.question }}</a> ({{ how[verified_check.how] }}{% if verified_check.similarity is not null %}, сходство {{ verified_check.similarity|number_format(2, ',') }}{% endif %}){% else %}Проверенного ответа нет — ответит языковая модель.{% if verified_check.similarity is not null %} Ближайший по смыслу — сходство {{ verified_check.similarity|number_format(2, ',') }}, нужно не ниже {{ verified_check.threshold|number_format(2, ',') }}.{% elseif not verified_check.semantic %} Сравнение по смыслу выключено («Интеграции → Поиск по смыслу»).{% endif %}{% endif %}</span>
         {% endif %}
     </form>
 </div>

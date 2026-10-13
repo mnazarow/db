@@ -1,5 +1,5 @@
 # Проверки портала в GitLab CI: синтаксис конфигурации и шаблонов, соответствие миграций схеме,
-# автотесты PHPUnit на MariaDB и MySQL 8.4, раздел «Видео» (Node.js, тесты связки с порталом на PostgreSQL),
+# автотесты PHPUnit на MariaDB и MySQL 8.4 (PHP 8.2 и 8.5), проба Symfony 8, раздел «Видео» (Node.js, тесты связки с порталом на PostgreSQL),
 # известные уязвимости в зависимостях (composer audit, npm audit) и проверка скриптов развёртывания shellcheck. По тегу vX.Y.Z — архив дистрибутива (с .sha256 и latest.txt для
 # автоматического обновления серверов: docportal auto-update on --url <адрес, где лежат эти файлы>).
 stages:
@@ -47,6 +47,37 @@ phpunit-mysql:
     MYSQL_USER: docportal
     MYSQL_PASSWORD: docportal
     DATABASE_URL: "mysql://docportal:docportal@mariadb:3306/docportal?serverVersion=8.4.0&charset=utf8mb4"
+
+# Самая новая версия PHP: сборка падает и от устаревших вызовов (deprecations) — подготовка к Symfony 8
+# (РУКОВОДСТВО, 8.4).
+phpunit-php85:
+  extends: phpunit
+  image: php:8.5-cli
+  script:
+    - php bin/console lint:container
+    - php bin/console doctrine:migrations:migrate --no-interaction --allow-no-migration
+    - rm -rf var/cache/test
+    - vendor/bin/phpunit --fail-on-deprecation
+
+# Проба Symfony 8: зависимости обновляются до Symfony 8, DoctrineBundle 3 и MonologBundle 4, автотесты (SQLite)
+# должны пройти без устаревших вызовов. Сигнал «к переходу готовы», сборку не останавливает.
+symfony-next:
+  stage: test
+  image: php:8.5-cli
+  allow_failure: true
+  variables:
+    APP_ENV: test
+    DATABASE_URL: "sqlite:///%kernel.project_dir%/var/test.db"
+  before_script:
+    - apt-get update -q && apt-get install -y -q --no-install-recommends git unzip poppler-utils fonts-dejavu-core
+    - curl -sSLf -o /usr/local/bin/install-php-extensions https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions
+    - chmod +x /usr/local/bin/install-php-extensions && install-php-extensions intl pdo_mysql zip gd ldap @composer
+  script:
+    - bash scripts/symfony-next.sh 8.1
+    - php bin/console lint:container
+    - php bin/console lint:twig templates
+    - rm -rf var/cache/test
+    - vendor/bin/phpunit --fail-on-deprecation
 
 # Известные уязвимости: Composer — все пакеты, npm — зависимости сервера высокой и критической важности.
 audit:

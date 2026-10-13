@@ -27,6 +27,7 @@ final class ConsoleJobSubscriber implements EventSubscriberInterface
         'app:telegram:poll' => 'telegram',
         'app:materials:remind' => 'materials-remind',
         'app:ai:index' => 'ai-index',
+        'app:team:digest' => 'team-digest',
     ];
 
     /** @var array<string, float> имя задания → время старта */
@@ -89,7 +90,8 @@ final class ConsoleJobSubscriber implements EventSubscriberInterface
         if (null === $job) {
             return null;
         }
-        foreach (['dry-run', 'status', 'help'] as $option) {
+        // Пробные и ручные запуски (одному руководителю — --manager) не считаются выполнением задания по расписанию.
+        foreach (['dry-run', 'status', 'help', 'manager'] as $option) {
             if ($input->hasOption($option) && $input->getOption($option)) {
                 return null;
             }

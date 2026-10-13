@@ -40,7 +40,7 @@ class Section
 
     /** @var Collection<int, Section> */
     #[ORM\OneToMany(targetEntity: self::class, mappedBy: 'parent')]
-    #[ORM\OrderBy(['position' => 'ASC', 'name' => 'ASC'])]
+    #[ORM\OrderBy(['position' => \SortDirection::Ascending, 'name' => \SortDirection::Ascending])]
     private Collection $children;
 
     #[ORM\Column(length: 128)]
