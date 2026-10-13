@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Controller\Admin;
 
 use App\Entity\User;
+use App\Message\SendTeamDigest;
+use App\Service\BackgroundJobs;
 use App\Service\Org\TeamDigest;
 use App\Service\PortalSettings;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
@@ -22,6 +24,7 @@ final class TeamDigestAdminController extends AbstractController
     public function __construct(
         private readonly PortalSettings $settings,
         private readonly TeamDigest $digest,
+        private readonly ?BackgroundJobs $background = null,
     ) {
     }
 
@@ -39,10 +42,15 @@ final class TeamDigestAdminController extends AbstractController
     }
 
     #[Route('/send', name: 'admin_team_digest_send', methods: ['POST'])]
-    public function send(Request $request): Response
+    public function send(Request $request, #[CurrentUser] User $user): Response
     {
         $this->checkToken($request);
         $dryRun = 'preview' === $request->request->get('mode');
+        if (!$dryRun && (bool) $this->background?->dispatch(new SendTeamDigest($user->getUsername()))) {
+            $this->addFlash('info', 'Сводка отправляется в фоне — обычно в течение минуты. Итог — в журнале аудита, ошибка — на странице «Мониторинг».');
+
+            return $this->redirectToRoute('admin_acknowledgements', ['_fragment' => 'team-digest']);
+        }
         if (!$dryRun) {
             // Рассылка не обрывается на полпути, даже если браузер или nginx перестали ждать ответа.
             ignore_user_abort(true);

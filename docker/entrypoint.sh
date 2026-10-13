@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 #  Точка входа контейнера приложения: ждёт базу данных, применяет миграции,
-#  прогревает кэш, создаёт первого администратора и запускает PHP-FPM.
+#  прогревает кэш, создаёт первого администратора, запускает обработчик фоновых задач и PHP-FPM.
 #  Команда "cron" запускает планировщик: проверка сроков актуальности, описания через LLM, индексация
 #  содержимого, напоминания об ознакомлении и по таблицам материалов, разбор сообщений бота Telegram.
 #  Переменные окружения — см. docker/.env.example.
@@ -64,8 +64,10 @@ if [[ "${1:-php-fpm}" == "cron" ]]; then
     printf '%s cd /var/www/html && su-exec www-data php bin/console app:materials:remind --no-interaction >> /var/www/html/var/log/materials-remind-cron.log 2>&1\n' "${MATERIALS_REMIND_CRON:-10 9 * * 1}" >> /etc/crontabs/root
     # Еженедельная сводка руководителям: кто из сотрудников не ознакомился (включается в панели администратора).
     printf '%s cd /var/www/html && su-exec www-data php bin/console app:team:digest --no-interaction >> /var/www/html/var/log/team-digest-cron.log 2>&1\n' "${TEAM_DIGEST_CRON:-40 8 * * 1}" >> /etc/crontabs/root
+    # Ежедневные итоги статистики — сразу после полуночи.
+    printf '%s cd /var/www/html && su-exec www-data php bin/console app:stats:aggregate --no-interaction >> /var/www/html/var/log/stats-cron.log 2>&1\n' "${STATS_CRON:-5 0 * * *}" >> /etc/crontabs/root
     # Журналы заданий больше 10 МБ обнуляются раз в сутки (ротации в контейнере нет).
-    printf '%s\n' '15 4 * * * find /var/www/html/var/log -maxdepth 1 -name "*-cron.log" -size +10240k -exec sh -c ": > \"\$1\"" _ {} \;' >> /etc/crontabs/root
+    printf '%s\n' '15 4 * * * find /var/www/html/var/log -maxdepth 1 \( -name "*-cron.log" -o -name "worker.log" \) -size +10240k -exec sh -c ": > \"\$1\"" _ {} \;' >> /etc/crontabs/root
     log "Планировщик запущен: проверка сроков актуальности по расписанию «${EXPIRY_CRON:-0 8 * * *}», разбор сообщений Telegram, индексация и напоминания."
     exec crond -f -l 6
 fi
@@ -100,6 +102,23 @@ if [[ -n "${ADMIN_USER:-}" && -n "${ADMIN_PASSWORD:-}" ]]; then
 fi
 
 run_console app:check || log "ПРЕДУПРЕЖДЕНИЕ: проверка app:check сообщила о проблемах (см. выше)."
+
+# --- 5. Фоновые задачи ----------------------------------------------------------------------
+# Очередь в базе (рассылки «Отправить сейчас», PDF-сборники, уведомления об ознакомлении, итоги статистики)
+# разбирает процесс в этом же контейнере — ему видны те же файлы, что и сайту. Он перезапускается каждую минуту:
+# так не копит память и сразу работает с новым кодом. WORKER_ENABLED=0 — не запускать (задачи выполняются сразу).
+if [[ "${WORKER_ENABLED:-1}" == "1" ]]; then
+    as_www=()
+    command -v su-exec >/dev/null 2>&1 && as_www=(su-exec www-data)
+    (
+        while true; do
+            "${as_www[@]}" php -d memory_limit=512M bin/console messenger:consume async --time-limit=60 --memory-limit=256M --quiet --no-interaction \
+                >> var/log/worker.log 2>&1 || sleep 10
+            sleep 1
+        done
+    ) &
+    log "Обработчик фоновых задач запущен."
+fi
 
 log "Запуск PHP-FPM."
 exec php-fpm

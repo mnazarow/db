@@ -7,6 +7,8 @@ namespace App\Controller\Admin;
 use App\Entity\DocumentKind;
 use App\Entity\Section;
 use App\Entity\User;
+use App\Message\SendMaterialsReminder;
+use App\Service\BackgroundJobs;
 use App\Repository\DocumentKindRepository;
 use App\Service\DocumentKindService;
 use App\Service\Material\MaterialExporter;
@@ -50,6 +52,7 @@ final class MaterialAdminController extends AbstractController
         private readonly string $importDir,
         private readonly MaterialReminder $reminder,
         private readonly PortalSettings $settings,
+        private readonly ?BackgroundJobs $background = null,
     ) {
     }
 
@@ -97,10 +100,15 @@ final class MaterialAdminController extends AbstractController
 
     /** Отправить сводку сейчас (или показать, кому она уйдёт). */
     #[Route('/remind/send', name: 'admin_materials_remind_send', methods: ['POST'])]
-    public function remindSend(Request $request): Response
+    public function remindSend(Request $request, #[CurrentUser] User $user): Response
     {
         $this->checkToken($request);
         $dryRun = 'preview' === $request->request->get('mode');
+        if (!$dryRun && (bool) $this->background?->dispatch(new SendMaterialsReminder($user->getUsername()))) {
+            $this->addFlash('info', 'Сводка отправляется в фоне — обычно в течение минуты. Итог — в журнале аудита.');
+
+            return $this->redirectToRoute('admin_materials', ['_fragment' => 'remind']);
+        }
         if (!$dryRun) {
             // Рассылка не обрывается на полпути, даже если браузер или nginx перестали ждать ответа.
             ignore_user_abort(true);

@@ -89,6 +89,9 @@ Docker:
   --with-preview            Установить LibreOffice: просмотр docx/xlsx/pptx прямо в браузере (~500 МБ).
   --with-ocr                Установить tesseract: распознавание сканов для поиска.
   --with-extras             И то, и другое.
+  --php-version X.Y         Версия PHP (по умолчанию — ${PHP_RECOMMENDED_VERSION} или новее: из ОС, а если в ней старее — из
+                            deb.sury.org / ppa:ondrej/php; нет доступа к ним — PHP из ОС).
+  --php-from-os             Только PHP из репозиториев ОС, без стороннего (перейти позже: ${APP_ID} php-upgrade).
   --no-swap                 Не создавать файл подкачки на сервере с малой памятью (по умолчанию создаётся
                             /${APP_ID}.swap, если памяти вместе с подкачкой меньше 2 ГБ).
 
@@ -168,6 +171,9 @@ ASSUME_YES="1"
 VERBOSE="0"
 SERVICE_USER=""
 PHP_VERSION=""
+# --php-version X.Y — ставить эту версию PHP; --php-from-os — только PHP из репозиториев ОС (без стороннего).
+PHP_WANT=""
+PHP_FROM_OS="0"
 PHP_FPM_SERVICE=""
 PHP_FPM_SOCK=""
 APP_VERSION=""
@@ -219,6 +225,8 @@ parse_args() {
             --with-video) WITH_VIDEO="1"; shift ;;
             --no-video) WITH_VIDEO="0"; VIDEO_OPT_OUT="1"; shift ;;
             --no-swap) NO_SWAP="1"; shift ;;
+            --php-version) PHP_WANT="${2:-}"; shift; [[ $# -gt 0 ]] && shift ;;
+            --php-from-os) PHP_FROM_OS="1"; shift ;;
             --no-auto-update) AUTO_UPDATE_ON="0"; shift ;;
             --update-github) AUTO_UPDATE_GITHUB="${2:-}"; shift 2 ;;
             --update-url) AUTO_UPDATE_URL="${2:-}"; shift 2 ;;
@@ -243,6 +251,10 @@ validate_args() {
     [[ "${DB_USER}" =~ ^[a-zA-Z0-9_]{1,32}$ ]] || die "--db-user: допустимы латинские буквы, цифры и подчёркивание (до 32 символов)."
     if [[ -n "${ADMIN_PASSWORD}" && ${#ADMIN_PASSWORD} -lt 8 ]]; then die "--admin-password: не менее 8 символов."; fi
     if [[ -n "${SSL_EMAIL}" && -z "${DOMAIN}" ]]; then die "--ssl-email требует --domain."; fi
+    if [[ -n "${PHP_WANT}" ]] && { [[ ! "${PHP_WANT}" =~ ^[0-9]+\.[0-9]+$ ]] || ! version_ge "${PHP_WANT}" "${PHP_MIN_VERSION}"; }; then
+        die "--php-version: укажите версию как 8.4 (не ниже ${PHP_MIN_VERSION})."
+    fi
+    if [[ -n "${PHP_WANT}" && "${PHP_FROM_OS}" == "1" ]]; then die "Укажите одно: --php-version или --php-from-os."; fi
     if [[ -n "${AUTO_UPDATE_GITHUB}" && ! "${AUTO_UPDATE_GITHUB}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then die "--update-github: укажите репозиторий как ВЛАДЕЛЕЦ/РЕПОЗИТОРИЙ."; fi
     if [[ -n "${AUTO_UPDATE_URL}" && ! "${AUTO_UPDATE_URL}" =~ ^https?://[^[:space:]]+$ ]]; then die "--update-url: укажите адрес каталога обновлений (http:// или https://)."; fi
     if [[ -n "${AUTO_UPDATE_GITHUB}" && -n "${AUTO_UPDATE_URL}" ]]; then die "Укажите один источник обновлений: --update-github или --update-url."; fi
@@ -531,62 +543,39 @@ rollback() {
 # =============================================================================
 #  РЕЖИМ NATIVE
 # =============================================================================
-# Есть ли в apt устанавливаемый пакет php<версия>-fpm
-apt_has_php() { apt-cache policy "php${1}-fpm" 2>/dev/null | grep_has 'Candidate: [0-9]'; }
-
-# Версия PHP, которую ОС считает основной (по зависимостям метапакета php-fpm), например 8.5
-apt_default_php_version() {
-    apt-cache depends php-fpm 2>/dev/null | grep -oE 'php[0-9]+\.[0-9]+-fpm' | head -n1 | grep -oE '[0-9]+\.[0-9]+' || true
-}
-
-# Ищет подходящую версию PHP среди пакетов ОС: сначала основную для ОС, затем предпочтительные.
-detect_apt_php_version() {
-    local v
-    v=$(apt_default_php_version)
-    if [[ -n "${v}" ]] && version_ge "${v}" "${PHP_MIN_VERSION}" && apt_has_php "${v}"; then
-        echo "${v}"; return 0
-    fi
-    for v in "${PHP_PREFERRED_VERSIONS[@]}"; do
-        if apt_has_php "${v}"; then echo "${v}"; return 0; fi
-    done
-    return 1
-}
-
-remove_php_repo() {
-    if [[ "${OS_ID}" == "ubuntu" ]]; then
-        add-apt-repository -y --remove ppa:ondrej/php >>"${LOG_FILE}" 2>&1 || true
-        rm -f /etc/apt/sources.list.d/ondrej-ubuntu-php-*.list /etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources
-    else
-        rm -f /etc/apt/sources.list.d/php-sury.list /usr/share/keyrings/deb.sury.org-php.gpg
-    fi
-    _APT_UPDATED=0
-}
-
 install_php_debian() {
-    PHP_VERSION=$(detect_apt_php_version || true)
-    if [[ -z "${PHP_VERSION}" ]]; then
-        warn "В репозиториях ОС нет PHP ${PHP_MIN_VERSION}+, подключается репозиторий deb.sury.org / ppa:ondrej/php…"
-        pkg_install ca-certificates curl gnupg lsb-release apt-transport-https
-        if [[ "${OS_ID}" == "ubuntu" ]]; then
-            pkg_install software-properties-common
-            add-apt-repository -y ppa:ondrej/php >>"${LOG_FILE}" 2>&1 || die "Не удалось подключить ppa:ondrej/php (см. журнал). Установите PHP ${PHP_MIN_VERSION}+ вручную и повторите установку."
-        else
-            download https://packages.sury.org/php/apt.gpg /usr/share/keyrings/deb.sury.org-php.gpg || die "Не удалось скачать ключ репозитория sury.org (нет доступа к packages.sury.org)."
-            echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main" > /etc/apt/sources.list.d/php-sury.list
+    local os_version=""
+    if [[ -n "${PHP_WANT}" ]]; then
+        # --php-version X.Y: ровно эта версия (из ОС или стороннего репозитория).
+        if ! apt_has_php "${PHP_WANT}" && { ! add_php_repo || ! apt_has_php "${PHP_WANT}"; }; then
+            [[ "${ADDED_PHP_REPO}" == "1" ]] && remove_php_repo
+            die "PHP ${PHP_WANT} нет ни в репозиториях ОС, ни в deb.sury.org / ppa:ondrej/php (или к ним нет доступа)."
         fi
-        ADDED_PHP_REPO="1"
-        _APT_UPDATED=0
-        apt_update_once
-        PHP_VERSION=$(detect_apt_php_version || true)
+        PHP_VERSION="${PHP_WANT}"
+    else
+        # По умолчанию — PHP ${PHP_RECOMMENDED_VERSION}+ (нужен будущей Symfony 8): из ОС, если в ней есть, иначе из
+        # стороннего репозитория; нет доступа к нему или --php-from-os — PHP из ОС (не ниже ${PHP_MIN_VERSION}).
+        PHP_VERSION=$(detect_apt_php_version "${PHP_RECOMMENDED_VERSION}" || true)
         if [[ -z "${PHP_VERSION}" ]]; then
-            remove_php_repo
-            die "Ни в репозиториях ОС, ни в подключаемом репозитории нет пакетов PHP ${PHP_MIN_VERSION}+ для «${PRETTY_NAME:-$OS_ID $OS_VERSION}» (для новых выпусков ОС сторонний репозиторий появляется с задержкой). Установите PHP ${PHP_MIN_VERSION}+ с расширениями fpm, cli, mysql, xml, mbstring, intl, zip, gd, curl, ldap вручную и повторите установку."
+            os_version=$(detect_apt_php_version "${PHP_MIN_VERSION}" || true)
+            if [[ "${PHP_FROM_OS}" == "1" ]]; then
+                [[ -n "${os_version}" ]] || die "В репозиториях ОС нет PHP ${PHP_MIN_VERSION}+ (--php-from-os запрещает сторонний репозиторий). Уберите --php-from-os — PHP поставится из deb.sury.org / ppa:ondrej/php."
+                PHP_VERSION="${os_version}"
+                info "PHP ${os_version} из репозиториев ОС (--php-from-os); перейти на PHP ${PHP_RECOMMENDED_VERSION} позже: ${APP_ID} php-upgrade."
+            else
+                info "В репозиториях ОС ${os_version:+только PHP ${os_version}}${os_version:-нет PHP ${PHP_MIN_VERSION}+} — подключается deb.sury.org / ppa:ondrej/php для PHP ${PHP_RECOMMENDED_VERSION}…"
+                add_php_repo && PHP_VERSION=$(detect_apt_php_version "${PHP_RECOMMENDED_VERSION}" || true)
+                if [[ -z "${PHP_VERSION}" ]]; then
+                    [[ "${ADDED_PHP_REPO}" == "1" ]] && remove_php_repo
+                    [[ -n "${os_version}" ]] || die "Ни в репозиториях ОС, ни в deb.sury.org / ppa:ondrej/php нет пакетов PHP ${PHP_MIN_VERSION}+ для «${PRETTY_NAME:-$OS_ID $OS_VERSION}» (или к стороннему репозиторию нет доступа; для новых выпусков ОС он появляется с задержкой). Установите PHP ${PHP_MIN_VERSION}+ с расширениями fpm, cli, mysql, xml, mbstring, intl, zip, gd, curl, ldap вручную и повторите установку."
+                    PHP_VERSION="${os_version}"
+                    warn "PHP ${PHP_RECOMMENDED_VERSION} установить не удалось (нет доступа к deb.sury.org / ppa:ondrej/php) — ставится PHP ${os_version} из ОС. Портал на нём работает; для будущего перехода на Symfony 8 понадобится PHP ${PHP_RECOMMENDED_VERSION}+: ${APP_ID} php-upgrade, когда доступ появится."
+                fi
+            fi
         fi
     fi
     info "Выбрана версия PHP ${PHP_VERSION}"
-    pkg_install "php${PHP_VERSION}-fpm" "php${PHP_VERSION}-cli" "php${PHP_VERSION}-mysql" "php${PHP_VERSION}-xml" \
-        "php${PHP_VERSION}-mbstring" "php${PHP_VERSION}-intl" "php${PHP_VERSION}-zip" "php${PHP_VERSION}-gd" \
-        "php${PHP_VERSION}-curl" "php${PHP_VERSION}-ldap"
+    install_php_packages "${PHP_VERSION}"
     PHP_FPM_SERVICE="php${PHP_VERSION}-fpm"
     PHP_FPM_SOCK="/run/php/php${PHP_VERSION}-fpm.sock"
     PHP_BIN="/usr/bin/php${PHP_VERSION}"
@@ -602,13 +591,13 @@ install_php_rhel() {
     warn "Семейство RHEL поддерживается в экспериментальном режиме."
     pkg_install epel-release || true
     local stream
-    for stream in 8.3 8.2; do
+    for stream in 8.4 8.3 8.2; do
         if dnf module list php 2>/dev/null | grep_has -E "^php\s+${stream}"; then
             dnf module reset -y php >>"${LOG_FILE}" 2>&1 || true
             dnf module enable -y "php:${stream}" >>"${LOG_FILE}" 2>&1 && PHP_VERSION="${stream}" && break
         fi
     done
-    [[ -n "${PHP_VERSION}" ]] || die "Не найден модуль php 8.2/8.3 в dnf. Подключите remi-репозиторий и повторите."
+    [[ -n "${PHP_VERSION}" ]] || die "Не найден модуль php 8.2–8.4 в dnf. Подключите remi-репозиторий и повторите."
     pkg_install php-fpm php-cli php-mysqlnd php-xml php-mbstring php-intl php-pecl-zip php-gd php-opcache php-process php-json php-ldap
     PHP_FPM_SERVICE="php-fpm"
     PHP_FPM_SOCK="/run/php-fpm/www.sock"

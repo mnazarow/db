@@ -48,6 +48,8 @@ final class BundleJob
         public \DateTimeImmutable $updatedAt = new \DateTimeImmutable(),
         /** Попыток обработать текущий документ (или объединить файлы): запрос мог прерваться на нём. */
         public int $attempts = 0,
+        /** Сборка передана обработчику фоновых задач: страницу можно закрыть. */
+        public bool $background = false,
     ) {
     }
 
@@ -114,6 +116,7 @@ final class BundleJob
             'created_at' => $this->createdAt->format(\DATE_ATOM),
             'updated_at' => $this->updatedAt->format(\DATE_ATOM),
             'attempts' => $this->attempts,
+            'background' => $this->background,
         ];
     }
 
@@ -137,6 +140,7 @@ final class BundleJob
             new \DateTimeImmutable((string) $data['created_at']),
             new \DateTimeImmutable((string) $data['updated_at']),
             (int) ($data['attempts'] ?? 0),
+            (bool) ($data['background'] ?? false),
         );
     }
 }

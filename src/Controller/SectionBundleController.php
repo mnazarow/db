@@ -7,7 +7,9 @@ namespace App\Controller;
 use App\Entity\Document;
 use App\Entity\Section;
 use App\Entity\User;
+use App\Message\BuildSectionBundle;
 use App\Security\Voter\PortalVoter;
+use App\Service\BackgroundJobs;
 use App\Service\FileStorage;
 use App\Service\Pdf\Bundle\BundleJob;
 use App\Service\Pdf\Bundle\BundleJobStore;
@@ -36,6 +38,9 @@ final class SectionBundleController extends AbstractController
     /** Незавершённых сборников на сотрудника одновременно. */
     private const MAX_ACTIVE_JOBS = 2;
 
+    /** Сборка в фоне, ход которой не сохранялся дольше этого, продолжается со страницы задания. */
+    private const BACKGROUND_STALE_SECONDS = 90;
+
     /** Запас свободного места сверх удвоенного объёма исходных файлов. */
     private const DISK_RESERVE_BYTES = 200 * 1024 * 1024;
 
@@ -53,6 +58,7 @@ final class SectionBundleController extends AbstractController
         private readonly SectionBundleBuilder $builder,
         private readonly BundleJobStore $jobs,
         private readonly ?PdfWatermarker $watermarker = null,
+        private readonly ?BackgroundJobs $background = null,
     ) {
     }
 
@@ -100,6 +106,15 @@ final class SectionBundleController extends AbstractController
             }
             if ([] === $errors) {
                 $job = $this->jobs->create($section, $user, $this->builder->items($chosen), $titlePages);
+                // Обработчик фоновых задач работает — сборник собирается им, страницу можно закрыть.
+                if (null !== $this->background && $this->background->isWorkerAlive()) {
+                    $job->background = true;
+                    $this->jobs->save($job);
+                    if (!$this->background->dispatch(new BuildSectionBundle($job->id))) {
+                        $job->background = false;
+                        $this->jobs->save($job);
+                    }
+                }
 
                 return $this->redirectToRoute('app_section_bundle_job', ['id' => $section->getId(), 'job' => $job->id]);
             }
@@ -155,9 +170,21 @@ final class SectionBundleController extends AbstractController
             return new JsonResponse(['error' => 'Неверный CSRF-токен — обновите страницу.'], Response::HTTP_FORBIDDEN);
         }
         $bundle = $this->ownJob($section, $job, $user);
+        // Сборку ведёт обработчик фоновых задач (недавно сохранял ход) — только показываем состояние. Если он
+        // остановился, порцию собирает сама страница, как без обработчика.
+        if ($bundle->background && !$bundle->isFinished()) {
+            if ($bundle->updatedAt > new \DateTimeImmutable('-'.self::BACKGROUND_STALE_SECONDS.' seconds')) {
+                return new JsonResponse(['background' => true] + $this->state($section, $bundle));
+            }
+            $bundle->background = false;
+            $this->jobs->save($bundle);
+        }
         @set_time_limit(170);
         if (!$this->jobs->runBatch($bundle)) {
-            return new JsonResponse(['busy' => true], Response::HTTP_CONFLICT);
+            // Порцию собирает другой процесс (обработчик или другая вкладка) — показываем, сколько уже готово.
+            $bundle = $this->jobs->load($bundle->id) ?? $bundle;
+
+            return new JsonResponse(['busy' => true] + $this->state($section, $bundle));
         }
 
         return new JsonResponse($this->state($section, $bundle));

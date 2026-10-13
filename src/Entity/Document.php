@@ -29,6 +29,8 @@ use Symfony\Component\Validator\Constraints as Assert;
 #[ORM\Index(name: 'idx_document_updated', columns: ['updated_at'])]
 #[ORM\Index(name: 'idx_document_code', columns: ['code'])]
 #[ORM\Index(name: 'idx_document_public', columns: ['status', 'is_public'])]
+#[ORM\Index(name: 'idx_document_status_viewed', columns: ['status', 'last_viewed_at'])]
+#[ORM\Index(name: 'idx_document_type', columns: ['type'])]
 class Document
 {
     public const TYPE_FILE = 'file';

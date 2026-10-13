@@ -104,6 +104,7 @@ final class BundleJobStore
             $job->error = $fresh->error;
             $job->finishedAt = $fresh->finishedAt;
             $job->attempts = $fresh->attempts;
+            $job->background = $fresh->background;
             if ($job->isFinished()) {
                 return true;
             }

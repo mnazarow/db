@@ -97,8 +97,9 @@ else
     fi
     if nginx -t >>"${LOG_FILE}" 2>&1; then svc reload nginx && ok "nginx перезагружен"; else warn "nginx -t сообщил об ошибке — проверьте конфигурацию вручную."; fi
     if [[ -n "${PHP_VERSION}" ]]; then
-        rm -f "/etc/php/${PHP_VERSION}/fpm/conf.d/90-${APP_ID}.ini" "/etc/php/${PHP_VERSION}/cli/conf.d/90-${APP_ID}.ini" "/etc/php.d/90-${APP_ID}.ini" \
-              "/etc/php/${PHP_VERSION}/fpm/pool.d/zz-${APP_ID}.conf" "/etc/php-fpm.d/zz-${APP_ID}.conf"
+        # Настройки всех версий PHP: после docportal php-upgrade остаются и файлы прежней.
+        rm -f /etc/php/*/fpm/conf.d/90-"${APP_ID}".ini /etc/php/*/cli/conf.d/90-"${APP_ID}".ini "/etc/php.d/90-${APP_ID}.ini" \
+              /etc/php/*/fpm/pool.d/zz-"${APP_ID}".conf "/etc/php-fpm.d/zz-${APP_ID}.conf"
         svc restart "${PHP_FPM_SERVICE}" >/dev/null 2>&1 || true
     fi
     if [[ "${PURGE}" == "1" && "${DB_LOCAL}" == "1" ]]; then

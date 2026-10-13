@@ -7,6 +7,7 @@ namespace App\Service;
 use App\Entity\Document;
 use App\Entity\DocumentEvent;
 use App\Entity\Section;
+use App\Entity\StatWindow;
 use App\Repository\DocumentEventRepository;
 use App\Repository\DocumentRepository;
 use App\Repository\DocumentVersionRepository;
@@ -17,6 +18,9 @@ use App\Repository\UserRepository;
 /**
  * Статистика по документам: сводные показатели, активность по дням/месяцам,
  * рейтинг документов, разрез по разделам и пользователям, актуальность.
+ *
+ * Показатели по журналу событий для всего портала берутся из ежедневных итогов (StatsAggregator) с добавлением
+ * сегодняшних событий; пока итоги не готовы (и для отдельных разделов и документов) — считаются по журналу.
  */
 final class StatsService
 {
@@ -28,7 +32,22 @@ final class StatsService
         private readonly SectionModeratorRepository $moderators,
         private readonly UserRepository $users,
         private readonly Validity $validity,
+        private readonly ?StatsAggregator $aggregates = null,
     ) {
+    }
+
+    /** Итоги, если они готовы (посчитаны сегодня или пересчитаны сейчас). */
+    private function aggregates(): ?StatsAggregator
+    {
+        return null !== $this->aggregates && $this->aggregates->ensureFresh() ? $this->aggregates : null;
+    }
+
+    /** Период страницы статистики, для которого хранятся итоги (null — всё время → 0), или null. */
+    private static function period(?int $days): ?int
+    {
+        $period = $days ?? 0;
+
+        return \in_array($period, StatsAggregator::PERIODS, true) ? $period : null;
     }
 
     /**
@@ -44,8 +63,30 @@ final class StatsService
         $since30 = $today->modify('-29 days');
         $byStatus = $this->documents->countByStatus($sectionIds);
         $validity = $this->documents->countByValidity($today, $this->validity->getSoonDays(), $sectionIds);
+        $agg = null === $sectionIds ? $this->aggregates() : null;
+        if (null !== $agg) {
+            $sum = array_fill_keys([DocumentEvent::VIEW, DocumentEvent::DOWNLOAD, DocumentEvent::NEW_VERSION, DocumentEvent::CREATE], 0);
+            foreach ($agg->dayCounts($since30, $today, array_keys($sum)) as $types) {
+                foreach ($types as $type => $cnt) {
+                    $sum[$type] += $cnt;
+                }
+            }
+            $events = [
+                'views_30d' => $sum[DocumentEvent::VIEW],
+                'downloads_30d' => $sum[DocumentEvent::DOWNLOAD],
+                'new_versions_30d' => $sum[DocumentEvent::NEW_VERSION] + $sum[DocumentEvent::CREATE],
+                'events_by_type' => $agg->typeTotals(),
+            ];
+        } else {
+            $events = [
+                'views_30d' => $this->events->countByTypeSince(DocumentEvent::VIEW, $since30, $sectionIds),
+                'downloads_30d' => $this->events->countByTypeSince(DocumentEvent::DOWNLOAD, $since30, $sectionIds),
+                'new_versions_30d' => $this->events->countByTypeSince(DocumentEvent::NEW_VERSION, $since30, $sectionIds) + $this->events->countByTypeSince(DocumentEvent::CREATE, $since30, $sectionIds),
+                'events_by_type' => $this->events->countAllByType(),
+            ];
+        }
 
-        return [
+        return $events + [
             'documents_total' => array_sum($byStatus),
             'documents_by_status' => $byStatus,
             'documents_by_type' => $this->documents->countByType(),
@@ -56,10 +97,6 @@ final class StatsService
             'users_by_source' => $this->users->countBySource(),
             'versions' => $this->versions->countAll(),
             'storage_bytes' => $this->versions->totalStorageBytes(),
-            'views_30d' => $this->events->countByTypeSince(DocumentEvent::VIEW, $since30, $sectionIds),
-            'downloads_30d' => $this->events->countByTypeSince(DocumentEvent::DOWNLOAD, $since30, $sectionIds),
-            'new_versions_30d' => $this->events->countByTypeSince(DocumentEvent::NEW_VERSION, $since30, $sectionIds) + $this->events->countByTypeSince(DocumentEvent::CREATE, $since30, $sectionIds),
-            'events_by_type' => $this->events->countAllByType(),
         ];
     }
 
@@ -71,14 +108,45 @@ final class StatsService
     public function activityByDay(int $days = 30, ?Document $document = null, ?array $sectionIds = null): array
     {
         $today = $this->validity->today();
+        $from = $today->modify('-'.($days - 1).' days');
+        $agg = null === $document && null === $sectionIds ? $this->aggregates() : null;
+        if (null === $agg) {
+            return $this->events->activityByDay($from, $today, $document, $sectionIds);
+        }
+        $counts = $agg->dayCounts($from, $today, [DocumentEvent::VIEW, DocumentEvent::DOWNLOAD]);
+        $out = [];
+        for ($d = $from; $d <= $today; $d = $d->modify('+1 day')) {
+            $key = $d->format('Y-m-d');
+            $out[$key] = ['view' => $counts[$key][DocumentEvent::VIEW] ?? 0, 'download' => $counts[$key][DocumentEvent::DOWNLOAD] ?? 0];
+        }
 
-        return $this->events->activityByDay($today->modify('-'.($days - 1).' days'), $today, $document, $sectionIds);
+        return $out;
     }
 
     /** @return array<string, array{view: int, download: int, new_version: int}> */
     public function activityByMonth(int $months = 12): array
     {
-        return $this->events->activityByMonth($months);
+        $agg = $this->aggregates();
+        if (null === $agg) {
+            return $this->events->activityByMonth($months);
+        }
+        $today = $this->validity->today();
+        $start = $today->modify('first day of this month')->modify('-'.($months - 1).' months');
+        $out = [];
+        for ($i = 0; $i < $months; ++$i) {
+            $out[$start->modify('+'.$i.' months')->format('Y-m')] = ['view' => 0, 'download' => 0, 'new_version' => 0];
+        }
+        foreach ($agg->dayCounts($start, $today, [DocumentEvent::VIEW, DocumentEvent::DOWNLOAD, DocumentEvent::NEW_VERSION, DocumentEvent::CREATE]) as $day => $types) {
+            $month = substr($day, 0, 7);
+            if (!isset($out[$month])) {
+                continue;
+            }
+            foreach ($types as $type => $cnt) {
+                $out[$month][DocumentEvent::CREATE === $type ? 'new_version' : $type] += $cnt;
+            }
+        }
+
+        return $out;
     }
 
     /**
@@ -88,10 +156,18 @@ final class StatsService
      */
     public function topDocuments(?int $days = 30, int $limit = 10): array
     {
-        $since = null === $days ? null : $this->validity->today()->modify('-'.($days - 1).' days');
-        $counts = $this->events->countsPerDocumentSince($since);
-        arsort($counts);
-        uasort($counts, static fn ($a, $b) => ($b['view'] + $b['download']) <=> ($a['view'] + $a['download']));
+        $agg = null !== self::period($days) ? $this->aggregates() : null;
+        if (null !== $agg) {
+            $counts = [];
+            foreach ($agg->top((int) self::period($days), StatWindow::KIND_DOCUMENT, $limit) as $row) {
+                $counts[$row['id']] = ['view' => $row['views'], 'download' => $row['downloads']];
+            }
+        } else {
+            $since = null === $days ? null : $this->validity->today()->modify('-'.($days - 1).' days');
+            $counts = $this->events->countsPerDocumentSince($since);
+            arsort($counts);
+            uasort($counts, static fn ($a, $b) => ($b['view'] + $b['download']) <=> ($a['view'] + $a['download']));
+        }
         $ids = \array_slice(array_keys($counts), 0, $limit);
         if ([] === $ids) {
             return [];
@@ -120,10 +196,16 @@ final class StatsService
     {
         $tree = $this->sections->findAllTree();
         $perSection = $this->documents->countPerSection();
-        $since = null === $days ? null : $this->validity->today()->modify('-'.($days - 1).' days');
-        $events = $this->events->countsPerSectionSince($since);
+        $agg = null !== self::period($days) ? $this->aggregates() : null;
+        if (null !== $agg) {
+            $events = $agg->perSection((int) self::period($days));
+        } else {
+            $since = null === $days ? null : $this->validity->today()->modify('-'.($days - 1).' days');
+            $events = $this->events->countsPerSectionSince($since);
+        }
         $today = $this->validity->today();
-        $expiring = $this->documents->findExpiring($today, $this->validity->getSoonDays());
+        // Сроки — числами по разделам, а не списком документов (на крупном портале их тысячи).
+        $expiringPerSection = $this->documents->countExpiringPerSection($today, $this->validity->getSoonDays());
 
         // Показатели раздела складываются во все разделы его пути (сам раздел и предки) — так за один
         // проход получаются суммы по поддеревьям (раньше — перебор всех пар разделов и документов).
@@ -145,14 +227,10 @@ final class StatsService
                 $downloads[$a] = ($downloads[$a] ?? 0) + $c['download'];
             }
         }
-        foreach ($expiring as $doc) {
-            $isExpired = $doc->isExpired($today);
-            foreach ($paths[(int) $doc->getSection()->getId()] ?? [] as $a) {
-                if ($isExpired) {
-                    $expired[$a] = ($expired[$a] ?? 0) + 1;
-                } else {
-                    $soon[$a] = ($soon[$a] ?? 0) + 1;
-                }
+        foreach ($expiringPerSection as $sid => $c) {
+            foreach ($paths[$sid] ?? [] as $a) {
+                $expired[$a] = ($expired[$a] ?? 0) + $c['expired'];
+                $soon[$a] = ($soon[$a] ?? 0) + $c['soon'];
             }
         }
 
@@ -178,9 +256,30 @@ final class StatsService
     /** @return list<array{name: string, username: ?string, views: int, downloads: int, changes: int, last: \DateTimeImmutable}> */
     public function userActivity(?int $days = 30, int $limit = 50): array
     {
-        $since = null === $days ? null : $this->validity->today()->modify('-'.($days - 1).' days');
+        $agg = null !== self::period($days) ? $this->aggregates() : null;
+        if (null === $agg) {
+            $since = null === $days ? null : $this->validity->today()->modify('-'.($days - 1).' days');
 
-        return $this->events->userActivity($since, $limit);
+            return $this->events->userActivity($since, $limit);
+        }
+        $rows = $agg->top((int) self::period($days), StatWindow::KIND_USER, $limit);
+        $names = $this->users->namesByIds(array_column($rows, 'id'));
+        $out = [];
+        foreach ($rows as $row) {
+            if (!isset($names[$row['id']])) {
+                continue;
+            }
+            $out[] = [
+                'name' => $names[$row['id']]['name'],
+                'username' => $names[$row['id']]['username'],
+                'views' => $row['views'],
+                'downloads' => $row['downloads'],
+                'changes' => $row['changes'],
+                'last' => new \DateTimeImmutable($row['last'] ?? '2000-01-01'),
+            ];
+        }
+
+        return $out;
     }
 
     /**

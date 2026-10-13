@@ -99,6 +99,7 @@ services:
             - '../src/DependencyInjection/'
             - '../src/Entity/'
             - '../src/Kernel.php'
+            - '../src/Message/'
 
     # Параметры подключения к Active Directory / LDAP собраны в один объект настроек.
     App\Security\Ldap\LdapSettings:

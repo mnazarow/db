@@ -309,32 +309,47 @@ final class DocumentRepository extends ServiceEntityRepository
      */
     public function countByValidity(\DateTimeImmutable $today, int $soonDays, ?array $sectionIds = null): array
     {
+        if (null !== $sectionIds && [] === $sectionIds) {
+            return ['expired' => 0, 'soon' => 0, 'valid' => 0, 'none' => 0];
+        }
+        // Подсчёт — в базе (одна строка), без загрузки дат всех опубликованных документов.
         $qb = $this->createQueryBuilder('d')
-            ->select('d.validUntil AS vu')
-            ->andWhere('d.status = :st')->setParameter('st', Document::STATUS_PUBLISHED);
+            ->select('SUM(CASE WHEN d.validUntil IS NULL THEN 1 ELSE 0 END) AS none',
+                'SUM(CASE WHEN d.validUntil < :today THEN 1 ELSE 0 END) AS expired',
+                'SUM(CASE WHEN d.validUntil >= :today AND d.validUntil <= :soon THEN 1 ELSE 0 END) AS soon',
+                'SUM(CASE WHEN d.validUntil > :soon THEN 1 ELSE 0 END) AS valid')
+            ->andWhere('d.status = :st')->setParameter('st', Document::STATUS_PUBLISHED)
+            ->setParameter('today', $today->format('Y-m-d'))
+            ->setParameter('soon', $today->modify('+'.$soonDays.' days')->format('Y-m-d'));
         if (null !== $sectionIds) {
-            if ([] === $sectionIds) {
-                return ['expired' => 0, 'soon' => 0, 'valid' => 0, 'none' => 0];
-            }
             $qb->andWhere('d.section IN (:ids)')->setParameter('ids', $sectionIds);
         }
-        $out = ['expired' => 0, 'soon' => 0, 'valid' => 0, 'none' => 0];
-        $todayStr = $today->format('Y-m-d');
-        $soonStr = $today->modify('+'.$soonDays.' days')->format('Y-m-d');
-        foreach ($qb->getQuery()->getArrayResult() as $row) {
-            $vu = $row['vu'];
-            if (null === $vu) {
-                ++$out['none'];
-                continue;
-            }
-            $d = $vu instanceof \DateTimeInterface ? $vu->format('Y-m-d') : (string) $vu;
-            if ($d < $todayStr) {
-                ++$out['expired'];
-            } elseif ($d <= $soonStr) {
-                ++$out['soon'];
-            } else {
-                ++$out['valid'];
-            }
+        $row = $qb->getQuery()->getSingleResult();
+
+        return ['expired' => (int) $row['expired'], 'soon' => (int) $row['soon'], 'valid' => (int) $row['valid'], 'none' => (int) $row['none']];
+    }
+
+    /**
+     * Просроченные и истекающие в ближайшие $soonDays дней опубликованные документы — числами по разделам.
+     *
+     * @return array<int, array{expired: int, soon: int}>
+     */
+    public function countExpiringPerSection(\DateTimeImmutable $today, int $soonDays): array
+    {
+        $rows = $this->createQueryBuilder('d')
+            ->select('IDENTITY(d.section) AS sid',
+                'SUM(CASE WHEN d.validUntil < :today THEN 1 ELSE 0 END) AS expired',
+                'SUM(CASE WHEN d.validUntil >= :today THEN 1 ELSE 0 END) AS soon')
+            ->andWhere('d.status = :st')->setParameter('st', Document::STATUS_PUBLISHED)
+            ->andWhere('d.validUntil IS NOT NULL')
+            ->andWhere('d.validUntil <= :until')
+            ->setParameter('today', $today->format('Y-m-d'))
+            ->setParameter('until', $today->modify('+'.$soonDays.' days')->format('Y-m-d'))
+            ->groupBy('sid')
+            ->getQuery()->getArrayResult();
+        $out = [];
+        foreach ($rows as $row) {
+            $out[(int) $row['sid']] = ['expired' => (int) $row['expired'], 'soon' => (int) $row['soon']];
         }
 
         return $out;

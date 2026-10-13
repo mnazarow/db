@@ -171,4 +171,24 @@ final class UserRepository extends ServiceEntityRepository
             ->andWhere('u.active = true')
             ->getQuery()->getSingleScalarResult() > 0;
     }
+
+    /**
+     * Имена и логины по идентификаторам (для отчётов по итогам статистики).
+     *
+     * @param list<int> $ids
+     *
+     * @return array<int, array{name: string, username: string}>
+     */
+    public function namesByIds(array $ids): array
+    {
+        if ([] === $ids) {
+            return [];
+        }
+        $out = [];
+        foreach ($this->createQueryBuilder('u')->select('u.id, u.displayName, u.username')->andWhere('u.id IN (:ids)')->setParameter('ids', $ids)->getQuery()->getArrayResult() as $row) {
+            $out[(int) $row['id']] = ['name' => (string) $row['displayName'], 'username' => (string) $row['username']];
+        }
+
+        return $out;
+    }
 }

@@ -7,6 +7,7 @@ namespace App\Command;
 use App\Entity\DocumentEvent;
 use App\Repository\DocumentEventRepository;
 use App\Repository\DocumentRepository;
+use App\Service\StatsAggregator;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -17,7 +18,7 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 #[AsCommand(name: 'app:stats:recount', description: 'Пересчитать счётчики просмотров и скачиваний документов по журналу событий')]
 final class StatsRecountCommand extends Command
 {
-    public function __construct(private readonly DocumentRepository $documents, private readonly DocumentEventRepository $events, private readonly EntityManagerInterface $em)
+    public function __construct(private readonly DocumentRepository $documents, private readonly DocumentEventRepository $events, private readonly EntityManagerInterface $em, private readonly ?StatsAggregator $aggregator = null)
     {
         parent::__construct();
     }
@@ -35,6 +36,8 @@ final class StatsRecountCommand extends Command
             ++$n;
         }
         $this->em->flush();
+        // Заодно — ежедневные итоги страницы «Статистика».
+        $this->aggregator?->refresh();
         $io->success(\sprintf('Пересчитано документов: %d.', $n));
 
         return Command::SUCCESS;

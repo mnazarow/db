@@ -151,14 +151,15 @@ final class DocumentEventRepository extends ServiceEntityRepository
         for ($i = 0; $i < $months; ++$i) {
             $out[$start->modify('+'.$i.' months')->format('Y-m')] = ['view' => 0, 'download' => 0, 'new_version' => 0];
         }
+        // По дням (DATE() есть и в MySQL, и в SQLite), месяцы складываются здесь.
         $rows = $this->getEntityManager()->getConnection()->fetchAllAssociative(
-            "SELECT e.type AS t, DATE_FORMAT(e.created_at, '%Y-%m') AS m, COUNT(*) AS cnt FROM document_event e"
-            .' WHERE e.type IN (:types) AND e.created_at >= :from GROUP BY e.type, m',
+            'SELECT e.type AS t, DATE(e.created_at) AS d, COUNT(*) AS cnt FROM document_event e'
+            .' WHERE e.type IN (:types) AND e.created_at >= :from GROUP BY e.type, DATE(e.created_at)',
             ['types' => [DocumentEvent::VIEW, DocumentEvent::DOWNLOAD, DocumentEvent::NEW_VERSION, DocumentEvent::CREATE], 'from' => $start->format('Y-m-d H:i:s')],
             ['types' => ArrayParameterType::STRING],
         );
         foreach ($rows as $row) {
-            $m = (string) $row['m'];
+            $m = substr((string) $row['d'], 0, 7);
             if (!isset($out[$m])) {
                 continue;
             }

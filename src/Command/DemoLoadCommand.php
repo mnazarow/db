@@ -20,6 +20,7 @@ use App\Service\DocumentManager;
 use App\Service\Material\MaterialImporter;
 use App\Service\Material\MaterialService;
 use App\Service\SectionManager;
+use App\Service\StatsAggregator;
 use App\Service\UserManager;
 use Doctrine\DBAL\Connection;
 use Doctrine\ORM\EntityManagerInterface;
@@ -53,6 +54,7 @@ final class DemoLoadCommand extends Command
         private readonly MaterialService $materials,
         private readonly DocumentKindService $kinds,
         private readonly string $projectDir,
+        private readonly ?StatsAggregator $statsAggregator = null,
     ) {
         parent::__construct();
     }
@@ -568,6 +570,8 @@ HTML, true, [
             $this->connection->executeStatement($sql.implode(', ', $values), $params);
         }
         $this->connection->commit();
+        // События задним числом — итоги статистики пересчитаются при первом открытии.
+        $this->statsAggregator?->invalidate();
     }
 
     private function wipe(): void

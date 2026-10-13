@@ -34,6 +34,9 @@ if [[ "${INSTALL_MODE}" == "docker" ]]; then
     fi
 else
     check "Служба ${PHP_FPM_SERVICE} работает" svc status "${PHP_FPM_SERVICE}"
+    if [[ -n "${PHP_VERSION:-}" ]] && ! version_ge "${PHP_VERSION}" "${PHP_RECOMMENDED_VERSION}"; then
+        info "PHP ${PHP_VERSION}: портал работает, но для перехода на Symfony 8 понадобится PHP ${PHP_RECOMMENDED_VERSION}+ — sudo ${APP_ID} php-upgrade"
+    fi
     check "Служба nginx работает" svc status nginx
     [[ "${DB_LOCAL}" == "1" ]] && check "Служба ${DB_SERVICE} работает" svc status "${DB_SERVICE}"
     check "Конфигурация nginx корректна (nginx -t)" nginx -t

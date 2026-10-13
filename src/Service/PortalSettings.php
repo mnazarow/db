@@ -196,6 +196,8 @@ final class PortalSettings
     public const TEAM_DIGEST_ENABLED = 'team.digest.enabled';
     public const TEAM_DIGEST_ONLY_PENDING = 'team.digest.only_pending';
     public const TEAM_DIGEST_LAST_RUN = 'team.digest.last_run';
+    /** День, на который посчитаны итоги статистики (App\Service\StatsAggregator), Y-m-d. */
+    public const STATS_AGGREGATED_ON = 'stats.aggregated_on';
 
     public const OCR_DEFAULT_MAX_PAGES = 20;
     public const OCR_DEFAULT_DPI = 200;
@@ -204,7 +206,7 @@ final class PortalSettings
     private const SECRET_NAMES = [self::WEBHOOK_SECRET, self::LLM_API_KEY, self::EMBED_API_KEY, self::SSO_CLIENT_SECRET, self::TELEGRAM_TOKEN, self::MONITORING_TOKEN, self::ONLYOFFICE_SECRET, self::PUSH_PRIVATE_KEY];
 
     /** Служебные значения, которые портал меняет сам (в журнал аудита не пишутся). */
-    private const INTERNAL_NAMES = [self::TELEGRAM_OFFSET, self::MATERIALS_REMIND_LAST_RUN, self::TEAM_DIGEST_LAST_RUN, self::ONLYOFFICE_LINK_KEY];
+    private const INTERNAL_NAMES = [self::TELEGRAM_OFFSET, self::MATERIALS_REMIND_LAST_RUN, self::TEAM_DIGEST_LAST_RUN, self::ONLYOFFICE_LINK_KEY, self::STATS_AGGREGATED_ON];
 
     private const CACHE_KEY = 'portal_settings';
 

@@ -445,7 +445,6 @@
             body.append('_token', token);
             fetch(url, { method: 'POST', body: body, credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
                 .then(function (r) {
-                    if (r.status === 409) { return { busy: true }; }
                     if (!r.ok) { return r.json().catch(function () { return {}; }).then(function (d) { throw new Error(d.error || ('Ошибка сервера ' + r.status)); }); }
                     return r.json();
                 })
@@ -453,9 +452,9 @@
                     running = false;
                     failures = 0;
                     if (networkBox) { networkBox.hidden = true; }
-                    if (data.busy) { setTimeout(tick, 2000); return; }
                     render(data);
-                    if (!finished) { setTimeout(tick, 150); }
+                    // Сборку ведёт обработчик фоновых задач или другая вкладка — только следим за ходом.
+                    if (!finished) { setTimeout(tick, data.busy || data.background ? 1500 : 150); }
                 })
                 .catch(function (err) {
                     running = false;
