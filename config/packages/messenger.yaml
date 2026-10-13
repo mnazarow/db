@@ -1,0 +1,27 @@
+# Фоновые задачи (РУКОВОДСТВО, 7.1 «Фоновые задачи»): долгие операции — «Отправить сейчас» для сводок, PDF-сборники,
+# уведомления о назначенном ознакомлении, пересчёт итогов статистики — уходят в очередь в базе портала
+# (таблица messenger_messages) и выполняются обработчиком: в режиме native его каждую минуту запускает cron
+# (docportal console messenger:consume async), в Docker — процесс в контейнере app. Пока обработчик не работает,
+# портал выполняет эти операции сам, как раньше (App\Service\BackgroundJobs).
+framework:
+    messenger:
+        failure_transport: failed
+        buses:
+            messenger.bus.default:
+                middleware:
+                    # Обработчик работает до минуты: соединение с базой проверяется перед каждой задачей.
+                    - doctrine_ping_connection
+                    # Задача, на которой обработчик прервали, повторно не выполняется (письма не уходят дважды).
+                    - App\Messenger\AtMostOnceMiddleware
+        transports:
+            # В автотестах — sync:// (phpunit.xml.dist): задачи выполняются сразу.
+            async:
+                dsn: '%env(MESSENGER_TRANSPORT_DSN)%'
+                retry_strategy:
+                    max_retries: 3
+                    delay: 30000
+                    multiplier: 4
+            # Задачи, не выполненные и после повторов: docportal console messenger:failed:show / :retry.
+            failed: 'doctrine://default?queue_name=failed&auto_setup=0'
+        routing:
+            App\Message\BackgroundMessage: async

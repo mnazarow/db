@@ -47,7 +47,11 @@
                 <button type="submit" class="btn btn--ghost" data-job-delete-label>{{ job.finished ? 'Удалить сборник' : 'Отменить сборку' }}</button>
             </form>
         </div>
+        {% if job.background and not job.finished %}
+        <p class="form-help" data-job-background>Сборник собирается на сервере в фоне — страницу можно закрыть: готовый файл появится в списке сборников на странице «PDF-сборник» раздела. Хранится сутки.</p>
+        {% else %}
         <p class="form-help">Страницу можно не держать открытой до конца: сборка продолжится, когда вы вернётесь сюда (ссылка — в разделе «PDF-сборник»). Готовый файл хранится сутки.</p>
+        {% endif %}
     </div>
 
     <div class="card table-card">

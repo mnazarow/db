@@ -695,5 +695,9 @@ fi
 printf '\n%sОбновление завершено: версия %s.%s Журнал: %s\n' "${C_GREEN}${C_BOLD}" "${NEW_VERSION}" "${C_RESET}" "${LOG_FILE}"
 [[ -n "${BACKUP_FILE}" ]] && printf 'Резервная копия перед обновлением: %s\n' "${BACKUP_FILE}"
 [[ "${VIDEO_ENABLED:-}" == "1" ]] && printf 'Раздел «Видео»: включён (%s video status — проверка).\n' "${APP_ID}"
+# PHP ниже рекомендуемого: портал работает, но будущей Symfony 8 нужен PHP 8.4+ — переход отдельной командой.
+if [[ "${INSTALL_MODE}" == "native" && -n "${PHP_VERSION:-}" ]] && ! version_ge "${PHP_VERSION}" "${PHP_RECOMMENDED_VERSION}"; then
+    printf 'PHP %s: рекомендуется перейти на PHP %s (понадобится для перехода портала на Symfony 8) — sudo %s php-upgrade.\n' "${PHP_VERSION}" "${PHP_RECOMMENDED_VERSION}" "${APP_ID}"
+fi
 print_warnings_summary
 exit 0

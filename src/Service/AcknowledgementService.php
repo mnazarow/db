@@ -8,6 +8,7 @@ use App\Entity\Document;
 use App\Entity\DocumentAcknowledgement;
 use App\Entity\DocumentEvent;
 use App\Entity\User;
+use App\Message\NotifyAcknowledgementAssigned;
 use App\Repository\DocumentAcknowledgementRepository;
 use App\Repository\UserRepository;
 use App\Security\Access;
@@ -40,6 +41,7 @@ final class AcknowledgementService
         private readonly PortalUrl $portalUrl,
         private readonly ?Access $access = null,
         private readonly ?PushNotifier $push = null,
+        private readonly ?BackgroundJobs $background = null,
     ) {
     }
 
@@ -91,10 +93,11 @@ final class AcknowledgementService
         if ($created > 0) {
             $this->auditLogger->info('Назначено ознакомление с документом', ['document' => $document->getId(), 'version' => $number, 'users' => $created, 'due' => $dueAt?->format('Y-m-d'), 'by' => $by->getUsername()]);
         }
-        if ($notify) {
-            foreach ($recipients as $user) {
-                $this->notifyAssigned($user, $document, $dueAt);
-            }
+        // Письма сотрудникам (их могут быть сотни) — фоновой задачей, если обработчик очереди работает.
+        if ($notify && [] !== $recipients && !$this->background?->dispatch(new NotifyAcknowledgementAssigned(
+            (int) $document->getId(), array_map(static fn (User $u): int => (int) $u->getId(), $recipients), $dueAt?->format('Y-m-d'),
+        ))) {
+            $this->notifyAssignedUsers($document, $recipients, $dueAt);
         }
 
         return ['created' => $created, 'existing' => $existing, 'skipped' => $skipped, 'version' => $number];
@@ -467,6 +470,18 @@ final class AcknowledgementService
         }
 
         return ['users' => \count($byUser), 'items' => \count($pending), 'emails' => $emails];
+    }
+
+    /**
+     * Письма и уведомления о назначенном ознакомлении.
+     *
+     * @param iterable<User> $users
+     */
+    public function notifyAssignedUsers(Document $document, iterable $users, ?\DateTimeImmutable $dueAt): void
+    {
+        foreach ($users as $user) {
+            $this->notifyAssigned($user, $document, $dueAt);
+        }
     }
 
     private function notifyAssigned(User $user, Document $document, ?\DateTimeImmutable $dueAt): void

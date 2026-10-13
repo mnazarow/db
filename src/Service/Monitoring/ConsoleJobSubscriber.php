@@ -28,6 +28,9 @@ final class ConsoleJobSubscriber implements EventSubscriberInterface
         'app:materials:remind' => 'materials-remind',
         'app:ai:index' => 'ai-index',
         'app:team:digest' => 'team-digest',
+        'app:stats:aggregate' => 'stats',
+        // Обработчик фоновых задач (cron запускает его каждую минуту, в Docker — процесс в контейнере app).
+        'messenger:consume' => 'worker',
     ];
 
     /** @var array<string, float> имя задания → время старта */

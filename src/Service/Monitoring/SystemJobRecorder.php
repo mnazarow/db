@@ -27,6 +27,8 @@ final class SystemJobRecorder
         'materials-remind' => ['label' => 'Напоминания по таблицам материалов', 'max_age' => 8 * 86400],
         'ai-index' => ['label' => 'Смысловой индекс для ИИ', 'max_age' => 2 * 3600 + 900],
         'team-digest' => ['label' => 'Сводка руководителям', 'max_age' => 8 * 86400],
+        'stats' => ['label' => 'Итоги статистики', 'max_age' => 26 * 3600],
+        'worker' => ['label' => 'Обработчик фоновых задач', 'max_age' => 10 * 60],
         'backup' => ['label' => 'Резервная копия', 'max_age' => 26 * 3600],
         'backup-remote' => ['label' => 'Копия во внешнем хранилище', 'max_age' => 26 * 3600],
         'backup-verify' => ['label' => 'Проверка восстановления из копии', 'max_age' => 8 * 86400],

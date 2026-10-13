@@ -15,6 +15,8 @@
         <server name="SHELL_VERBOSITY" value="-1"/>
         <!-- Устаревшие вызовы Doctrine — в отчёт PHPUnit (в CI на PHP 8.5 и в пробе Symfony 8 они роняют сборку). -->
         <server name="DOCTRINE_DEPRECATIONS" value="trigger"/>
+        <!-- Фоновые задачи в автотестах выполняются сразу (config/packages/messenger.yaml). -->
+        <server name="MESSENGER_TRANSPORT_DSN" value="sync://" force="true"/>
         <!-- Раздел «Видео»: проверка сессии для видеопортала (tests/Functional/VideoSessionTest.php). -->
         <server name="VIDEO_ENABLED" value="1"/>
         <server name="VIDEO_SHARED_SECRET" value="test-video-secret-0123456789abcdef"/>

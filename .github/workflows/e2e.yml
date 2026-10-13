@@ -59,7 +59,8 @@ jobs:
       matrix:
         include:
           - { image: 'debian:12', video: 'video' }
-          - { image: 'ubuntu:24.04', video: 'video' }
+          # PHP из ОС (8.3), затем переход на 8.4 командой docportal php-upgrade.
+          - { image: 'ubuntu:24.04', video: 'video', php: 'from-os' }
           - { image: 'debian:13', video: 'no-video' }
           - { image: 'ubuntu:22.04', video: 'no-video' }
     steps:
@@ -90,7 +91,7 @@ jobs:
         run: |
           archive=$(ls dist/docportal-*.tar.gz | head -n1)
           next=$(ls dist/next/docportal-*.tar.gz | head -n1)
-          docker exec srv bash /e2e/e2e-install.sh "/${archive}" "/${next}" native ${{ matrix.video }}
+          docker exec -e E2E_PHP=${{ matrix.php || '' }} srv bash /e2e/e2e-install.sh "/${archive}" "/${next}" native ${{ matrix.video }}
 
   docker:
     name: Режим Docker (машина CI)

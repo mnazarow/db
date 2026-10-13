@@ -5,14 +5,17 @@ declare(strict_types=1);
 namespace App\Tests\Functional;
 
 use App\Entity\Document;
+use App\Service\BackgroundJobs;
 use App\Service\DocumentManager;
 use App\Service\Pdf\Bundle\BundleJobStore;
 use App\Service\Pdf\Bundle\SectionBundleBuilder;
 use App\Service\Pdf\HtmlPdfWriter;
 use App\Service\Pdf\PdfFactory;
+use App\Service\PortalUrl;
 use App\Service\Process\Shell;
 use App\Tests\PortalTestCase;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
+use Symfony\Component\Routing\RequestContext;
 
 /**
  * PDF-сборник раздела (1.7.0): права, выбор документов, сборка порциями, содержание с номерами страниц,
@@ -238,6 +241,54 @@ final class SectionBundleTest extends PortalTestCase
         self::assertResponseRedirects('/sections/'.$sectionId.'/bundle');
         $this->client->request('GET', $jobUrl);
         self::assertResponseStatusCodeSame(404);
+    }
+
+    public function testBundleIsBuiltByBackgroundWorker(): void
+    {
+        self::requireTools();
+        $picked = \array_slice($this->sampleDocuments(), 0, 2);
+        $section = $this->section('Общие документы');
+        $sectionId = (int) $section->getId();
+        $store = static::getContainer()->get(BundleJobStore::class);
+        // Обработчик фоновых задач работает: сборник собирает он (в автотестах очередь синхронная — сразу).
+        static::getContainer()->get(BackgroundJobs::class)->markWorkerAlive();
+        (new \ReflectionProperty(PortalUrl::class, 'context'))->setValue(static::getContainer()->get(PortalUrl::class), RequestContext::fromUri('https://docs.example.ru'));
+
+        $this->loginAs('ivanov');
+        $crawler = $this->client->request('GET', '/sections/'.$sectionId.'/bundle');
+        $token = $crawler->filter('form[data-bundle-form] input[name="_token"]')->attr('value');
+        $this->client->request('POST', '/sections/'.$sectionId.'/bundle', ['_token' => $token, 'title_pages' => '1', 'documents' => array_map(static fn (Document $d): int => (int) $d->getId(), $picked)]);
+        $jobUrl = (string) $this->client->getResponse()->headers->get('Location');
+        $this->createdJobs[] = basename($jobUrl);
+        $job = $store->load(basename($jobUrl));
+        self::assertTrue($job->background);
+        self::assertTrue($job->isFinished(), 'собран обработчиком, без запросов со страницы');
+        self::assertSame(['ok' => 2, 'note' => 0, 'pending' => 0], $job->counters());
+        $this->client->request('POST', $jobUrl.'/run', ['_token' => $token]);
+        self::assertTrue(json_decode((string) $this->client->getResponse()->getContent(), true)['finished']);
+
+        // Сборку ведёт обработчик (ход сохранялся только что) — страница лишь показывает состояние…
+        $user = $this->user('ivanov');
+        $running = $store->create($section, $user, static::getContainer()->get(SectionBundleBuilder::class)->items($picked), false);
+        $running->background = true;
+        $store->save($running);
+        $this->createdJobs[] = $running->id;
+        $runUrl = '/sections/'.$sectionId.'/bundle/'.$running->id;
+        $this->client->request('GET', $runUrl);
+        self::assertSelectorExists('[data-job-background]');
+        $this->client->request('POST', $runUrl.'/run', ['_token' => $token]);
+        $state = json_decode((string) $this->client->getResponse()->getContent(), true);
+        self::assertTrue($state['background']);
+        self::assertSame(0, $state['position'], 'страница сама не собирает');
+        // …а если обработчик остановился (ход не сохранялся полторы минуты), сборку продолжает страница.
+        $path = static::getContainer()->getParameter('kernel.project_dir').'/var/bundle-jobs/'.$running->id.'.json';
+        $data = json_decode((string) file_get_contents($path), true);
+        $data['updated_at'] = (new \DateTimeImmutable('-5 minutes'))->format(\DATE_ATOM);
+        file_put_contents($path, json_encode($data));
+        $state = $this->runJob($runUrl, $token);
+        self::assertNull($state['error']);
+        self::assertSame(['ok' => 2, 'note' => 0, 'pending' => 0], $state['counters']);
+        static::getContainer()->get(BackgroundJobs::class)->markWorkerStopped();
     }
 
     public function testBundleWithoutTitlePagesStartsWithHeadings(): void

@@ -17,7 +17,10 @@ DEFAULT_DB_NAME="docportal"
 DEFAULT_DB_USER="docportal"
 DEFAULT_HTTP_PORT="80"
 PHP_MIN_VERSION="8.2"
-PHP_PREFERRED_VERSIONS=("8.3" "8.4" "8.5" "8.2" "8.6" "8.7")
+# Версия PHP для новых установок и перехода (docportal php-upgrade): Symfony 8, на которую портал перейдёт
+# после выхода Symfony 8.4 LTS, требует PHP 8.4+ (РУКОВОДСТВО, 8.4). Ниже — портал работает, но переходить придётся.
+PHP_RECOMMENDED_VERSION="8.4"
+PHP_PREFERRED_VERSIONS=("8.4" "8.5" "8.6" "8.7" "8.3" "8.2")
 REQUIRED_PHP_EXTENSIONS=(pdo_mysql mbstring ctype iconv xml dom zlib fileinfo json intl curl opcache ldap)
 
 # --- Цвета и вывод -------------------------------------------------------------
@@ -513,6 +516,84 @@ version_ge() { [[ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1)" == "$2" 
 # Версия $1 строго новее $2.
 version_gt() { [[ "$1" != "$2" ]] && version_ge "$1" "$2"; }
 
+# --- Пакеты PHP (Debian, Ubuntu) -------------------------------------------------------
+# Есть ли в apt устанавливаемый пакет php<версия>-fpm
+apt_has_php() { apt-cache policy "php${1}-fpm" 2>/dev/null | grep_has 'Candidate: [0-9]'; }
+
+# Версия PHP, которую ОС считает основной (по зависимостям метапакета php-fpm), например 8.5
+apt_default_php_version() {
+    apt-cache depends php-fpm 2>/dev/null | grep -oE 'php[0-9]+\.[0-9]+-fpm' | head -n1 | grep -oE '[0-9]+\.[0-9]+' || true
+}
+
+# Версия PHP не ниже МИН среди пакетов apt: сначала основная для ОС, затем предпочтительные.
+# detect_apt_php_version [МИН=PHP_MIN_VERSION]
+detect_apt_php_version() {
+    local min=${1:-${PHP_MIN_VERSION}} v
+    # Основная версия ОС — только без стороннего репозитория: с ним метапакет php-fpm указывает на самую
+    # новую версию репозитория, а нужна предпочтительная (PHP_PREFERRED_VERSIONS).
+    if ! php_repo_present; then
+        v=$(apt_default_php_version)
+        if [[ -n "${v}" ]] && version_ge "${v}" "${min}" && apt_has_php "${v}"; then
+            echo "${v}"; return 0
+        fi
+    fi
+    for v in "${PHP_PREFERRED_VERSIONS[@]}"; do
+        if version_ge "${v}" "${min}" && apt_has_php "${v}"; then echo "${v}"; return 0; fi
+    done
+    return 1
+}
+
+# Подключён ли сторонний репозиторий PHP (deb.sury.org / ppa:ondrej/php).
+php_repo_present() {
+    compgen -G '/etc/apt/sources.list.d/ondrej-ubuntu-php-*' >/dev/null 2>&1 || [[ -f /etc/apt/sources.list.d/php-sury.list ]]
+}
+
+# Подключает репозиторий с новыми версиями PHP: ppa:ondrej/php (Ubuntu) или deb.sury.org (Debian).
+# Код 1 — не удалось (нет доступа к репозиторию): частично созданные файлы убираются, установка может
+# продолжиться с PHP из ОС. ADDED_PHP_REPO=1 — репозиторий подключён этим вызовом.
+add_php_repo() {
+    php_repo_present && return 0
+    pkg_install ca-certificates curl gnupg lsb-release apt-transport-https || return 1
+    if [[ "${OS_ID}" == "ubuntu" ]]; then
+        pkg_install software-properties-common || return 1
+        if ! add-apt-repository -y ppa:ondrej/php >>"${LOG_FILE:-/dev/null}" 2>&1; then
+            remove_php_repo
+            return 1
+        fi
+    else
+        if ! download https://packages.sury.org/php/apt.gpg /usr/share/keyrings/deb.sury.org-php.gpg; then
+            remove_php_repo
+            return 1
+        fi
+        echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main" > /etc/apt/sources.list.d/php-sury.list
+    fi
+    ADDED_PHP_REPO="1"
+    _APT_UPDATED=0
+    if ! apt_update_once; then
+        remove_php_repo
+        ADDED_PHP_REPO="0"
+        return 1
+    fi
+    return 0
+}
+
+remove_php_repo() {
+    if [[ "${OS_ID}" == "ubuntu" ]]; then
+        command -v add-apt-repository >/dev/null 2>&1 && add-apt-repository -y --remove ppa:ondrej/php >>"${LOG_FILE:-/dev/null}" 2>&1 || true
+        rm -f /etc/apt/sources.list.d/ondrej-ubuntu-php-*.list /etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources
+    else
+        rm -f /etc/apt/sources.list.d/php-sury.list /usr/share/keyrings/deb.sury.org-php.gpg
+    fi
+    _APT_UPDATED=0
+}
+
+# Пакеты PHP для портала: install_php_packages ВЕРСИЯ
+install_php_packages() {
+    local v=$1
+    pkg_install "php${v}-fpm" "php${v}-cli" "php${v}-mysql" "php${v}-xml" "php${v}-mbstring" "php${v}-intl" \
+        "php${v}-zip" "php${v}-gd" "php${v}-curl" "php${v}-ldap"
+}
+
 php_version_ok() {
     # php_version_ok /usr/bin/php8.3 → 0 если >= PHP_MIN_VERSION
     local v
@@ -635,6 +716,8 @@ cron_app_jobs() {
 * * * * * root /usr/local/bin/${APP_ID} console app:telegram:poll --no-interaction >> ${LOG_DIR}/telegram-cron.log 2>&1
 10 9 * * 1 root /usr/local/bin/${APP_ID} console app:materials:remind --no-interaction >> ${LOG_DIR}/materials-remind-cron.log 2>&1
 40 8 * * 1 root /usr/local/bin/${APP_ID} console app:team:digest --no-interaction >> ${LOG_DIR}/team-digest-cron.log 2>&1
+5 0 * * * root /usr/local/bin/${APP_ID} console app:stats:aggregate --no-interaction >> ${LOG_DIR}/stats-cron.log 2>&1
+* * * * * root /usr/local/bin/${APP_ID} console messenger:consume async --time-limit=55 --memory-limit=256M --quiet --no-interaction >> ${LOG_DIR}/worker-cron.log 2>&1
 EOF
 }
 
@@ -656,8 +739,8 @@ write_cron_file() {
             printf '# Задания приложения выполняет контейнер cron; здесь — резервная копия (03:15) и её проверка (вс 05:30).\n'
         else
             printf '# Проверка сроков актуальности (08:00), описания через LLM и индексация содержимого (ежечасно),\n'
-            printf '# напоминания об ознакомлении (08:30), разбор сообщений Telegram (каждую минуту), напоминания по таблицам\n'
-            printf '# материалов (пн 09:10)%s.\n' "$([[ "${with_backup}" == "1" ]] && echo ', резервная копия (03:15) и её проверка (вс 05:30)')"
+            printf '# напоминания об ознакомлении (08:30), разбор сообщений Telegram и фоновые задачи (каждую минуту), сводки\n'
+            printf '# по таблицам материалов (пн 09:10) и руководителям (пн 08:40), итоги статистики (00:05)%s.\n' "$([[ "${with_backup}" == "1" ]] && echo ', резервная копия (03:15) и её проверка (вс 05:30)')"
             printf '# Задания LLM, Telegram и напоминаний ничего не делают, пока они выключены в панели администратора.\n'
         fi
         printf '%s\n' "${CRON_ENV_LINES}"
@@ -780,7 +863,7 @@ DEXEC=(docker compose exec -u www-data)
 PHPX=\$(command -v "php\${PHP_VERSION:-}" 2>/dev/null || command -v php 2>/dev/null || echo php)
 cmd="\${1:-help}"; shift || true
 case "\${cmd}" in
-    update|backup|restore|uninstall|status|doctor|maintenance|verify-backup|remote-backup|video|auto-update|kerberos)
+    update|backup|restore|uninstall|status|doctor|maintenance|verify-backup|remote-backup|video|auto-update|kerberos|php-upgrade)
         [[ "\${cmd}" == "status" ]] && cmd="doctor"
         exec "\${DEPLOY}/\${cmd}.sh" "\$@" ;;
     console)
@@ -865,6 +948,8 @@ case "\${cmd}" in
   restore ARCHIVE     Восстановление из резервной копии
   verify-backup [ARCHIVE]   Пробное восстановление копии во временную базу (по умолчанию — последней)
   remote-backup …     Копии во внешнем хранилище (rclone или каталог): status | set НАЗНАЧЕНИЕ [--keep N] | off | test | push
+  php-upgrade [--to 8.4] [--check]   Переход на новую версию PHP (Debian, Ubuntu): пакеты, PHP-FPM, nginx,
+                      проверка; при неудаче — возврат на прежнюю. Нужен PHP ${PHP_RECOMMENDED_VERSION}+ для будущей Symfony 8
   maintenance on|off|status   Режим обслуживания: посетители видят страницу «Идёт обновление портала»
                       (on --message "текст" --allow IP,IP — портал остаётся доступен с указанных адресов)
   console <команда>   Консоль Symfony (например: console app:user:create ivanov --admin, console app:documents:expiry, console app:ldap:test)

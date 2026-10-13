@@ -80,6 +80,7 @@ services:
       TELEGRAM_CRON: ${TELEGRAM_CRON:-* * * * *}
       MATERIALS_REMIND_CRON: ${MATERIALS_REMIND_CRON:-10 9 * * 1}
       TEAM_DIGEST_CRON: ${TEAM_DIGEST_CRON:-40 8 * * 1}
+      STATS_CRON: ${STATS_CRON:-5 0 * * *}
     command: ["cron"]
     volumes:
       - storage:/var/www/html/var/storage

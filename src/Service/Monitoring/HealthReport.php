@@ -6,6 +6,7 @@ namespace App\Service\Monitoring;
 
 use App\Entity\SystemJob;
 use App\Repository\SystemJobRepository;
+use App\Service\BackgroundJobs;
 use App\Service\FileStorage;
 use App\Service\Pdf\PdfWatermarker;
 use App\Service\PortalSettings;
@@ -64,6 +65,11 @@ final class HealthReport
         private readonly string $appSecret = '',
         private readonly ?VideoApi $videoApi = null,
         private readonly ?PdfWatermarker $watermarker = null,
+        private readonly ?BackgroundJobs $background = null,
+        #[Autowire(env: 'default::MESSENGER_TRANSPORT_DSN')]
+        private readonly ?string $messengerDsn = null,
+        #[Autowire(env: 'default::WORKER_ENABLED')]
+        private readonly ?string $workerEnabled = null,
     ) {
     }
 
@@ -82,10 +88,15 @@ final class HealthReport
         $jobs = $dbOk ? $this->checkJobs($checks) : [];
         if ($dbOk) {
             $this->collectCounts($checks, $metrics);
+            $this->checkQueue($checks, $metrics);
         }
         $this->checkMail($checks);
         $this->checkSecret($checks);
         $this->checkVideo($checks, $metrics);
+        // PHP 8.2–8.3 поддерживается, но Symfony 8 (переход портала — после выхода Symfony 8.4 LTS) требует PHP 8.4+.
+        $checks[] = \PHP_VERSION_ID >= 80400
+            ? self::check('php', 'PHP', self::OK, \PHP_VERSION)
+            : self::check('php', 'PHP', self::INFO, \PHP_VERSION.' — портал работает; для перехода на Symfony 8 понадобится PHP 8.4+ (на сервере: sudo docportal php-upgrade)');
         $checks[] = $this->previewer->isAvailable()
             ? self::check('preview', 'Предпросмотр офисных файлов (LibreOffice)', self::INFO, 'установлен')
             : self::check('preview', 'Предпросмотр офисных файлов (LibreOffice)', self::INFO, 'не установлен — docx/xlsx открываются только скачиванием');
@@ -153,6 +164,8 @@ final class HealthReport
             'approvals_pending' => 'Запросов согласования без решения.',
             'search_index_outdated' => 'Документов, ожидающих индексации содержимого.',
             'ocr_pending' => 'Сканов, ожидающих распознавания.',
+            'queue_pending' => 'Фоновых задач в очереди.',
+            'queue_failed' => 'Фоновых задач, не выполненных и после повторов.',
             'video_up' => 'Раздел «Видео»: видеопортал отвечает и его база доступна (1/0).',
             'video_queue_queued' => 'Раздел «Видео»: заданий обработки в очереди.',
             'video_queue_failed_24h' => 'Раздел «Видео»: заданий обработки с ошибкой за сутки.',
@@ -244,6 +257,9 @@ final class HealthReport
             'materials-remind' => $this->settings->materialsRemind()['enabled'],
             'ai-index' => $this->settings->embeddings()['enabled'],
             'team-digest' => $this->settings->teamDigest()['enabled'],
+            // Очередь выключена (задачи выполняются сразу) или обработчик выключен в Docker (WORKER_ENABLED=0) —
+            // он не нужен.
+            'worker' => !str_starts_with((string) $this->messengerDsn, 'sync://') && '0' !== $this->workerEnabled,
             // Внешнее хранилище и проверку восстановления настраивают отдельно: следим, если они уже запускались.
             'backup-remote' => isset($records['backup-remote']),
             'backup-verify' => isset($records['backup-verify']),
@@ -287,6 +303,32 @@ final class HealthReport
         }
 
         return $out;
+    }
+
+    /**
+     * Очередь фоновых задач: задачи не должны ждать дольше 10 минут (обработчик остановился), а невыполненные
+     * после повторов — копиться незамеченными.
+     *
+     * @param list<array<string, mixed>> $checks
+     * @param array<string, int|float>   $metrics
+     */
+    private function checkQueue(array &$checks, array &$metrics): void
+    {
+        $stats = $this->background?->queueStats();
+        if (null === $stats) {
+            return;
+        }
+        $metrics['queue_pending'] = $stats['pending'];
+        $metrics['queue_failed'] = $stats['failed'];
+        $wait = null !== $stats['oldest'] ? time() - $stats['oldest']->getTimestamp() : 0;
+        if ($stats['pending'] > 0 && $wait > BackgroundJobs::STALE_SECONDS) {
+            $checks[] = self::check('queue', 'Фоновые задачи', self::WARNING, \sprintf('в очереди %d, самая старая ждёт с %s — обработчик не работает (см. «Обработчик фоновых задач»)',
+                $stats['pending'], $stats['oldest']->setTimezone(new \DateTimeZone(date_default_timezone_get()))->format('d.m.Y H:i')), $stats['pending']);
+        } elseif ($stats['failed'] > 0) {
+            $checks[] = self::check('queue', 'Фоновые задачи', self::WARNING, \sprintf('не выполнено после повторов: %d — подробности: docportal console messenger:failed:show', $stats['failed']), $stats['failed']);
+        } else {
+            $checks[] = self::check('queue', 'Фоновые задачи', self::OK, 0 === $stats['pending'] ? 'очередь пуста' : \sprintf('в очереди %d', $stats['pending']), $stats['pending']);
+        }
     }
 
     /** С какого момента ведётся учёт запусков: время применения миграции, создавшей таблицу system_job. */

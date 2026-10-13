@@ -53,6 +53,8 @@ step "Установка (${MODE}, ${VIDEO})"
 tar -xzf "${ARCHIVE}" -C "${WORK}"
 install_args=(--mode "${MODE}" --port "${PORT}" --admin-password "${ADMIN_PASSWORD}")
 [[ "${VIDEO}" == "video" ]] && install_args+=(--with-video --video-no-live) || install_args+=(--no-video)
+# E2E_PHP=from-os: PHP из репозиториев ОС, затем переход на 8.4 командой php-upgrade.
+[[ "${E2E_PHP:-}" == "from-os" ]] && install_args+=(--php-from-os)
 "${WORK}/${APP}/deploy/install.sh" "${install_args[@]}" || fail "install.sh завершился с ошибкой"
 endstep
 
@@ -68,6 +70,19 @@ code=$(curl -sS -m 10 -b "${jar}" -c "${jar}" -o /dev/null -w '%{http_code}' --d
 [[ "${code}" == "302" ]] || fail "вход администратора: ответ ${code}, ожидалось перенаправление"
 curl -fsS -m 10 -b "${jar}" "${BASE}/admin/monitoring" | grep -q 'Мониторинг' || fail "администратор не видит «Мониторинг» после входа"
 ${APP} status || fail "docportal status сообщил о проблемах"
+if [[ "${MODE}" == "native" ]]; then
+    grep -q "console messenger:consume" /etc/cron.d/${APP} || fail "нет задания cron обработчика фоновых задач"
+    php_version() { sed -n "s/^PHP_VERSION=//p" /etc/${APP}/install.conf | tr -d "'\""; }
+    if [[ "${E2E_PHP:-}" == "from-os" ]]; then
+        printf 'PHP из репозиториев ОС: %s\n' "$(php_version)"
+        ${APP} php-upgrade --check
+        ${APP} php-upgrade --yes || fail "php-upgrade завершился с ошибкой"
+        expect_health
+        ${APP} status || fail "docportal status после php-upgrade сообщил о проблемах"
+    fi
+    [[ "$(printf '%s\n%s\n' 8.4 "$(php_version)" | sort -V | head -n1)" == "8.4" ]] || fail "PHP $(php_version) — ожидался 8.4 или новее"
+    printf 'PHP портала: %s\n' "$(php_version)"
+fi
 grep -q "/${APP} update --auto" /etc/cron.d/${APP} || fail "автообновление не включено при установке"
 grep -q '^AUTO_UPDATE=1' /etc/${APP}/install.conf || fail "AUTO_UPDATE=1 не записан в install.conf"
 ${APP} auto-update status
