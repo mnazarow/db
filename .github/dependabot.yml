@@ -1,0 +1,46 @@
+# Dependabot: еженедельные предложения обновлений (pull request) для зависимостей портала, видеопортала
+# и действий GitHub Actions. Обновления безопасности включаются в настройках репозитория
+# (Settings → Code security → Dependabot security updates) и приходят сразу после публикации уязвимости.
+#
+# Портал хранит vendor/ в репозитории (дистрибутив ставится без Composer). Dependabot меняет только
+# composer.json и composer.lock; архив выпуска собирается из composer.lock (scripts/build-release.sh),
+# а каталог vendor/ в репозитории обновите после слияния: composer install && git add vendor.
+version: 2
+updates:
+  - package-ecosystem: composer
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      symfony:
+        patterns: ['symfony/*']
+      doctrine:
+        patterns: ['doctrine/*']
+    ignore:
+      # Переход на новую основную версию Symfony (8.x) — отдельная работа, не еженедельное обновление.
+      - dependency-name: 'symfony/*'
+        update-types: ['version-update:semver-major']
+
+  - package-ecosystem: npm
+    directory: /video/server
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      fastify:
+        patterns: ['fastify', '@fastify/*', 'fastify-plugin']
+
+  - package-ecosystem: npm
+    directory: /video/web
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

@@ -16,6 +16,9 @@ use Doctrine\ORM\Mapping as ORM;
 #[ORM\Entity(repositoryClass: DocumentTextRepository::class)]
 #[ORM\Table(name: 'document_text')]
 #[ORM\Index(name: 'ft_document_text', columns: ['content'], flags: ['fulltext'])]
+// Состояние индекса без чтения самого текста: «какие документы ждут индексации» — по этим индексам.
+#[ORM\Index(name: 'idx_document_text_state', columns: ['document_id', 'version_number', 'status'])]
+#[ORM\Index(name: 'idx_document_text_status', columns: ['status'])]
 class DocumentText
 {
     /** Сколько символов текста попадает в индекс (для поиска этого достаточно, база не разрастается). */

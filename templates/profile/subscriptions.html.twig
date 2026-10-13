@@ -60,6 +60,39 @@
         </div>
     </div>
 
+    <div class="card card--form" id="push" data-push{% if push_key %} data-key="{{ push_key }}" data-subscribe="{{ path('app_push_subscribe') }}" data-unsubscribe="{{ path('app_push_unsubscribe') }}" data-token="{{ csrf_token('push') }}"{% endif %}>
+        <div class="card__head">
+            <h2 class="h-section">Уведомления в браузере</h2>
+            {% if push_devices is not empty %}<span class="badge badge--done"><span class="badge__dot"></span>устройств: {{ push_devices|length }}</span>{% endif %}
+        </div>
+        {% if not push_key %}
+            <p class="hints">Уведомления в браузере не включены администратором портала.</p>
+        {% else %}
+            <p>Уведомления появляются на экране компьютера или телефона, даже когда портал не открыт: назначено ознакомление, вышла новая редакция документа из подписок, ответили в обсуждении, материал ждёт модерации. Включаются отдельно на каждом устройстве.</p>
+            <p class="hints" data-push-state>Проверяю, поддерживает ли браузер уведомления…</p>
+            <div class="form-actions">
+                <button type="button" class="btn btn--pill" data-push-on hidden>Включить на этом устройстве</button>
+                <button type="button" class="btn btn--ghost" data-push-off hidden>Отключить на этом устройстве</button>
+            </div>
+            {% if push_devices is not empty %}
+                <ul class="push-devices">
+                    {% for d in push_devices %}
+                        <li data-endpoint-id="{{ d.id }}"><span>{{ d.device ?: 'Браузер' }}</span> <span class="text-muted">с {{ d.createdAt|date('d.m.Y') }}{% if d.lastSentAt %}, последнее уведомление {{ d.lastSentAt|date('d.m.Y H:i') }}{% endif %}</span>
+                            <form method="post" action="{{ path('app_push_unsubscribe') }}" class="inline-form">
+                                <input type="hidden" name="_token" value="{{ csrf_token('push') }}">
+                                <input type="hidden" name="id" value="{{ d.id }}">
+                                <button type="submit" class="btn btn--ghost btn--small">Отключить</button>
+                            </form></li>
+                    {% endfor %}
+                </ul>
+                <form method="post" action="{{ path('app_push_test') }}" class="form-actions">
+                    <input type="hidden" name="_token" value="{{ csrf_token('push') }}">
+                    <button type="submit" class="btn btn--ghost btn--small">Прислать пробное уведомление</button>
+                </form>
+            {% endif %}
+        {% endif %}
+    </div>
+
     <div class="card table-card">
         <div class="card__head card__head--padded"><h2 class="h-section">Мои подписки <span class="tag">{{ subscriptions|length }}</span></h2></div>
         {% if not subscriptions_enabled %}

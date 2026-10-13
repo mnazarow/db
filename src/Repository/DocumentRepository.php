@@ -38,7 +38,7 @@ final class DocumentRepository extends ServiceEntityRepository
         return $this->createQueryBuilder($alias)
             ->leftJoin($alias.'.currentVersion', 'cv')->addSelect('cv')
             ->leftJoin($alias.'.owner', 'o')->addSelect('o')
-            ->join($alias.'.section', 's')->addSelect('s');
+            ->leftJoin($alias.'.section', 's')->addSelect('s');
     }
 
     /**
@@ -200,14 +200,14 @@ final class DocumentRepository extends ServiceEntityRepository
         }
         foreach (\array_slice($terms, 0, 6) as $i => $term) {
             // Теги хранятся в JSON, где кириллица записана как \u04xx: ищем и в таком виде.
-            $qb->andWhere(\sprintf('(LOWER(d.title) LIKE :t%1$d OR LOWER(d.code) LIKE :t%1$d OR LOWER(d.description) LIKE :t%1$d OR LOWER(d.tags) LIKE :t%1$d OR d.tags LIKE :tj%1$d OR LOWER(cvb.html) LIKE :t%1$d OR LOWER(cv.originalName) LIKE :t%1$d)', $i))
-                ->setParameter('t'.$i, '%'.addcslashes($term, '%_\\').'%')
-                ->setParameter('tj'.$i, '%'.addcslashes(self::jsonFragment($term), '%_\\').'%');
+            $qb->andWhere(\sprintf('(d.title LIKE :t%1$d OR d.code LIKE :t%1$d OR d.description LIKE :t%1$d OR d.tags LIKE :t%1$d OR d.tags LIKE :tj%1$d OR cvb.html LIKE :t%1$d OR cv.originalName LIKE :t%1$d)', $i))
+                ->setParameter('t'.$i, '%'.addcslashes(mb_strtolower($term), '%_\\').'%')
+                ->setParameter('tj'.$i, '%'.addcslashes(self::jsonFragment(mb_strtolower($term)), '%_\\').'%');
         }
         foreach ($phrases as $i => $phrase) {
-            $qb->andWhere(\sprintf('(LOWER(d.title) LIKE :ph%1$d OR LOWER(d.code) LIKE :ph%1$d OR LOWER(d.description) LIKE :ph%1$d OR LOWER(d.tags) LIKE :ph%1$d OR d.tags LIKE :phj%1$d OR LOWER(cvb.html) LIKE :ph%1$d OR LOWER(cv.originalName) LIKE :ph%1$d)', $i))
-                ->setParameter('ph'.$i, '%'.addcslashes($phrase, '%_\\').'%')
-                ->setParameter('phj'.$i, '%'.addcslashes(self::jsonFragment($phrase), '%_\\').'%');
+            $qb->andWhere(\sprintf('(d.title LIKE :ph%1$d OR d.code LIKE :ph%1$d OR d.description LIKE :ph%1$d OR d.tags LIKE :ph%1$d OR d.tags LIKE :phj%1$d OR cvb.html LIKE :ph%1$d OR cv.originalName LIKE :ph%1$d)', $i))
+                ->setParameter('ph'.$i, '%'.addcslashes(mb_strtolower($phrase), '%_\\').'%')
+                ->setParameter('phj'.$i, '%'.addcslashes(self::jsonFragment(mb_strtolower($phrase)), '%_\\').'%');
         }
         if (null !== $section) {
             $qb->andWhere('s.path LIKE :path')->setParameter('path', $section->getPath().'%');
@@ -246,7 +246,7 @@ final class DocumentRepository extends ServiceEntityRepository
             $qb->andWhere('d.isPublic = :public')->setParameter('public', 'public' === $filters['access']);
         }
         if (!empty($filters['q'])) {
-            $qb->andWhere('(LOWER(d.title) LIKE :q OR LOWER(d.code) LIKE :q)')->setParameter('q', '%'.mb_strtolower(trim($filters['q'])).'%');
+            $qb->andWhere('(d.title LIKE :q OR d.code LIKE :q)')->setParameter('q', '%'.mb_strtolower(trim($filters['q'])).'%');
         }
         switch ($filters['validity'] ?? '') {
             case 'expired':
@@ -595,8 +595,11 @@ final class DocumentRepository extends ServiceEntityRepository
         }
         if (!empty($filters['tag'])) {
             // Теги хранятся в JSON в нижнем регистре с \u-экранированием — ищем точное вхождение элемента массива.
-            $encoded = json_encode(mb_strtolower(trim((string) $filters['tag'])), \JSON_THROW_ON_ERROR);
-            $qb->andWhere('d.tags LIKE :tag')->setParameter('tag', '%'.addcslashes($encoded, '%_\\').'%');
+            // Теги — JSON: MariaDB хранит его как текст (кириллица — \u04xx), MySQL 8 — в своём формате (кириллица как есть).
+            $tag = mb_strtolower(trim((string) $filters['tag']));
+            $qb->andWhere('(d.tags LIKE :tag OR d.tags LIKE :tag_utf8)')
+                ->setParameter('tag', '%'.addcslashes(json_encode($tag, \JSON_THROW_ON_ERROR), '%_\\').'%')
+                ->setParameter('tag_utf8', '%'.addcslashes(json_encode($tag, \JSON_THROW_ON_ERROR | \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES), '%_\\').'%');
         }
         if (!empty($filters['q'])) {
             $qb->leftJoin('cv.bodies', 'cvb');
@@ -604,9 +607,9 @@ final class DocumentRepository extends ServiceEntityRepository
             $terms = array_values(array_filter(preg_split('/\s+/u', SearchQuery::withoutPhrases((string) $filters['q'])) ?: [], static fn ($t) => mb_strlen($t) >= 2));
             $needles = array_merge(\array_slice($terms, 0, 6), SearchQuery::parse((string) $filters['q'])->phrases);
             foreach ($needles as $i => $term) {
-                $qb->andWhere(\sprintf('(LOWER(d.title) LIKE :t%1$d OR LOWER(d.code) LIKE :t%1$d OR LOWER(d.description) LIKE :t%1$d OR LOWER(d.tags) LIKE :t%1$d OR d.tags LIKE :tj%1$d OR LOWER(cvb.html) LIKE :t%1$d OR LOWER(cv.originalName) LIKE :t%1$d)', $i))
-                    ->setParameter('t'.$i, '%'.addcslashes($term, '%_\\').'%')
-                    ->setParameter('tj'.$i, '%'.addcslashes(self::jsonFragment($term), '%_\\').'%');
+                $qb->andWhere(\sprintf('(d.title LIKE :t%1$d OR d.code LIKE :t%1$d OR d.description LIKE :t%1$d OR d.tags LIKE :t%1$d OR d.tags LIKE :tj%1$d OR cvb.html LIKE :t%1$d OR cv.originalName LIKE :t%1$d)', $i))
+                    ->setParameter('t'.$i, '%'.addcslashes(mb_strtolower($term), '%_\\').'%')
+                    ->setParameter('tj'.$i, '%'.addcslashes(self::jsonFragment(mb_strtolower($term)), '%_\\').'%');
             }
         }
 

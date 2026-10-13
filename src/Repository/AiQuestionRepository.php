@@ -31,7 +31,8 @@ final class AiQuestionRepository extends ServiceEntityRepository
     public function stats(?\DateTimeImmutable $since): array
     {
         $sql = 'SELECT COUNT(*) AS total, COUNT(DISTINCT user_id) AS users,
-                    SUM(CASE WHEN status = :answered THEN 1 ELSE 0 END) AS answered,
+                    SUM(CASE WHEN status IN (:answered, :verified) THEN 1 ELSE 0 END) AS answered,
+                    SUM(CASE WHEN status = :verified THEN 1 ELSE 0 END) AS verified,
                     SUM(CASE WHEN status = :not_found THEN 1 ELSE 0 END) AS not_found,
                     SUM(CASE WHEN status = :no_sources THEN 1 ELSE 0 END) AS no_sources,
                     SUM(CASE WHEN status = :error THEN 1 ELSE 0 END) AS error,
@@ -39,13 +40,13 @@ final class AiQuestionRepository extends ServiceEntityRepository
                     SUM(CASE WHEN rating = -1 THEN 1 ELSE 0 END) AS unhelpful,
                     SUM(CASE WHEN semantic = 1 THEN 1 ELSE 0 END) AS semantic
                 FROM ai_question'.(null !== $since ? ' WHERE created_at >= :since' : '');
-        $params = ['answered' => AiQuestion::STATUS_ANSWERED, 'not_found' => AiQuestion::STATUS_NOT_FOUND, 'no_sources' => AiQuestion::STATUS_NO_SOURCES, 'error' => AiQuestion::STATUS_ERROR];
+        $params = ['answered' => AiQuestion::STATUS_ANSWERED, 'verified' => AiQuestion::STATUS_VERIFIED, 'not_found' => AiQuestion::STATUS_NOT_FOUND, 'no_sources' => AiQuestion::STATUS_NO_SOURCES, 'error' => AiQuestion::STATUS_ERROR];
         if (null !== $since) {
             $params['since'] = $since->format('Y-m-d H:i:s');
         }
         $row = $this->getEntityManager()->getConnection()->fetchAssociative($sql, $params) ?: [];
 
-        return array_map(static fn ($v): int => (int) $v, array_merge(['total' => 0, 'users' => 0, 'answered' => 0, 'not_found' => 0, 'no_sources' => 0, 'error' => 0, 'helpful' => 0, 'unhelpful' => 0, 'semantic' => 0], $row));
+        return array_map(static fn ($v): int => (int) $v, array_merge(['total' => 0, 'users' => 0, 'answered' => 0, 'verified' => 0, 'not_found' => 0, 'no_sources' => 0, 'error' => 0, 'helpful' => 0, 'unhelpful' => 0, 'semantic' => 0], $row));
     }
 
     /**
@@ -58,8 +59,8 @@ final class AiQuestionRepository extends ServiceEntityRepository
     public function unansweredTopics(?\DateTimeImmutable $since, int $limit = 200): array
     {
         $connection = $this->getEntityManager()->getConnection();
-        $params = ['unanswered' => self::UNANSWERED, 'answered' => AiQuestion::STATUS_ANSWERED];
-        $types = ['unanswered' => ArrayParameterType::STRING];
+        $params = ['unanswered' => self::UNANSWERED, 'answered' => [AiQuestion::STATUS_ANSWERED, AiQuestion::STATUS_VERIFIED]];
+        $types = ['unanswered' => ArrayParameterType::STRING, 'answered' => ArrayParameterType::STRING];
         $where = '';
         if (null !== $since) {
             $where = ' WHERE created_at >= :since';
@@ -70,7 +71,7 @@ final class AiQuestionRepository extends ServiceEntityRepository
                     SUM(CASE WHEN status IN (:unanswered) THEN 1 ELSE 0 END) AS asked,
                     MAX(CASE WHEN status IN (:unanswered) THEN created_at END) AS last_at,
                     MAX(CASE WHEN status IN (:unanswered) THEN id END) AS last_id,
-                    MAX(CASE WHEN status = :answered AND (rating IS NULL OR rating > 0) THEN created_at END) AS answered_at
+                    MAX(CASE WHEN status IN (:answered) AND (rating IS NULL OR rating > 0) THEN created_at END) AS answered_at
              FROM ai_question'.$where.'
              GROUP BY topic
              ORDER BY asked DESC, last_at DESC',
@@ -85,7 +86,7 @@ final class AiQuestionRepository extends ServiceEntityRepository
         // Сотрудники по темам — отдельным запросом (GROUP_CONCAT в MySQL обрезается на 1024 символах).
         $usersByTopic = [];
         foreach ($connection->fetchAllAssociative('SELECT DISTINCT topic, user_id FROM ai_question WHERE status IN (:unanswered) AND user_id IS NOT NULL'.('' !== $where ? ' AND created_at >= :since' : ''),
-            array_intersect_key($params, ['unanswered' => 1, 'since' => 1]), $types) as $pair) {
+            array_intersect_key($params, ['unanswered' => 1, 'since' => 1]), array_intersect_key($types, ['unanswered' => 1])) as $pair) {
             $usersByTopic[(string) $pair['topic']][] = (string) $pair['user_id'];
         }
 

@@ -121,62 +121,53 @@ final class StatsService
         $tree = $this->sections->findAllTree();
         $perSection = $this->documents->countPerSection();
         $since = null === $days ? null : $this->validity->today()->modify('-'.($days - 1).' days');
-        $counts = $this->events->countsPerDocumentSince($since);
-
-        // Раздел каждого документа с событиями.
-        $docSection = [];
-        if ([] !== $counts) {
-            foreach ($this->documents->findBy(['id' => array_keys($counts)]) as $doc) {
-                $docSection[$doc->getId()] = $doc->getSection()->getPathIds();
-            }
-        }
+        $events = $this->events->countsPerSectionSince($since);
         $today = $this->validity->today();
         $expiring = $this->documents->findExpiring($today, $this->validity->getSoonDays());
 
+        // Показатели раздела складываются во все разделы его пути (сам раздел и предки) — так за один
+        // проход получаются суммы по поддеревьям (раньше — перебор всех пар разделов и документов).
+        $paths = [];
+        foreach ($tree as $section) {
+            $paths[(int) $section->getId()] = $section->getPathIds();
+        }
+        $subtree = $views = $downloads = $expired = $soon = [];
+        foreach ($perSection as $sid => $statuses) {
+            foreach ($paths[$sid] ?? [] as $a) {
+                foreach ($statuses as $st => $cnt) {
+                    $subtree[$a][$st] = ($subtree[$a][$st] ?? 0) + $cnt;
+                }
+            }
+        }
+        foreach ($events as $sid => $c) {
+            foreach ($paths[$sid] ?? [] as $a) {
+                $views[$a] = ($views[$a] ?? 0) + $c['view'];
+                $downloads[$a] = ($downloads[$a] ?? 0) + $c['download'];
+            }
+        }
+        foreach ($expiring as $doc) {
+            $isExpired = $doc->isExpired($today);
+            foreach ($paths[(int) $doc->getSection()->getId()] ?? [] as $a) {
+                if ($isExpired) {
+                    $expired[$a] = ($expired[$a] ?? 0) + 1;
+                } else {
+                    $soon[$a] = ($soon[$a] ?? 0) + 1;
+                }
+            }
+        }
+
+        $zero = array_fill_keys(Document::STATUSES, 0);
         $out = [];
         foreach ($tree as $section) {
             $sid = (int) $section->getId();
-            $direct = ($perSection[$sid] ?? []) + array_fill_keys(Document::STATUSES, 0);
-            $subtree = array_fill_keys(Document::STATUSES, 0);
-            foreach ($perSection as $otherId => $statuses) {
-                $other = null;
-                foreach ($tree as $t) {
-                    if ($t->getId() === $otherId) {
-                        $other = $t;
-                        break;
-                    }
-                }
-                if (null !== $other && $other->isSameOrDescendantOf($section)) {
-                    foreach ($statuses as $st => $cnt) {
-                        $subtree[$st] += $cnt;
-                    }
-                }
-            }
-            $views = $downloads = 0;
-            foreach ($counts as $docId => $c) {
-                if (isset($docSection[$docId]) && \in_array($sid, $docSection[$docId], true)) {
-                    $views += $c['view'];
-                    $downloads += $c['download'];
-                }
-            }
-            $expired = $soon = 0;
-            foreach ($expiring as $doc) {
-                if ($doc->getSection()->isSameOrDescendantOf($section)) {
-                    if ($doc->isExpired($today)) {
-                        ++$expired;
-                    } else {
-                        ++$soon;
-                    }
-                }
-            }
             $out[] = [
                 'section' => $section,
-                'direct' => $direct,
-                'subtree' => $subtree,
-                'views' => $views,
-                'downloads' => $downloads,
-                'expired' => $expired,
-                'soon' => $soon,
+                'direct' => ($perSection[$sid] ?? []) + $zero,
+                'subtree' => array_merge($zero, $subtree[$sid] ?? []),
+                'views' => $views[$sid] ?? 0,
+                'downloads' => $downloads[$sid] ?? 0,
+                'expired' => $expired[$sid] ?? 0,
+                'soon' => $soon[$sid] ?? 0,
                 'moderators' => $section->getModerators()->count(),
             ];
         }

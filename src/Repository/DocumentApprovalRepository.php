@@ -78,8 +78,8 @@ final class DocumentApprovalRepository extends ServiceEntityRepository
     public function findPendingForUser(User $user, int $limit = 100): array
     {
         return $this->createQueryBuilder('a')
-            ->join('a.document', 'd')->addSelect('d')
-            ->join('d.section', 's')->addSelect('s')
+            ->leftJoin('a.document', 'd')->addSelect('d')
+            ->leftJoin('d.section', 's')->addSelect('s')
             ->leftJoin('a.requestedBy', 'r')->addSelect('r')
             ->andWhere('a.approver = :u')->setParameter('u', $user)
             ->andWhere('a.decision = :pending')->setParameter('pending', DocumentApproval::PENDING)
@@ -102,8 +102,8 @@ final class DocumentApprovalRepository extends ServiceEntityRepository
             return [];
         }
         $qb = $this->createQueryBuilder('a')
-            ->join('a.document', 'd')->addSelect('d')
-            ->join('d.section', 's')->addSelect('s')
+            ->leftJoin('a.document', 'd')->addSelect('d')
+            ->leftJoin('d.section', 's')->addSelect('s')
             ->leftJoin('a.requestedBy', 'r')->addSelect('r')
             ->andWhere('a.approver IS NULL')
             ->andWhere('a.decision = :pending')->setParameter('pending', DocumentApproval::PENDING)
@@ -141,8 +141,8 @@ final class DocumentApprovalRepository extends ServiceEntityRepository
     public function findRequestedBy(User $user, int $limit = 50): array
     {
         return $this->createQueryBuilder('a')
-            ->join('a.document', 'd')->addSelect('d')
-            ->join('d.section', 's')->addSelect('s')
+            ->leftJoin('a.document', 'd')->addSelect('d')
+            ->leftJoin('d.section', 's')->addSelect('s')
             ->leftJoin('a.approver', 'u')->addSelect('u')
             ->andWhere('a.requestedBy = :u')->setParameter('u', $user)
             ->orderBy('a.id', \SortDirection::Descending)
@@ -158,8 +158,8 @@ final class DocumentApprovalRepository extends ServiceEntityRepository
     public function findDecidedByUser(User $user, int $limit = 50): array
     {
         return $this->createQueryBuilder('a')
-            ->join('a.document', 'd')->addSelect('d')
-            ->join('d.section', 's')->addSelect('s')
+            ->leftJoin('a.document', 'd')->addSelect('d')
+            ->leftJoin('d.section', 's')->addSelect('s')
             ->andWhere('a.approver = :u OR a.decidedBy = :u')->setParameter('u', $user)
             ->andWhere('a.decision IN (:decided)')->setParameter('decided', [DocumentApproval::APPROVED, DocumentApproval::REJECTED])
             ->orderBy('a.decidedAt', \SortDirection::Descending)
@@ -193,8 +193,8 @@ final class DocumentApprovalRepository extends ServiceEntityRepository
     public function findAllPending(int $limit = 200): array
     {
         return $this->createQueryBuilder('a')
-            ->join('a.document', 'd')->addSelect('d')
-            ->join('d.section', 's')->addSelect('s')
+            ->leftJoin('a.document', 'd')->addSelect('d')
+            ->leftJoin('d.section', 's')->addSelect('s')
             ->leftJoin('a.approver', 'u')->addSelect('u')
             ->leftJoin('a.requestedBy', 'r')->addSelect('r')
             ->andWhere('a.decision = :pending')->setParameter('pending', DocumentApproval::PENDING)

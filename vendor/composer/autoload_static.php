@@ -97,6 +97,10 @@ class ComposerStaticInit1df4c4904c159e9efdaa5193a76c3aff
             'Symfony\\Bridge\\Monolog\\' => 23,
             'Symfony\\Bridge\\Doctrine\\' => 24,
         ),
+        'R' => 
+        array (
+            'RobRichards\\XMLSecLibs\\' => 23,
+        ),
         'P' => 
         array (
             'Psr\\Log\\' => 8,
@@ -106,6 +110,10 @@ class ComposerStaticInit1df4c4904c159e9efdaa5193a76c3aff
             'Psr\\Clock\\' => 10,
             'Psr\\Cache\\' => 10,
             'PhpParser\\' => 10,
+        ),
+        'O' => 
+        array (
+            'OneLogin\\' => 9,
         ),
         'M' => 
         array (
@@ -385,6 +393,10 @@ class ComposerStaticInit1df4c4904c159e9efdaa5193a76c3aff
         array (
             0 => __DIR__ . '/..' . '/symfony/doctrine-bridge',
         ),
+        'RobRichards\\XMLSecLibs\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/robrichards/xmlseclibs/src',
+        ),
         'Psr\\Log\\' => 
         array (
             0 => __DIR__ . '/..' . '/psr/log/src',
@@ -413,6 +425,10 @@ class ComposerStaticInit1df4c4904c159e9efdaa5193a76c3aff
         'PhpParser\\' => 
         array (
             0 => __DIR__ . '/..' . '/nikic/php-parser/lib/PhpParser',
+        ),
+        'OneLogin\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/onelogin/php-saml/src',
         ),
         'Monolog\\' => 
         array (
@@ -548,6 +564,7 @@ class ComposerStaticInit1df4c4904c159e9efdaa5193a76c3aff
         'App\\Controller\\MaterialController' => __DIR__ . '/../..' . '/src/Controller/MaterialController.php',
         'App\\Controller\\OnlyofficeController' => __DIR__ . '/../..' . '/src/Controller/OnlyofficeController.php',
         'App\\Controller\\ProfileController' => __DIR__ . '/../..' . '/src/Controller/ProfileController.php',
+        'App\\Controller\\PushController' => __DIR__ . '/../..' . '/src/Controller/PushController.php',
         'App\\Controller\\PwaController' => __DIR__ . '/../..' . '/src/Controller/PwaController.php',
         'App\\Controller\\SearchAnswerController' => __DIR__ . '/../..' . '/src/Controller/SearchAnswerController.php',
         'App\\Controller\\SectionBundleController' => __DIR__ . '/../..' . '/src/Controller/SectionBundleController.php',
@@ -558,7 +575,9 @@ class ComposerStaticInit1df4c4904c159e9efdaa5193a76c3aff
         'App\\Controller\\VerifyController' => __DIR__ . '/../..' . '/src/Controller/VerifyController.php',
         'App\\Controller\\VideoInternalController' => __DIR__ . '/../..' . '/src/Controller/VideoInternalController.php',
         'App\\Controller\\VideoSessionController' => __DIR__ . '/../..' . '/src/Controller/VideoSessionController.php',
+        'App\\Doctrine\\SqliteForeignKeysMiddleware' => __DIR__ . '/../..' . '/src/Doctrine/SqliteForeignKeysMiddleware.php',
         'App\\Entity\\AiQuestion' => __DIR__ . '/../..' . '/src/Entity/AiQuestion.php',
+        'App\\Entity\\AiVerifiedAnswer' => __DIR__ . '/../..' . '/src/Entity/AiVerifiedAnswer.php',
         'App\\Entity\\ApiKey' => __DIR__ . '/../..' . '/src/Entity/ApiKey.php',
         'App\\Entity\\AuditEvent' => __DIR__ . '/../..' . '/src/Entity/AuditEvent.php',
         'App\\Entity\\Document' => __DIR__ . '/../..' . '/src/Entity/Document.php',
@@ -580,6 +599,7 @@ class ComposerStaticInit1df4c4904c159e9efdaa5193a76c3aff
         'App\\Entity\\MaterialParameter' => __DIR__ . '/../..' . '/src/Entity/MaterialParameter.php',
         'App\\Entity\\MaterialRow' => __DIR__ . '/../..' . '/src/Entity/MaterialRow.php',
         'App\\Entity\\MaterialRowChange' => __DIR__ . '/../..' . '/src/Entity/MaterialRowChange.php',
+        'App\\Entity\\PushSubscription' => __DIR__ . '/../..' . '/src/Entity/PushSubscription.php',
         'App\\Entity\\Section' => __DIR__ . '/../..' . '/src/Entity/Section.php',
         'App\\Entity\\SectionModerator' => __DIR__ . '/../..' . '/src/Entity/SectionModerator.php',
         'App\\Entity\\Setting' => __DIR__ . '/../..' . '/src/Entity/Setting.php',
@@ -592,6 +612,7 @@ class ComposerStaticInit1df4c4904c159e9efdaa5193a76c3aff
         'App\\Form\\UserType' => __DIR__ . '/../..' . '/src/Form/UserType.php',
         'App\\Kernel' => __DIR__ . '/../..' . '/src/Kernel.php',
         'App\\Repository\\AiQuestionRepository' => __DIR__ . '/../..' . '/src/Repository/AiQuestionRepository.php',
+        'App\\Repository\\AiVerifiedAnswerRepository' => __DIR__ . '/../..' . '/src/Repository/AiVerifiedAnswerRepository.php',
         'App\\Repository\\ApiKeyRepository' => __DIR__ . '/../..' . '/src/Repository/ApiKeyRepository.php',
         'App\\Repository\\AuditEventRepository' => __DIR__ . '/../..' . '/src/Repository/AuditEventRepository.php',
         'App\\Repository\\DocumentAcknowledgementRepository' => __DIR__ . '/../..' . '/src/Repository/DocumentAcknowledgementRepository.php',
@@ -609,6 +630,7 @@ class ComposerStaticInit1df4c4904c159e9efdaa5193a76c3aff
         'App\\Repository\\MaterialParameterRepository' => __DIR__ . '/../..' . '/src/Repository/MaterialParameterRepository.php',
         'App\\Repository\\MaterialRowChangeRepository' => __DIR__ . '/../..' . '/src/Repository/MaterialRowChangeRepository.php',
         'App\\Repository\\MaterialRowRepository' => __DIR__ . '/../..' . '/src/Repository/MaterialRowRepository.php',
+        'App\\Repository\\PushSubscriptionRepository' => __DIR__ . '/../..' . '/src/Repository/PushSubscriptionRepository.php',
         'App\\Repository\\SectionModeratorRepository' => __DIR__ . '/../..' . '/src/Repository/SectionModeratorRepository.php',
         'App\\Repository\\SectionRepository' => __DIR__ . '/../..' . '/src/Repository/SectionRepository.php',
         'App\\Repository\\SettingRepository' => __DIR__ . '/../..' . '/src/Repository/SettingRepository.php',
@@ -666,6 +688,7 @@ class ComposerStaticInit1df4c4904c159e9efdaa5193a76c3aff
         'App\\Service\\Llm\\LlmClient' => __DIR__ . '/../..' . '/src/Service/Llm/LlmClient.php',
         'App\\Service\\Llm\\LlmException' => __DIR__ . '/../..' . '/src/Service/Llm/LlmException.php',
         'App\\Service\\Llm\\SemanticIndex' => __DIR__ . '/../..' . '/src/Service/Llm/SemanticIndex.php',
+        'App\\Service\\Llm\\VerifiedAnswers' => __DIR__ . '/../..' . '/src/Service/Llm/VerifiedAnswers.php',
         'App\\Service\\Material\\MaterialExporter' => __DIR__ . '/../..' . '/src/Service/Material/MaterialExporter.php',
         'App\\Service\\Material\\MaterialHistory' => __DIR__ . '/../..' . '/src/Service/Material/MaterialHistory.php',
         'App\\Service\\Material\\MaterialImporter' => __DIR__ . '/../..' . '/src/Service/Material/MaterialImporter.php',
@@ -676,8 +699,10 @@ class ComposerStaticInit1df4c4904c159e9efdaa5193a76c3aff
         'App\\Service\\Monitoring\\ConsoleJobSubscriber' => __DIR__ . '/../..' . '/src/Service/Monitoring/ConsoleJobSubscriber.php',
         'App\\Service\\Monitoring\\HealthReport' => __DIR__ . '/../..' . '/src/Service/Monitoring/HealthReport.php',
         'App\\Service\\Monitoring\\SystemJobRecorder' => __DIR__ . '/../..' . '/src/Service/Monitoring/SystemJobRecorder.php',
+        'App\\Service\\Notification\\PushNotifier' => __DIR__ . '/../..' . '/src/Service/Notification/PushNotifier.php',
         'App\\Service\\Notification\\SubscriptionNotifier' => __DIR__ . '/../..' . '/src/Service/Notification/SubscriptionNotifier.php',
         'App\\Service\\Notification\\TelegramNotifier' => __DIR__ . '/../..' . '/src/Service/Notification/TelegramNotifier.php',
+        'App\\Service\\Notification\\WebPush' => __DIR__ . '/../..' . '/src/Service/Notification/WebPush.php',
         'App\\Service\\Onlyoffice\\OnlyofficeService' => __DIR__ . '/../..' . '/src/Service/Onlyoffice/OnlyofficeService.php',
         'App\\Service\\Org\\OrgImporter' => __DIR__ . '/../..' . '/src/Service/Org/OrgImporter.php',
         'App\\Service\\Pdf\\Bundle\\BundleJob' => __DIR__ . '/../..' . '/src/Service/Pdf/Bundle/BundleJob.php',
@@ -747,9 +772,11 @@ class ComposerStaticInit1df4c4904c159e9efdaa5193a76c3aff
         'App\\Tests\\Functional\\SignatureSheetTest' => __DIR__ . '/../..' . '/tests/Functional/SignatureSheetTest.php',
         'App\\Tests\\Functional\\TextExtractorTest' => __DIR__ . '/../..' . '/tests/Functional/TextExtractorTest.php',
         'App\\Tests\\Functional\\ValidityStatisticsTest' => __DIR__ . '/../..' . '/tests/Functional/ValidityStatisticsTest.php',
+        'App\\Tests\\Functional\\VerifiedAnswerTest' => __DIR__ . '/../..' . '/tests/Functional/VerifiedAnswerTest.php',
         'App\\Tests\\Functional\\VideoIntegrationTest' => __DIR__ . '/../..' . '/tests/Functional/VideoIntegrationTest.php',
         'App\\Tests\\Functional\\VideoSessionTest' => __DIR__ . '/../..' . '/tests/Functional/VideoSessionTest.php',
         'App\\Tests\\Functional\\WatermarkTest' => __DIR__ . '/../..' . '/tests/Functional/WatermarkTest.php',
+        'App\\Tests\\Functional\\WebPushTest' => __DIR__ . '/../..' . '/tests/Functional/WebPushTest.php',
         'App\\Tests\\PortalTestCase' => __DIR__ . '/../..' . '/tests/PortalTestCase.php',
         'App\\Tests\\Unit\\CsvTest' => __DIR__ . '/../..' . '/tests/Unit/CsvTest.php',
         'App\\Tests\\Unit\\LdapSettingsTest' => __DIR__ . '/../..' . '/tests/Unit/LdapSettingsTest.php',
@@ -2404,6 +2431,18 @@ class ComposerStaticInit1df4c4904c159e9efdaa5193a76c3aff
         'NoDiscard' => __DIR__ . '/..' . '/symfony/polyfill-php85/Resources/stubs/NoDiscard.php',
         'Normalizer' => __DIR__ . '/..' . '/symfony/polyfill-intl-normalizer/Resources/stubs/Normalizer.php',
         'NumberFormatter' => __DIR__ . '/..' . '/symfony/polyfill-intl-icu/Resources/stubs/NumberFormatter.php',
+        'OneLogin\\Saml2\\Auth' => __DIR__ . '/..' . '/onelogin/php-saml/src/Saml2/Auth.php',
+        'OneLogin\\Saml2\\AuthnRequest' => __DIR__ . '/..' . '/onelogin/php-saml/src/Saml2/AuthnRequest.php',
+        'OneLogin\\Saml2\\Constants' => __DIR__ . '/..' . '/onelogin/php-saml/src/Saml2/Constants.php',
+        'OneLogin\\Saml2\\Error' => __DIR__ . '/..' . '/onelogin/php-saml/src/Saml2/Error.php',
+        'OneLogin\\Saml2\\IdPMetadataParser' => __DIR__ . '/..' . '/onelogin/php-saml/src/Saml2/IdPMetadataParser.php',
+        'OneLogin\\Saml2\\LogoutRequest' => __DIR__ . '/..' . '/onelogin/php-saml/src/Saml2/LogoutRequest.php',
+        'OneLogin\\Saml2\\LogoutResponse' => __DIR__ . '/..' . '/onelogin/php-saml/src/Saml2/LogoutResponse.php',
+        'OneLogin\\Saml2\\Metadata' => __DIR__ . '/..' . '/onelogin/php-saml/src/Saml2/Metadata.php',
+        'OneLogin\\Saml2\\Response' => __DIR__ . '/..' . '/onelogin/php-saml/src/Saml2/Response.php',
+        'OneLogin\\Saml2\\Settings' => __DIR__ . '/..' . '/onelogin/php-saml/src/Saml2/Settings.php',
+        'OneLogin\\Saml2\\Utils' => __DIR__ . '/..' . '/onelogin/php-saml/src/Saml2/Utils.php',
+        'OneLogin\\Saml2\\ValidationError' => __DIR__ . '/..' . '/onelogin/php-saml/src/Saml2/ValidationError.php',
         'Override' => __DIR__ . '/..' . '/symfony/polyfill-php83/Resources/stubs/Override.php',
         'PHPUnit\\Event\\Application\\Finished' => __DIR__ . '/..' . '/phpunit/phpunit/src/Event/Events/Application/Finished.php',
         'PHPUnit\\Event\\Application\\FinishedSubscriber' => __DIR__ . '/..' . '/phpunit/phpunit/src/Event/Events/Application/FinishedSubscriber.php',
@@ -3720,6 +3759,10 @@ class ComposerStaticInit1df4c4904c159e9efdaa5193a76c3aff
         'Psr\\Log\\LoggerTrait' => __DIR__ . '/..' . '/psr/log/src/LoggerTrait.php',
         'Psr\\Log\\NullLogger' => __DIR__ . '/..' . '/psr/log/src/NullLogger.php',
         'ReflectionConstant' => __DIR__ . '/..' . '/symfony/polyfill-php84/Resources/stubs/ReflectionConstant.php',
+        'RobRichards\\XMLSecLibs\\Utils\\XPath' => __DIR__ . '/..' . '/robrichards/xmlseclibs/src/Utils/XPath.php',
+        'RobRichards\\XMLSecLibs\\XMLSecEnc' => __DIR__ . '/..' . '/robrichards/xmlseclibs/src/XMLSecEnc.php',
+        'RobRichards\\XMLSecLibs\\XMLSecurityDSig' => __DIR__ . '/..' . '/robrichards/xmlseclibs/src/XMLSecurityDSig.php',
+        'RobRichards\\XMLSecLibs\\XMLSecurityKey' => __DIR__ . '/..' . '/robrichards/xmlseclibs/src/XMLSecurityKey.php',
         'RoundingMode' => __DIR__ . '/..' . '/symfony/polyfill-php84/Resources/stubs/RoundingMode.php',
         'SQLite3Exception' => __DIR__ . '/..' . '/symfony/polyfill-php83/Resources/stubs/SQLite3Exception.php',
         'SebastianBergmann\\CliParser\\AmbiguousOptionException' => __DIR__ . '/..' . '/sebastian/cli-parser/src/exceptions/AmbiguousOptionException.php',

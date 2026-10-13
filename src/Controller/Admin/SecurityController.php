@@ -9,6 +9,9 @@ use App\Repository\UserRepository;
 use App\Service\Pdf\PdfWatermarker;
 use App\Service\PortalSettings;
 use App\Service\Sso\OidcClient;
+use App\Service\PortalUrl;
+use App\Service\Sso\SamlService;
+use App\Service\Sso\SsoException;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -29,6 +32,8 @@ final class SecurityController extends AbstractController
         private readonly OidcClient $oidc,
         private readonly UserRepository $users,
         private readonly PdfWatermarker $watermarker,
+        private readonly SamlService $saml,
+        private readonly PortalUrl $portalUrl,
     ) {
     }
 
@@ -51,7 +56,79 @@ final class SecurityController extends AbstractController
             'watermark_modes' => PdfWatermarker::MODES,
             'watermark_available' => $this->watermarker->isAvailable(),
             'watermark_sample' => $this->watermarker->texts($this->getUser() instanceof User ? $this->getUser() : null, '10.0.0.15', null, 'Инструкция по охране труда'),
+            'saml' => $this->settings->saml() + [
+                'ready' => $this->saml->isEnabled(),
+                'sp_entity_id' => $this->saml->spEntityId() ?: '— (не задан адрес портала)',
+                'base_ready' => null !== $this->saml->spBaseUrl(),
+                'default_base' => $this->portalUrl->baseUri(),
+                'acs_url' => $this->saml->acsUrl() ?: '—',
+                'certs' => $this->saml->certificateInfo(),
+            ],
         ]);
+    }
+
+    #[Route('/saml', name: 'admin_security_saml', methods: ['POST'])]
+    public function saml(Request $request, #[CurrentUser] User $user): Response
+    {
+        $this->checkToken($request);
+        $cert = (string) $request->request->get('idp_cert');
+        if ('' !== trim($cert) && [] === $this->saml->certificates($cert)) {
+            $this->addFlash('danger', 'SAML: сертификат провайдера не распознан — вставьте его в формате PEM (BEGIN CERTIFICATE) или base64.');
+
+            return $this->redirectToRoute('admin_security', ['_fragment' => 'saml']);
+        }
+        $ssoUrl = trim((string) $request->request->get('idp_sso_url'));
+        if ('' !== $ssoUrl && !preg_match('~^https://~i', $ssoUrl)) {
+            $this->addFlash('danger', 'SAML: адрес входа провайдера должен начинаться с https://.');
+
+            return $this->redirectToRoute('admin_security', ['_fragment' => 'saml']);
+        }
+        $base = rtrim(trim((string) $request->request->get('sp_base_url')), '/');
+        if ('' !== $base && !preg_match('~^https?://[^/\s?#]+(/[^\s?#]*)?$~i', $base)) {
+            $this->addFlash('danger', 'SAML: адрес портала — вида https://docs.example.ru (без параметров).');
+
+            return $this->redirectToRoute('admin_security', ['_fragment' => 'saml']);
+        }
+        $this->settings->setSaml([
+            'enabled' => $request->request->has('enabled'),
+            'idp_entity_id' => (string) $request->request->get('idp_entity_id'),
+            'idp_sso_url' => $ssoUrl,
+            'idp_cert' => implode("\n", $this->saml->certificates($cert)),
+            'button' => (string) $request->request->get('button'),
+            'create_users' => $request->request->has('create_users'),
+            'username_attr' => (string) $request->request->get('username_attr'),
+            'name_attr' => (string) $request->request->get('name_attr'),
+            'email_attr' => (string) $request->request->get('email_attr'),
+            'department_attr' => (string) $request->request->get('department_attr'),
+            'roles_attr' => (string) $request->request->get('roles_attr'),
+            'admin_value' => (string) $request->request->get('admin_value'),
+            'marketer_value' => (string) $request->request->get('marketer_value'),
+            'assistant_value' => (string) $request->request->get('assistant_value'),
+            'sp_base_url' => $base,
+            'allow_idp_initiated' => $request->request->has('allow_idp_initiated'),
+            'domains' => (string) $request->request->get('domains'),
+        ], $user);
+        $this->addFlash('success', $this->saml->isEnabled() || !$request->request->has('enabled') ? 'Настройки входа через SAML сохранены.' : 'Настройки сохранены, но вход через SAML не заработает, пока не заданы идентификатор провайдера, адрес входа, сертификат и адрес портала (здесь или в APP_DEFAULT_URI).');
+
+        return $this->redirectToRoute('admin_security', ['_fragment' => 'saml']);
+    }
+
+    /** Заполнение настроек SAML по метаданным провайдера (XML или адрес). */
+    #[Route('/saml/metadata', name: 'admin_security_saml_metadata', methods: ['POST'])]
+    public function samlMetadata(Request $request, #[CurrentUser] User $user): Response
+    {
+        $this->checkToken($request);
+        try {
+            $parsed = $this->saml->parseMetadata((string) $request->request->get('metadata'));
+        } catch (SsoException $e) {
+            $this->addFlash('danger', 'SAML: '.$e->getMessage());
+
+            return $this->redirectToRoute('admin_security', ['_fragment' => 'saml']);
+        }
+        $this->settings->setSaml(['idp_entity_id' => $parsed['entity_id'], 'idp_sso_url' => $parsed['sso_url'], 'idp_cert' => implode("\n", $parsed['certs'])] + $this->settings->saml(), $user);
+        $this->addFlash('success', \sprintf('SAML: из метаданных взяты провайдер %s, адрес входа и сертификаты (%d). Проверьте остальные настройки и включите вход.', $parsed['entity_id'], \count($parsed['certs'])));
+
+        return $this->redirectToRoute('admin_security', ['_fragment' => 'saml']);
     }
 
     #[Route('/sso', name: 'admin_security_sso', methods: ['POST'])]
@@ -75,6 +152,7 @@ final class SecurityController extends AbstractController
             'admin_value' => (string) $request->request->get('admin_value'),
             'marketer_value' => (string) $request->request->get('marketer_value'),
             'assistant_value' => (string) $request->request->get('assistant_value'),
+            'domains' => (string) $request->request->get('domains'),
         ], $user);
         $this->addFlash('success', 'Настройки входа через SSO сохранены.');
 

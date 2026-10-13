@@ -338,9 +338,9 @@ final class HealthReport
             $metrics['acknowledgements_overdue'] = (int) $c->fetchOne('SELECT COUNT(*) FROM document_acknowledgement WHERE confirmed_at IS NULL AND due_at IS NOT NULL AND due_at < CURRENT_DATE');
             $metrics['approvals_pending'] = (int) $c->fetchOne("SELECT COUNT(*) FROM document_approval WHERE decision = 'pending'");
             $outdated = (int) $c->fetchOne(
+                // NOT EXISTS по индексу idx_document_text_state — без чтения самого текста документов.
                 'SELECT COUNT(*) FROM document d JOIN document_version v ON v.id = d.current_version_id
-                 LEFT JOIN document_text t ON t.document_id = d.id
-                 WHERE t.document_id IS NULL OR t.version_number <> v.number OR t.status = \'pending\''
+                 WHERE NOT EXISTS (SELECT 1 FROM document_text t WHERE t.document_id = d.id AND t.version_number = v.number AND t.status <> \'pending\')'
             );
             $metrics['search_index_outdated'] = $outdated;
             $metrics['ocr_pending'] = (int) $c->fetchOne("SELECT COUNT(*) FROM document_text WHERE status = 'pending'");

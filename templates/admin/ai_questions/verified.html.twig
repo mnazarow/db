@@ -1,0 +1,65 @@
+{% extends 'admin/_layout.html.twig' %}
+
+{% block title %}{{ answer.id ? 'Проверенный ответ' : 'Новый проверенный ответ' }}{% endblock %}
+{% block admin_title %}{{ answer.id ? 'Проверенный ответ' : 'Новый проверенный ответ' }}{% endblock %}
+{% block admin_actions %}
+    <a class="btn btn--ghost" href="{{ path('admin_ai_questions', {view: 'verified'}) }}">Все проверенные ответы</a>
+{% endblock %}
+
+{% block admin_body %}
+{% for e in errors %}<div class="alert alert--error">{{ e }}</div>{% endfor %}
+<div class="grid grid--two">
+    <div class="card card--form">
+        <p>На тот же вопрос сотрудник сразу получает этот ответ с пометкой «Проверенный ответ» — без обращения к языковой модели. Вопросы сравниваются по значимым словам без учёта порядка и окончаний: «Сколько дней отпуска положено?» подходит к «А сколько положено дней отпуска», но не к более общему «сколько дней отпуска» и не к вопросу с отрицанием («…без сохранения зарплаты») — их добавьте в «Другие формулировки» или оставьте модели. Ответ получают только сотрудники, которым открыты все документы-источники.</p>
+        <form method="post" class="form">
+            <input type="hidden" name="_token" value="{{ csrf_token('ai_verified') }}">
+            <div class="form-row">
+                <label class="form-label" for="v-question">Вопрос</label>
+                <input class="form-control" id="v-question" name="question" maxlength="500" required value="{{ answer.question }}" placeholder="Как сменить пароль?">
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="v-alternatives">Другие формулировки</label>
+                <textarea class="form-control" id="v-alternatives" name="alternatives" rows="3" placeholder="Забыл пароль от портала&#10;Как поменять пароль учётной записи">{{ answer.alternatives }}</textarea>
+                <div class="form-help">Необязательно, по одной в строке: как ещё спрашивают о том же.</div>
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="v-answer">Ответ</label>
+                <textarea class="form-control" id="v-answer" name="answer" rows="10" required>{{ answer.answer }}</textarea>
+                <div class="form-help">Обычный текст; <code>**жирный**</code>; строки, начинающиеся с «- » или «1.», — список; <code>[1]</code>, <code>[2]</code> — ссылки на документы-источники ниже, по порядку.</div>
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="v-sources">Документы-источники</label>
+                <textarea class="form-control" id="v-sources" name="sources" rows="3" placeholder="https://docs.example.ru/documents/12&#10;ОТ-002">{{ sources }}</textarea>
+                <div class="form-help">До {{ max_sources }}, по одному в строке: ссылка на документ портала, «#номер» или обозначение. Сотрудник видит только опубликованные документы, которые ему доступны.</div>
+            </div>
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="active" value="1" {{ answer.active ? 'checked' }}><span>Выдавать этот ответ сотрудникам</span></label>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn--pill btn--small">Сохранить</button>
+                {% if answer.id %}<span class="text-muted">Выдан {{ answer.uses }} раз{% if answer.lastUsedAt %}, последний — {{ answer.lastUsedAt|date('d.m.Y H:i') }}{% endif %}.</span>{% endif %}
+            </div>
+        </form>
+        {% if answer.id %}
+        <form method="post" action="{{ path('admin_ai_verified_delete', {id: answer.id}) }}" class="form-actions" onsubmit="return confirm('Удалить проверенный ответ?');">
+            <input type="hidden" name="_token" value="{{ csrf_token('ai_verified') }}">
+            <button type="submit" class="btn btn--ghost btn--small btn--danger">Удалить</button>
+        </form>
+        {% endif %}
+    </div>
+    <div class="card">
+        <h2 class="h-section">Как увидит сотрудник</h2>
+        {% if preview %}
+            <div class="ai-answer">
+                <p class="ai-answer__verified"><span class="badge badge--done"><span class="badge__dot"></span>Проверенный ответ</span></p>
+                <div class="ai-answer__text">{{ preview|raw }}</div>
+                {% if preview_sources is not empty %}
+                <ol class="ai-answer__sources">{% for src in preview_sources %}<li value="{{ src.n }}"><span class="tag">документ</span> <a href="{{ src.url }}">{{ src.title }}</a>{% if src.meta %} <span class="text-muted">{{ src.meta }}</span>{% endif %}</li>{% endfor %}</ol>
+                {% endif %}
+            </div>
+        {% else %}
+            <p class="text-muted">Здесь появится ответ после сохранения.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

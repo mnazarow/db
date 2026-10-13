@@ -13,6 +13,8 @@ use App\Repository\DocumentCommentRepository;
 use App\Security\Access;
 use App\Security\Voter\PortalVoter;
 use App\Service\CommentService;
+use App\Repository\PushSubscriptionRepository;
+use App\Service\Notification\PushNotifier;
 use App\Service\Notification\TelegramNotifier;
 use App\Service\SubscriptionService;
 use Doctrine\ORM\EntityManagerInterface;
@@ -135,9 +137,11 @@ final class DiscussionController extends AbstractController
     /** Профиль: подписки, каналы уведомлений и привязка Telegram. */
     #[Route('/profile/subscriptions', name: 'app_profile_subscriptions', methods: ['GET'])]
     #[IsGranted('ROLE_USER')]
-    public function profile(#[CurrentUser] User $user): Response
+    public function profile(#[CurrentUser] User $user, PushNotifier $push, PushSubscriptionRepository $pushSubscriptions): Response
     {
         return $this->render('profile/subscriptions.html.twig', [
+            'push_key' => $push->publicKey(),
+            'push_devices' => $pushSubscriptions->findForUser($user),
             'subscriptions' => $this->subscriptions->forUser($user),
             'subscriptions_enabled' => $this->subscriptions->isEnabled(),
             'comments' => $this->repository->findRecentForUser($user, 10),

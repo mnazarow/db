@@ -29,9 +29,12 @@ class AiQuestion
     public const STATUS_NO_SOURCES = 'no_sources';
     /** Модель не ответила (ошибка, тайм-аут). */
     public const STATUS_ERROR = 'error';
+    /** Выдан проверенный ответ администратора (модель не вызывалась). */
+    public const STATUS_VERIFIED = 'verified';
 
     public const STATUS_LABELS = [
         self::STATUS_ANSWERED => 'ответ дан',
+        self::STATUS_VERIFIED => 'проверенный ответ',
         self::STATUS_NOT_FOUND => 'в документах нет ответа',
         self::STATUS_NO_SOURCES => 'ничего не найдено',
         self::STATUS_ERROR => 'ошибка модели',

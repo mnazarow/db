@@ -11,6 +11,7 @@ use App\Entity\User;
 use App\Repository\DocumentAcknowledgementRepository;
 use App\Repository\UserRepository;
 use App\Security\Access;
+use App\Service\Notification\PushNotifier;
 use Doctrine\ORM\EntityManagerInterface;
 use Psr\Log\LoggerInterface;
 use Symfony\Bridge\Twig\Mime\TemplatedEmail;
@@ -38,6 +39,7 @@ final class AcknowledgementService
         private readonly string $appName,
         private readonly PortalUrl $portalUrl,
         private readonly ?Access $access = null,
+        private readonly ?PushNotifier $push = null,
     ) {
     }
 
@@ -206,7 +208,7 @@ final class AcknowledgementService
         }
 
         $documents = [];
-        foreach ($this->em->getRepository(Document::class)->createQueryBuilder('d')->join('d.section', 's')->addSelect('s')
+        foreach ($this->em->getRepository(Document::class)->createQueryBuilder('d')->leftJoin('d.section', 's')->addSelect('s')
             ->andWhere('d.id IN (:ids)')->setParameter('ids', array_keys($byDocument))->getQuery()->getResult() as $document) {
             $documents[(int) $document->getId()] = $document;
         }
@@ -358,13 +360,14 @@ final class AcknowledgementService
      */
     public function teamReport(User $manager, ?array $video, bool $details = true): array
     {
-        $docs = $this->acknowledgements->userRows(null);
+        $subordinates = $this->users->findSubordinates($manager);
+        $docs = $this->acknowledgements->userRows(null, array_map(static fn (array $s): int => (int) $s['user']->getId(), $subordinates));
         $videoAvailable = null !== $video;
         $video ??= [];
         $today = new \DateTimeImmutable('today');
         $people = [];
         $totals = ['people' => 0, 'pending' => 0, 'overdue' => 0, 'docs_assigned' => 0, 'docs_confirmed' => 0, 'video_assigned' => 0, 'video_completed' => 0];
-        foreach ($this->users->findSubordinates($manager) as ['user' => $user, 'depth' => $depth]) {
+        foreach ($subordinates as ['user' => $user, 'depth' => $depth]) {
             $id = (int) $user->getId();
             $d = $docs[$id] ?? ['assigned' => 0, 'confirmed' => 0, 'overdue' => 0];
             $v = $video[$id] ?? ['assigned' => 0, 'completed' => 0, 'overdue' => 0];
@@ -430,6 +433,11 @@ final class AcknowledgementService
         $emails = 0;
         foreach ($byUser as $items) {
             $user = $items[0]->getUser();
+            if (!$dryRun && null !== $this->push) {
+                $titles = array_map(static fn (DocumentAcknowledgement $a): string => '• '.$a->getDocument()->getTitle(), \array_slice($items, 0, 3));
+                $this->push->notify($user, \count($items) > 1 ? \sprintf('Ждут ознакомления: %d %s', \count($items), Validity::plural(\count($items), ['документ', 'документа', 'документов'])) : 'Ждёт ознакомления документ',
+                    implode("\n", $titles).(\count($items) > 3 ? "\n…" : ''), $this->portalUrl->absolute('app_profile_acknowledgements'), 'ack-reminder');
+            }
             if ($dryRun || null === $user->getEmail()) {
                 continue;
             }
@@ -452,6 +460,8 @@ final class AcknowledgementService
 
     private function notifyAssigned(User $user, Document $document, ?\DateTimeImmutable $dueAt): void
     {
+        $this->push?->notify($user, 'Ознакомьтесь с документом', $document->getTitle().(null !== $dueAt ? "\nСрок — до ".$dueAt->format('d.m.Y') : ''),
+            $this->portalUrl->absolute('app_document_show', ['id' => $document->getId()]), 'ack-'.$document->getId());
         if (null === $user->getEmail()) {
             return;
         }

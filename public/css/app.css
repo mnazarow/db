@@ -1311,6 +1311,7 @@ fieldset.form-row > legend { padding: 0; margin-bottom: 6px; }
 }
 .people-report .people-report__dept th { border-bottom: 1px solid var(--border-light); }
 /* Ответ ИИ: оценка */
+.ai-answer__verified { margin: 0 0 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .ai-answer__rate { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border-light); }
 .ai-answer__rate-label { font-size: 14px; color: var(--muted); margin-right: 4px; }
 .ai-answer__thanks { font-size: 14px; color: var(--green, #1b7a43); }
@@ -1325,3 +1326,10 @@ fieldset.form-row > legend { padding: 0; margin-bottom: 6px; }
 .ai-questions__answer summary { cursor: pointer; color: var(--blue); }
 .ai-questions__text { margin: 8px 0; padding: 10px 12px; background: var(--gray-bg, #f4f6f8); border-radius: 8px; line-height: 1.5; }
 .form-label--inline { margin: 0; }
+
+/* Уведомления в браузере: устройства сотрудника */
+.push-devices { list-style: none; margin: 12px 0 0; padding: 0; }
+.push-devices li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border-light); }
+.push-devices li .inline-form { margin-left: auto; }
+.break-all { word-break: break-all; }
+#saml form + form { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-light); }

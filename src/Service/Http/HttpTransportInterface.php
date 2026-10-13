@@ -22,4 +22,14 @@ interface HttpTransportInterface
      * @param array<string, string> $headers
      */
     public function download(string $url, string $path, array $headers, int $timeoutSeconds, int $maxBytes): HttpResponse;
+
+    /**
+     * Несколько запросов параллельно (не больше $concurrency одновременно) — например, уведомления в браузер
+     * сотням сотрудников. Ответы — в том же порядке, что и запросы.
+     *
+     * @param list<array{method: string, url: string, body: ?string, headers: array<string, string>}> $requests
+     *
+     * @return list<HttpResponse>
+     */
+    public function requestMany(array $requests, int $timeoutSeconds, int $concurrency = 20): array;
 }

@@ -31,10 +31,14 @@
         <div class="card ai-answer" data-ai-answer data-url="{{ path('app_search_answer') }}" data-token="{{ csrf_token('search_answer') }}" data-q="{{ q }}"{% if ai_auto %} data-auto{% endif %} hidden>
             <div class="card__head card__head--padded">
                 <h2 class="h-section">Ответ на вопрос</h2>
-                <button class="btn btn--ghost btn--small" type="button" data-ai-ask>Ответить по документам{{ video_enabled() ? ' и видео' }}</button>
+                <button class="btn btn--ghost btn--small" type="button" data-ai-ask>{{ ai_model ? 'Ответить по документам' ~ (video_enabled() ? ' и видео') : 'Найти готовый ответ' }}</button>
             </div>
             <div class="card__padded ai-answer__body" data-ai-body aria-live="polite">
-                <p class="text-muted">Языковая модель составит ответ по документам{{ video_enabled() ? ' и видео' }}, которые вам доступны, и покажет, откуда он взят. Проверяйте важное по источникам.</p>
+                {% if ai_model %}
+                <p class="text-muted">Языковая модель составит ответ по документам{{ video_enabled() ? ' и видео' }}, которые вам доступны, и покажет, откуда он взят. На частые вопросы — проверенные ответы администраторов. Проверяйте важное по источникам.</p>
+                {% else %}
+                <p class="text-muted">Готовые ответы администраторов портала на частые вопросы — со ссылками на документы.</p>
+                {% endif %}
             </div>
         </div>
         {% endif %}

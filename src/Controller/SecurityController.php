@@ -6,6 +6,7 @@ namespace App\Controller;
 
 use App\Security\KerberosLogin;
 use App\Service\Sso\OidcClient;
+use App\Service\Sso\SamlService;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -22,6 +23,7 @@ final class SecurityController extends AbstractController
     public function __construct(
         private readonly OidcClient $oidc,
         private readonly ?KerberosLogin $kerberos = null,
+        private readonly ?SamlService $saml = null,
     ) {
     }
 
@@ -57,6 +59,8 @@ final class SecurityController extends AbstractController
             'kerberos_failed' => $kerberos && 'failed' === $request->query->get('kerberos')
                 && !($request->hasSession() && $request->getSession() instanceof FlashBagAwareSessionInterface && [] !== $request->getSession()->getFlashBag()->peek('warning')),
             'sso_button' => $this->oidc->buttonLabel(),
+            'saml_enabled' => null !== $this->saml && $this->saml->isEnabled(),
+            'saml_button' => null !== $this->saml ? $this->saml->buttonLabel() : '',
         ]);
     }
 
