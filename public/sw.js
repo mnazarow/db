@@ -4,10 +4,13 @@
  * сотрудника и должно быть свежим; без сети вместо ошибки браузера показывается страница offline.html.
  * Кэшируются только оформление (стили, скрипты, шрифты, значки) — чтобы приложение открывалось быстрее.
  * Раздел «Видео» (/video/), API и внутренние адреса не затрагиваются.
+ *
+ * Уведомления в браузере (Web Push): портал присылает заголовок, текст и адрес — они показываются системным
+ * уведомлением, нажатие открывает адрес (или уже открытую вкладку портала).
  */
 'use strict';
 
-var CACHE = 'docportal-shell-v2';
+var CACHE = 'docportal-shell-v3';
 var OFFLINE = '/offline.html';
 var PRECACHE = [OFFLINE, '/css/app.css', '/js/app.js', '/img/logo.svg', '/img/logo-mark.svg', '/img/favicon.svg', '/img/app/icon-192.png'];
 
@@ -50,4 +53,29 @@ self.addEventListener('fetch', function (event) {
             });
         }));
     }
+});
+
+self.addEventListener('push', function (event) {
+    var data = {};
+    try { data = event.data ? event.data.json() : {}; } catch (e) { data = { body: event.data ? event.data.text() : '' }; }
+    var title = data.title || 'Портал документации';
+    event.waitUntil(self.registration.showNotification(title, {
+        body: data.body || '',
+        icon: '/img/app/icon-192.png',
+        badge: '/img/app/icon-192.png',
+        tag: data.tag || undefined,
+        data: { url: data.url || '/' },
+    }));
+});
+
+self.addEventListener('notificationclick', function (event) {
+    event.notification.close();
+    var target = (event.notification.data && event.notification.data.url) || '/';
+    event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (list) {
+        for (var i = 0; i < list.length; i++) {
+            var client = list[i];
+            if (client.url === target && 'focus' in client) { return client.focus(); }
+        }
+        return self.clients.openWindow ? self.clients.openWindow(target) : null;
+    }));
 });

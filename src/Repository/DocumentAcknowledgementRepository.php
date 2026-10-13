@@ -85,7 +85,7 @@ final class DocumentAcknowledgementRepository extends ServiceEntityRepository
     public function findForDocument(Document $document, ?int $versionNumber = null): array
     {
         $qb = $this->createQueryBuilder('a')
-            ->join('a.user', 'u')->addSelect('u')
+            ->leftJoin('a.user', 'u')->addSelect('u')
             ->andWhere('a.document = :d')->setParameter('d', $document)
             ->orderBy('a.versionNumber', \SortDirection::Descending)
             ->addOrderBy('u.displayName', \SortDirection::Ascending);
@@ -104,8 +104,8 @@ final class DocumentAcknowledgementRepository extends ServiceEntityRepository
     public function findPendingForUser(User $user, int $limit = 100, ?Viewer $viewer = null): array
     {
         $qb = $this->createQueryBuilder('a')
-            ->join('a.document', 'd')->addSelect('d')
-            ->join('d.section', 's')->addSelect('s')
+            ->leftJoin('a.document', 'd')->addSelect('d')
+            ->leftJoin('d.section', 's')->addSelect('s')
             ->andWhere('a.user = :u_id')->setParameter('u_id', $user)
             ->andWhere('a.confirmedAt IS NULL')
             ->andWhere(self::NOT_SUPERSEDED)
@@ -124,8 +124,8 @@ final class DocumentAcknowledgementRepository extends ServiceEntityRepository
     public function findConfirmedForUser(User $user, int $limit = 100): array
     {
         return $this->createQueryBuilder('a')
-            ->join('a.document', 'd')->addSelect('d')
-            ->join('d.section', 's')->addSelect('s')
+            ->leftJoin('a.document', 'd')->addSelect('d')
+            ->leftJoin('d.section', 's')->addSelect('s')
             ->andWhere('a.user = :u')->setParameter('u', $user)
             ->andWhere('a.confirmedAt IS NOT NULL')
             ->orderBy('a.confirmedAt', \SortDirection::Descending)
@@ -143,8 +143,8 @@ final class DocumentAcknowledgementRepository extends ServiceEntityRepository
     public function findForReminder(\DateTimeImmutable $today, int $soonDays, ?\DateTimeImmutable $remindedBefore = null): array
     {
         $qb = $this->createQueryBuilder('a')
-            ->join('a.document', 'd')->addSelect('d')
-            ->join('a.user', 'u')->addSelect('u')
+            ->leftJoin('a.document', 'd')->addSelect('d')
+            ->leftJoin('a.user', 'u')->addSelect('u')
             ->andWhere('a.confirmedAt IS NULL')
             ->andWhere(self::NOT_SUPERSEDED)
             ->andWhere("d.status = 'published'")
@@ -204,7 +204,7 @@ final class DocumentAcknowledgementRepository extends ServiceEntityRepository
             return [];
         }
         $documents = $this->getEntityManager()->getRepository(Document::class)
-            ->createQueryBuilder('d')->join('d.section', 's')->addSelect('s')
+            ->createQueryBuilder('d')->leftJoin('d.section', 's')->addSelect('s')
             ->andWhere('d.id IN (:ids)')->setParameter('ids', array_column($rows, 'document_id'))
             ->getQuery()->getResult();
         $byId = [];
@@ -298,11 +298,15 @@ final class DocumentAcknowledgementRepository extends ServiceEntityRepository
      * сотрудники): user_id → назначено, подтверждено, просрочено. Для единого отчёта «Документы и видео».
      *
      * @param list<int>|null $sectionIds
+     * @param list<int>|null $userIds    только эти сотрудники (null — все)
      *
      * @return array<int, array{assigned: int, confirmed: int, overdue: int}>
      */
-    public function userRows(?array $sectionIds = null): array
+    public function userRows(?array $sectionIds = null, ?array $userIds = null): array
     {
+        if ([] === $userIds) {
+            return [];
+        }
         $sql = 'SELECT a.user_id, COUNT(*) AS assigned,
                     SUM(CASE WHEN a.confirmed_at IS NOT NULL THEN 1 ELSE 0 END) AS confirmed,
                     SUM(CASE WHEN a.confirmed_at IS NULL AND a.due_at IS NOT NULL AND a.due_at < :today THEN 1 ELSE 0 END) AS overdue
@@ -321,6 +325,12 @@ final class DocumentAcknowledgementRepository extends ServiceEntityRepository
             $sql .= ' AND d.section_id IN (:sections)';
             $params['sections'] = $sectionIds;
             $types['sections'] = \Doctrine\DBAL\ArrayParameterType::INTEGER;
+        }
+        if (null !== $userIds) {
+            // Только эти сотрудники («Мои сотрудники») — без подсчёта по всему порталу.
+            $sql .= ' AND a.user_id IN (:users)';
+            $params['users'] = array_values(array_map('intval', $userIds));
+            $types['users'] = \Doctrine\DBAL\ArrayParameterType::INTEGER;
         }
         $sql .= ' GROUP BY a.user_id';
         $out = [];

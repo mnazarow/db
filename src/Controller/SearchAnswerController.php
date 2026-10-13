@@ -36,7 +36,7 @@ final class SearchAnswerController extends AbstractController
         if (!$this->isCsrfTokenValid('search_answer', (string) $request->request->get('_token'))) {
             return new JsonResponse(['error' => 'Страница устарела — обновите её и повторите.'], 400);
         }
-        if (!$this->answers->isEnabled()) {
+        if (!$this->answers->isAvailable()) {
             return new JsonResponse(['error' => 'Ответы на вопросы выключены администратором.'], 404);
         }
         $limit = $this->aiAnswerLimiter->create('ai-answer-'.$user->getId())->consume();
@@ -51,6 +51,8 @@ final class SearchAnswerController extends AbstractController
             'error' => $result['error'],
             'status' => $result['status'],
             'semantic' => $result['semantic'],
+            // Проверенный ответ администратора (выдан без обращения к модели).
+            'verified' => isset($result['verified']) ? ['updated' => $result['verified']['updated_at']->format('d.m.Y')] : null,
             // Номер вопроса для оценки ответа (нет журнала или ответа — оценивать нечего).
             'id' => null !== $result['answer'] ? $result['id'] : null,
             'rate_url' => null !== $result['answer'] && null !== $result['id'] ? $this->generateUrl('app_search_answer_rate', ['id' => $result['id']]) : null,

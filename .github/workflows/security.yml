@@ -1,0 +1,46 @@
+# Известные уязвимости в зависимостях портала (Composer) и видеопортала (npm): на каждое изменение и
+# раз в неделю — уязвимость могут опубликовать и для библиотеки, которую давно не меняли. Задание
+# падает, если найдена уязвимость: обновите пакет (Dependabot предложит это сам — .github/dependabot.yml)
+# и повторите проверку. Для npm учитываются только зависимости, которые работают на сервере, начиная с
+# высокой важности; полный список — в журнале шага.
+name: Уязвимости в зависимостях
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 5 * * 1'
+
+jobs:
+  composer:
+    name: Портал (Composer)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          tools: composer:v2
+          coverage: none
+      - name: composer audit
+        run: composer audit --locked --no-interaction --format=plain --abandoned=report
+
+  npm:
+    name: Видеопортал (npm, ${{ matrix.dir }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: [video/server, video/web]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Все найденные уязвимости (для сведения)
+        working-directory: ${{ matrix.dir }}
+        run: npm audit --package-lock-only || true
+      - name: Уязвимости зависимостей сервера (высокой и критической важности)
+        working-directory: ${{ matrix.dir }}
+        run: npm audit --package-lock-only --omit=dev --audit-level=high

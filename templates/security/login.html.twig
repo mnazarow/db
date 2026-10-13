@@ -50,13 +50,16 @@
                 <button class="btn btn--pill btn--block" type="submit">Войти</button>
             </form>
 
-            {% if sso_enabled or kerberos_enabled|default(false) %}
+            {% if sso_enabled or saml_enabled|default(false) or kerberos_enabled|default(false) %}
                 <div class="login__divider"><span>или</span></div>
                 {% if kerberos_enabled|default(false) %}
                     <a class="btn btn--ghost btn--block" href="{{ path('app_login_kerberos') }}" title="Без пароля — под учётной записью домена, с которой вы вошли в Windows">Войти через Windows</a>
                 {% endif %}
                 {% if sso_enabled %}
                     <a class="btn btn--ghost btn--block{{ kerberos_enabled|default(false) ? ' login__sso-second' }}" href="{{ path('app_login_sso') }}">{{ sso_button }}</a>
+                {% endif %}
+                {% if saml_enabled|default(false) %}
+                    <a class="btn btn--ghost btn--block{{ kerberos_enabled|default(false) or sso_enabled ? ' login__sso-second' }}" href="{{ path('app_login_saml') }}">{{ saml_button }}</a>
                 {% endif %}
             {% endif %}
 

@@ -3,6 +3,7 @@
 {% block title %}Вопросы к ИИ{% endblock %}
 {% block admin_title %}Вопросы к ИИ{% endblock %}
 {% block admin_actions %}
+    <a class="btn btn--ghost" href="{{ path('admin_ai_verified_new') }}">Проверенный ответ</a>
     <a class="btn btn--ghost" href="{{ path('admin_integrations') }}#semantic">Настройки ИИ</a>
     <a class="btn btn--ghost" href="{{ path('admin_ai_questions_csv', {view: view, period: period}) }}">Выгрузить CSV</a>
 {% endblock %}
@@ -18,7 +19,7 @@
 
 <div class="grid grid--stats grid--ai-stats">
     <div class="card"><div class="stat__label">Вопросов</div><div class="stat__value">{{ s.total }}</div><div class="stat__hint">сотрудников: {{ s.users }}</div></div>
-    <div class="card"><div class="stat__label">Ответ дан</div><div class="stat__value">{{ s.total > 0 ? (s.answered * 100 / s.total)|round ~ '%' : '—' }}</div><div class="stat__hint">{{ s.answered }} из {{ s.total }}{% if s.semantic > 0 %}; с поиском по смыслу — {{ s.semantic }}{% endif %}</div></div>
+    <div class="card"><div class="stat__label">Ответ дан</div><div class="stat__value">{{ s.total > 0 ? (s.answered * 100 / s.total)|round ~ '%' : '—' }}</div><div class="stat__hint">{{ s.answered }} из {{ s.total }}{% if s.verified > 0 %}; проверенных ответов — {{ s.verified }}{% endif %}{% if s.semantic > 0 %}; с поиском по смыслу — {{ s.semantic }}{% endif %}</div></div>
     <div class="card"><div class="stat__label">Без ответа</div><div class="stat__value {{ s.not_found + s.no_sources > 0 ? 'text-warning' }}">{{ s.not_found + s.no_sources }}</div><div class="stat__hint">в документах нет ответа — {{ s.not_found }}, ничего не найдено — {{ s.no_sources }}{% if s.error > 0 %}, ошибок модели — {{ s.error }}{% endif %}</div></div>
     <div class="card"><div class="stat__label">Оценки</div><div class="stat__value stat__value--text">{{ s.helpful }} / {{ s.unhelpful }}</div><div class="stat__hint">помог / не помог{% if s.helpful + s.unhelpful > 0 %} — {{ (s.helpful * 100 / (s.helpful + s.unhelpful))|round }}% полезных{% endif %}</div></div>
 </div>
@@ -28,6 +29,7 @@
         <a class="tab {{ view == key ? 'is-active' }}" href="{{ path('admin_ai_questions', {view: key, period: period}) }}"{% if view == key %} aria-current="page"{% endif %}>{{ label }}{% if key == 'unhelpful' and s.unhelpful > 0 %} ({{ s.unhelpful }}){% endif %}</a>
     {% endfor %}
 </nav>
+{% if view != 'verified' %}
 <div class="card toolbar">
     <form method="get" class="toolbar__row">
         <input type="hidden" name="view" value="{{ view }}">
@@ -39,6 +41,7 @@
         <span class="toolbar__summary">Вопросы хранятся {{ log_days > 0 ? log_days ~ ' дн.' : '— не хранятся' }}; имена сотрудников не показываются.</span>
     </form>
 </div>
+{% endif %}
 
 {% if view == 'unanswered' %}
 <div class="card table-card">
@@ -56,13 +59,49 @@
                 <td class="col-num">{{ t.asked }}</td>
                 <td class="col-num">{{ t.users }}</td>
                 <td class="col-nowrap">{{ t.last_at|date('d.m.Y H:i') }}</td>
-                <td class="col-actions"><a class="btn btn--ghost btn--small" href="{{ path('app_document_new', {type: 'page', title: t.question|trim('?')}) }}" title="Новый документ-страница с этим вопросом в названии">Создать документ</a>
+                <td class="col-actions"><a class="btn btn--ghost btn--small" href="{{ path('admin_ai_verified_new', {question: t.question}) }}" title="Готовый ответ на этот вопрос — сотрудники получат его сразу">Написать ответ</a>
+                    <a class="btn btn--ghost btn--small" href="{{ path('app_document_new', {type: 'page', title: t.question|trim('?')}) }}" title="Новый документ-страница с этим вопросом в названии">Создать документ</a>
                     <a class="btn btn--ghost btn--small" href="{{ path('app_search', {q: t.question}) }}">Поиск</a></td>
             </tr>
         {% endfor %}
         </tbody>
     </table></div>
-    <p class="form-help card__padded">«В документах нет ответа» — модель прочла найденные документы и ответа в них не увидела; «ничего не найдено» — по словам и смыслу вопроса документов нет. Напишите документ (или дополните существующий) — следующий такой вопрос получит ответ; тема отметится «позже ответ нашёлся».</p>
+    <p class="form-help card__padded">«В документах нет ответа» — модель прочла найденные документы и ответа в них не увидела; «ничего не найдено» — по словам и смыслу вопроса документов нет. Напишите документ (или дополните существующий) либо готовый ответ («Написать ответ») — следующий такой вопрос получит ответ; тема отметится «позже ответ нашёлся».</p>
+    {% endif %}
+</div>
+{% elseif view == 'verified' %}
+<div class="card toolbar">
+    <form method="get" class="toolbar__row">
+        <input type="hidden" name="view" value="verified">
+        <label class="form-label form-label--inline" for="ai-check">Проверить вопрос</label>
+        <input class="form-control form-control--inline" id="ai-check" name="check" value="{{ verified_check ? verified_check.question }}" placeholder="Как его задаст сотрудник" maxlength="500">
+        <button class="btn btn--ghost btn--small" type="submit">Проверить</button>
+        {% if verified_check %}
+            <span class="toolbar__summary ai-verified-check">{% if verified_check.answer %}Получит ответ: <a href="{{ path('admin_ai_verified_edit', {id: verified_check.answer.id}) }}">{{ verified_check.answer.question }}</a>{% else %}Проверенного ответа нет — ответит языковая модель.{% endif %}</span>
+        {% endif %}
+    </form>
+</div>
+<div class="card table-card">
+    <div class="card__head card__head--padded"><h2 class="h-section">Проверенные ответы</h2>
+        <span class="text-muted">на тот же вопрос (и его другие формулировки) сотрудник сразу получает этот ответ — без обращения к модели</span></div>
+    {% if verified is empty %}
+        <div class="table-card__empty">Проверенных ответов пока нет. Напишите ответ на частый вопрос — со вкладки «Без ответа» («Написать ответ»), из неполезного ответа («Исправить») или кнопкой «Проверенный ответ» вверху.</div>
+    {% else %}
+    <div class="table-scroll"><table class="admin-table ai-verified">
+        <thead><tr><th>Вопрос</th><th class="col-num">Источники</th><th class="col-num">Выдан</th><th>Изменён</th><th>Состояние</th><th class="col-actions"></th></tr></thead>
+        <tbody>
+        {% for a in verified %}
+            <tr class="{{ a.active ? '' : 'is-muted' }}">
+                <td><a href="{{ path('admin_ai_verified_edit', {id: a.id}) }}">{{ a.question }}</a>{% if a.alternativeList is not empty %}<div class="hints">и ещё {{ a.alternativeList|length }} {{ a.alternativeList|length == 1 ? 'формулировка' : (a.alternativeList|length < 5 ? 'формулировки' : 'формулировок') }}</div>{% endif %}</td>
+                <td class="col-num">{{ a.documentIds|length }}</td>
+                <td class="col-num">{{ a.uses }}{% if a.lastUsedAt %}<div class="hints">{{ a.lastUsedAt|date('d.m.Y') }}</div>{% endif %}</td>
+                <td class="col-nowrap">{{ a.updatedAt|date('d.m.Y H:i') }}{% if a.updatedBy %}<div class="hints">{{ a.updatedBy.displayName }}</div>{% endif %}</td>
+                <td class="col-nowrap">{% if a.active %}<span class="badge badge--done"><span class="badge__dot"></span>выдаётся</span>{% else %}<span class="badge badge--none"><span class="badge__dot"></span>выключен</span>{% endif %}</td>
+                <td class="col-actions"><a class="btn btn--ghost btn--small" href="{{ path('admin_ai_verified_edit', {id: a.id}) }}">Изменить</a></td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table></div>
     {% endif %}
 </div>
 {% else %}
@@ -88,7 +127,8 @@
                     {% endif %}
                 </td>
                 <td class="col-nowrap">{{ q.statusLabel }}{% if q.semantic %}<div class="hints">по словам и смыслу</div>{% endif %}<div class="hints">{{ (q.durationMs / 1000)|number_format(1, ',') }} с</div></td>
-                <td class="col-nowrap">{% if q.rating == 1 %}<span class="badge badge--done"><span class="badge__dot"></span>помог</span>{% elseif q.rating == -1 %}<span class="badge badge--overdue"><span class="badge__dot"></span>не помог</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                <td class="col-nowrap">{% if q.rating == 1 %}<span class="badge badge--done"><span class="badge__dot"></span>помог</span>{% elseif q.rating == -1 %}<span class="badge badge--overdue"><span class="badge__dot"></span>не помог</span>{% else %}<span class="text-muted">—</span>{% endif %}
+                    {% if q.status != 'verified' and q.status != 'error' %}<div class="hints"><a href="{{ path('admin_ai_verified_new', {from: q.id}) }}" title="Проверенный ответ на этот вопрос: сотрудники будут получать его сразу">{{ q.status == 'answered' and q.rating != -1 ? 'Утвердить ответ' : 'Исправить' }}</a></div>{% endif %}</td>
             </tr>
         {% endfor %}
         </tbody>

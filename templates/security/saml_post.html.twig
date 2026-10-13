@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Вход…</title>
+</head>
+<body>
+    <form method="post" action="{{ action }}" id="saml-post">
+        <input type="hidden" name="SAMLResponse" value="{{ saml_response }}">
+        <noscript><p>Для завершения входа нажмите кнопку.</p><button type="submit">Продолжить</button></noscript>
+    </form>
+    <script>document.getElementById('saml-post').submit();</script>
+</body>
+</html>

@@ -238,7 +238,8 @@ final class SubscriptionNotifier implements EventSubscriberInterface
      */
     private function message(User $user, Document $document, array $entry): bool
     {
-        if (!$user->hasTelegram() || !$user->isNotifyTelegram() || !$this->telegram->isEnabled()) {
+        // Сообщение уходит в Telegram и уведомлением в браузер (см. TelegramNotifier::notify()).
+        if ((!$user->hasTelegram() || !$user->isNotifyTelegram() || !$this->telegram->isEnabled()) && !$this->telegram->hasPush()) {
             return false;
         }
         $escape = static fn (string $text): string => htmlspecialchars($text, \ENT_QUOTES | \ENT_SUBSTITUTE, 'UTF-8');

@@ -1,6 +1,6 @@
 # Проверки портала в GitLab CI: синтаксис конфигурации и шаблонов, соответствие миграций схеме,
-# автотесты PHPUnit на MariaDB, раздел «Видео» (Node.js, тесты связки с порталом на PostgreSQL) и проверка
-# скриптов развёртывания shellcheck. По тегу vX.Y.Z — архив дистрибутива (с .sha256 и latest.txt для
+# автотесты PHPUnit на MariaDB и MySQL 8.4, раздел «Видео» (Node.js, тесты связки с порталом на PostgreSQL),
+# известные уязвимости в зависимостях (composer audit, npm audit) и проверка скриптов развёртывания shellcheck. По тегу vX.Y.Z — архив дистрибутива (с .sha256 и latest.txt для
 # автоматического обновления серверов: docportal auto-update on --url <адрес, где лежат эти файлы>).
 stages:
   - test
@@ -34,6 +34,32 @@ phpunit:
     - php bin/console doctrine:schema:validate
     - rm -rf var/cache/test
     - vendor/bin/phpunit
+
+# То же на MySQL 8.4 (режим Docker портала работает на MySQL).
+phpunit-mysql:
+  extends: phpunit
+  services:
+    - name: mysql:8.4
+      alias: mariadb
+  variables:
+    MYSQL_ROOT_PASSWORD: root
+    MYSQL_DATABASE: docportal_test
+    MYSQL_USER: docportal
+    MYSQL_PASSWORD: docportal
+    DATABASE_URL: "mysql://docportal:docportal@mariadb:3306/docportal?serverVersion=8.4.0&charset=utf8mb4"
+
+# Известные уязвимости: Composer — все пакеты, npm — зависимости сервера высокой и критической важности.
+audit:
+  stage: test
+  image: php:8.4-cli
+  before_script:
+    - apt-get update -q && apt-get install -y -q --no-install-recommends git unzip curl ca-certificates nodejs npm
+    - curl -sSLf -o /usr/local/bin/install-php-extensions https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions
+    - chmod +x /usr/local/bin/install-php-extensions && install-php-extensions @composer
+  script:
+    - composer audit --locked --no-interaction --format=plain --abandoned=report
+    - (cd video/server && npm audit --package-lock-only --omit=dev --audit-level=high)
+    - (cd video/web && npm audit --package-lock-only --omit=dev --audit-level=high)
 
 video:
   stage: test

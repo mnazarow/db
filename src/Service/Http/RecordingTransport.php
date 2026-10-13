@@ -59,6 +59,11 @@ final class RecordingTransport implements HttpTransportInterface
         return $this->default ?? new HttpResponse(200, '{}');
     }
 
+    public function requestMany(array $requests, int $timeoutSeconds, int $concurrency = 20): array
+    {
+        return array_map(fn (array $r): HttpResponse => $this->request($r['method'], $r['url'], $r['body'], $r['headers'], $timeoutSeconds), $requests);
+    }
+
     /** Тело очередного ответа записывается в файл (если ответ успешный и не больше $maxBytes). */
     public function download(string $url, string $path, array $headers, int $timeoutSeconds, int $maxBytes): HttpResponse
     {
@@ -71,6 +76,12 @@ final class RecordingTransport implements HttpTransportInterface
         }
 
         return new HttpResponse($response->status, '', $response->error);
+    }
+
+    /** @return list<array{method: string, url: string, body: ?string, headers: array<string, string>, timeout: int}> */
+    public function all(): array
+    {
+        return $this->requests;
     }
 
     /** @return array{method: string, url: string, body: ?string, headers: array<string, string>, timeout: int}|null */

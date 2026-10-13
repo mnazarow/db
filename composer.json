@@ -16,6 +16,7 @@
         "ext-json": "*",
         "ext-mbstring": "*",
         "ext-pdo_mysql": "*",
+        "onelogin/php-saml": "^4.3.2",
         "php": ">=8.2",
         "sebastian/diff": "^6.0",
         "symfony/asset": "7.4.*",

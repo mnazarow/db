@@ -48,8 +48,8 @@ final class DocumentEventRepository extends ServiceEntityRepository
     {
         $qb = $this->createQueryBuilder('e')
             ->leftJoin('e.user', 'u')->addSelect('u')
-            ->join('e.document', 'd')->addSelect('d')
-            ->join('d.section', 's')->addSelect('s')
+            ->leftJoin('e.document', 'd')->addSelect('d')
+            ->leftJoin('d.section', 's')->addSelect('s')
             ->orderBy('e.createdAt', \SortDirection::Descending)->setMaxResults($limit);
         if (!empty($filters['type'])) {
             $qb->andWhere('e.type = :t')->setParameter('t', $filters['type']);
@@ -256,6 +256,30 @@ final class DocumentEventRepository extends ServiceEntityRepository
     }
 
     /**
+     * Просмотры и скачивания за период по разделам документов (без подразделов) — для разреза по разделам.
+     *
+     * @return array<int, array{view: int, download: int}>
+     */
+    public function countsPerSectionSince(?\DateTimeImmutable $since): array
+    {
+        $qb = $this->createQueryBuilder('e')
+            ->select('IDENTITY(d.section) AS sid, e.type AS t, COUNT(e.id) AS cnt')
+            ->join('e.document', 'd')
+            ->andWhere('e.type IN (:types)')->setParameter('types', [DocumentEvent::VIEW, DocumentEvent::DOWNLOAD])
+            ->groupBy('sid', 't');
+        if (null !== $since) {
+            $qb->andWhere('e.createdAt >= :since')->setParameter('since', $since);
+        }
+        $out = [];
+        foreach ($qb->getQuery()->getArrayResult() as $row) {
+            $out[(int) $row['sid']] ??= ['view' => 0, 'download' => 0];
+            $out[(int) $row['sid']][$row['t']] = (int) $row['cnt'];
+        }
+
+        return $out;
+    }
+
+    /**
      * Активность пользователей за период: просмотры, скачивания, публикации/версии.
      *
      * @return list<array{name: string, username: ?string, views: int, downloads: int, changes: int, last: \DateTimeImmutable}>
@@ -294,8 +318,8 @@ final class DocumentEventRepository extends ServiceEntityRepository
     {
         $qb = $this->createQueryBuilder('e')
             ->leftJoin('e.user', 'u')->addSelect('u')
-            ->join('e.document', 'd')->addSelect('d')
-            ->join('d.section', 's')->addSelect('s')
+            ->leftJoin('e.document', 'd')->addSelect('d')
+            ->leftJoin('d.section', 's')->addSelect('s')
             ->andWhere('e.type <> :view')->setParameter('view', DocumentEvent::VIEW)
             ->orderBy('e.createdAt', \SortDirection::Descending)->setMaxResults($limit);
         if (null !== $sectionIds) {

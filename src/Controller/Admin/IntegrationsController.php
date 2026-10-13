@@ -7,6 +7,9 @@ namespace App\Controller\Admin;
 use App\Entity\ApiKey;
 use App\Entity\User;
 use App\Repository\AiQuestionRepository;
+use App\Repository\PushSubscriptionRepository;
+use App\Service\Notification\PushNotifier;
+use App\Service\Notification\WebPush;
 use App\Repository\ApiKeyRepository;
 use App\Repository\DocumentRepository;
 use App\Service\Integration\WebhookNotifier;
@@ -57,6 +60,7 @@ final class IntegrationsController extends AbstractController
         private readonly OnlyofficeService $onlyoffice,
         private readonly SemanticIndex $semantic,
         private readonly AiQuestionRepository $aiQuestions,
+        private readonly PushSubscriptionRepository $pushSubscriptions,
     ) {
     }
 
@@ -86,6 +90,7 @@ final class IntegrationsController extends AbstractController
             'subscriptions_enabled' => $this->settings->subscriptionsEnabled(),
             'subscription_summary' => $this->subscriptions->summary(),
             'telegram' => $this->settings->telegram() + ['token_masked' => PortalSettings::mask($this->settings->telegram()['token']), 'linked' => \count($this->users->findWithTelegram()), 'default_api' => PortalSettings::TELEGRAM_DEFAULT_API_URL],
+            'push' => $this->settings->push() + ['devices' => $this->pushSubscriptions->countAll(), 'users' => $this->pushSubscriptions->countUsers(), 'services' => PushNotifier::PUSH_SERVICE_HOSTS, 'https' => $request->isSecure() || \in_array($request->getHost(), ['localhost', '127.0.0.1'], true)],
             'onlyoffice' => $this->settings->onlyoffice() + [
                 'secret_masked' => PortalSettings::mask($this->settings->onlyoffice()['secret']),
                 'editable' => OnlyofficeService::EDITABLE,
@@ -174,6 +179,50 @@ final class IntegrationsController extends AbstractController
         $this->addFlash('success', 'Настройки Telegram сохранены.');
 
         return $this->redirectToRoute('admin_integrations', ['_fragment' => 'telegram']);
+    }
+
+    // ---- Уведомления в браузере (Web Push) -----------------------------------------------------------------
+
+    #[Route('/push', name: 'admin_integrations_push', methods: ['POST'])]
+    public function savePush(Request $request, #[CurrentUser] User $user): Response
+    {
+        $this->checkToken($request);
+        $enabled = $request->request->getBoolean('enabled');
+        $subject = trim((string) $request->request->get('subject', ''));
+        if ('' !== $subject && !preg_match('~^(mailto:)?[^@\s]+@[^@\s]+\.[^@\s]+$|^https://\S+$~u', $subject)) {
+            $this->addFlash('error', 'Контакт администратора — адрес электронной почты или https-адрес.');
+
+            return $this->redirectToRoute('admin_integrations', ['_fragment' => 'push']);
+        }
+        if ($enabled && '' === $this->settings->push()['public_key']) {
+            $this->generatePushKeys($user);
+        }
+        $this->settings->set(PortalSettings::PUSH_SUBJECT, $subject, $user);
+        $this->settings->set(PortalSettings::PUSH_HIDE_TEXT, $request->request->getBoolean('hide_text'), $user);
+        $this->settings->set(PortalSettings::PUSH_ENABLED, $enabled, $user);
+        $this->addFlash('success', $enabled ? 'Уведомления в браузере включены: сотрудники включают их на своих устройствах в «Подписки и уведомления».' : 'Уведомления в браузере выключены.');
+
+        return $this->redirectToRoute('admin_integrations', ['_fragment' => 'push']);
+    }
+
+    /** Новые ключи VAPID: прежние подписки браузеров перестают действовать и удаляются. */
+    #[Route('/push/reset', name: 'admin_integrations_push_reset', methods: ['POST'])]
+    public function resetPush(Request $request, #[CurrentUser] User $user): Response
+    {
+        $this->checkToken($request);
+        $this->generatePushKeys($user);
+        $removed = $this->pushSubscriptions->deleteAll();
+        $this->auditLogger->info('Ключи уведомлений в браузере заменены', ['subscriptions_removed' => $removed, 'by' => $user->getUsername()]);
+        $this->addFlash('success', \sprintf('Ключи заменены, подписки устройств удалены (%d) — сотрудники включат уведомления заново.', $removed));
+
+        return $this->redirectToRoute('admin_integrations', ['_fragment' => 'push']);
+    }
+
+    private function generatePushKeys(User $user): void
+    {
+        $keys = WebPush::generateKeys();
+        $this->settings->set(PortalSettings::PUSH_PRIVATE_KEY, $keys['private'], $user);
+        $this->settings->set(PortalSettings::PUSH_PUBLIC_KEY, $keys['public'], $user);
     }
 
     #[Route('/telegram/test', name: 'admin_integrations_telegram_test', methods: ['POST'])]

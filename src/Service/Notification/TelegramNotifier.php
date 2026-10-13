@@ -37,12 +37,19 @@ final class TelegramNotifier
         private readonly EntityManagerInterface $em,
         private readonly LoggerInterface $auditLogger,
         private readonly int $timeoutSeconds = 15,
+        private readonly ?PushNotifier $push = null,
     ) {
     }
 
     public function isEnabled(): bool
     {
         return $this->settings->isTelegramEnabled();
+    }
+
+    /** Включены ли уведомления в браузер — тогда сообщения стоит готовить и без Telegram. */
+    public function hasPush(): bool
+    {
+        return null !== $this->push && $this->push->isEnabled();
     }
 
     /** Ссылка на бота для привязки: https://t.me/имя_бота?start=КОД */
@@ -100,9 +107,14 @@ final class TelegramNotifier
         return $response;
     }
 
-    /** Сообщение сотруднику, если он привязал Telegram и не отключил уведомления. */
+    /**
+     * Сообщение сотруднику в Telegram (если он привязал чат и не отключил уведомления) и то же — уведомлением
+     * в браузер на его устройства. Возвращает, ушло ли сообщение в Telegram.
+     */
     public function notify(User $user, string $text): bool
     {
+        // То же сообщение — уведомлением в браузер, если сотрудник включил их на своих устройствах.
+        $this->push?->notifyHtml($user, $text);
         if (!$user->hasTelegram() || !$user->isNotifyTelegram() || !$this->isEnabled()) {
             return false;
         }

@@ -6,6 +6,8 @@ namespace App\Security;
 
 use App\Controller\KerberosController;
 use App\Entity\User;
+use App\Repository\PushSubscriptionRepository;
+use App\Service\Notification\PushNotifier;
 use Doctrine\ORM\EntityManagerInterface;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
@@ -22,6 +24,7 @@ final class LoginSuccessSubscriber implements EventSubscriberInterface
     public function __construct(
         private readonly EntityManagerInterface $em,
         private readonly LoggerInterface $auditLogger,
+        private readonly ?PushSubscriptionRepository $pushSubscriptions = null,
     ) {
     }
 
@@ -30,7 +33,9 @@ final class LoginSuccessSubscriber implements EventSubscriberInterface
         return [
             LoginSuccessEvent::class => 'onLoginSuccess',
             LoginFailureEvent::class => 'onLoginFailure',
-            LogoutEvent::class => 'onLogout',
+            // После DefaultLogoutListener (64: ответ с переадресацией — для cookie Kerberos) и раньше очистки сеанса
+            // (SessionLogoutListener, 0): нужны подписки, включённые в этом сеансе.
+            LogoutEvent::class => ['onLogout', 32],
         ];
     }
 
@@ -86,6 +91,19 @@ final class LoginSuccessSubscriber implements EventSubscriberInterface
         $token = $event->getToken();
         if (null !== $token) {
             $this->auditLogger->info('Выход из системы', ['user' => $token->getUserIdentifier()]);
+            // Уведомления в браузер, включённые в этой сессии, больше не приходят на это устройство.
+            $user = $token->getUser();
+            $request = $event->getRequest();
+            if ($user instanceof User && null !== $this->pushSubscriptions && $request->hasSession()) {
+                $ids = (array) $request->getSession()->get(PushNotifier::SESSION_KEY, []);
+                if ([] !== $ids) {
+                    try {
+                        $this->pushSubscriptions->deleteForUser($user, $ids);
+                    } catch (\Throwable) {
+                        // Выход не должен срываться из-за уведомлений.
+                    }
+                }
+            }
         }
         // После выхода страница входа не пробует сразу войти через Windows — иначе выйти было бы нельзя.
         $event->getResponse()?->headers->setCookie(KerberosController::skipCookie($event->getRequest()));

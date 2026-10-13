@@ -83,6 +83,12 @@
                     <input class="form-control" id="sso-assistant-value" name="assistant_value" value="{{ sso.assistant_value|default('') }}" placeholder="marketing-assistants">
                     <p class="form-help">Если задано значение для маркетолога или помощника, роль сотрудника при каждом входе через SSO берётся из утверждения с ролями (иначе роли назначаются в карточке пользователя).</p>
                 </div>
+                <div class="form-row">
+                    <label class="form-label" for="sso-domains">Допустимые домены логинов</label>
+                    <input class="form-control" id="sso-domains" name="domains" value="{{ sso.domains|default('') }}" placeholder="corp.example.ru, CORP">
+                    <p class="form-help">Логины вида user@домен или ДОМЕН\user из других доменов не пускаются. Существующая учётная запись (например, из каталога) связывается с провайдером по короткому логину, только если домен в этом списке или совпала почта.</p>
+                    {% if not sso.domains|default('') and sso.create_users %}<p class="form-help text-warning">Список пуст, а учётные записи создаются автоматически: если у провайдера есть гости или другие домены, гость partner\ivanov первым займёт логин ivanov. Укажите свои домены.</p>{% endif %}
+                </div>
             </div>
             <div class="form-actions">
                 <button type="submit" class="btn btn--pill btn--small">Сохранить</button>
@@ -93,6 +99,109 @@
             <button type="submit" class="btn btn--ghost btn--small">Проверить подключение</button>
         </form>
         <p class="form-help">Пока утверждение с ролями не задано, права администратора в портале назначаются вручную — провайдер их не меняет.</p>
+    </div>
+
+    <div class="card card--form" id="saml">
+        <div class="card__head"><h2 class="h-section">Вход через SAML 2.0</h2>
+            {% if saml.ready %}<span class="badge badge--done"><span class="badge__dot"></span>включён</span>
+            {% elseif saml.enabled %}<span class="badge badge--overdue"><span class="badge__dot"></span>не настроен</span>
+            {% else %}<span class="badge"><span class="badge__dot"></span>выключен</span>{% endif %}</div>
+        <p class="form-help">Для провайдеров без OpenID Connect: AD FS, Shibboleth, Blitz Identity, Keycloak и др. Зарегистрируйте портал у провайдера по метаданным или вручную, затем вставьте метаданные провайдера ниже — поля заполнятся сами.</p>
+        {% if not saml.base_ready %}
+            <div class="alert alert--warning">Не задан адрес портала: укажите его ниже («Адрес портала для провайдера») или в параметре APP_DEFAULT_URI — по нему провайдер узнаёт портал, и с ним сверяется каждый ответ.</div>
+        {% endif %}
+        <dl class="meta meta--stack">
+            <div><dt>Метаданные портала (entityID)</dt><dd><code id="saml-sp">{{ saml.sp_entity_id }}</code>
+                <button type="button" class="btn btn--ghost btn--small" data-copy="#saml-sp">Скопировать</button></dd></div>
+            <div><dt>Адрес приёма ответа (ACS, HTTP-POST)</dt><dd><code id="saml-acs">{{ saml.acs_url }}</code>
+                <button type="button" class="btn btn--ghost btn--small" data-copy="#saml-acs">Скопировать</button></dd></div>
+        </dl>
+        <form method="post" action="{{ path('admin_security_saml_metadata') }}" class="form">
+            <input type="hidden" name="_token" value="{{ csrf_token('security') }}">
+            <div class="form-row">
+                <label class="form-label" for="saml-metadata">Метаданные провайдера</label>
+                <textarea class="form-control" id="saml-metadata" name="metadata" rows="3" placeholder="https://adfs.example.local/FederationMetadata/2007-06/FederationMetadata.xml — или вставьте XML" required></textarea>
+            </div>
+            <div class="form-actions"><button type="submit" class="btn btn--ghost btn--small">Заполнить по метаданным</button></div>
+        </form>
+        <form method="post" action="{{ path('admin_security_saml') }}" class="form">
+            <input type="hidden" name="_token" value="{{ csrf_token('security') }}">
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="enabled" value="1" {{ saml.enabled ? 'checked' }}><span>Разрешить вход через SAML</span></label>
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="saml-idp">Идентификатор провайдера (entityID)</label>
+                <input class="form-control" id="saml-idp" name="idp_entity_id" value="{{ saml.idp_entity_id }}" placeholder="http://adfs.example.local/adfs/services/trust">
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="saml-sso">Адрес входа провайдера (HTTP-Redirect)</label>
+                <input class="form-control" id="saml-sso" name="idp_sso_url" type="url" value="{{ saml.idp_sso_url }}" placeholder="https://adfs.example.local/adfs/ls/">
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="saml-cert">Сертификат подписи провайдера</label>
+                <textarea class="form-control" id="saml-cert" name="idp_cert" rows="4" placeholder="-----BEGIN CERTIFICATE-----">{{ saml.idp_cert }}</textarea>
+                <div class="form-help">PEM; на время замены сертификата у провайдера — оба, один за другим.
+                    {% for c in saml.certs %}<br>{{ c.subject ?: 'сертификат' }} — действует до {{ c.valid_to|date('d.m.Y') }}{% if c.expired %} <span class="text-warning">(истёк)</span>{% endif %}{% endfor %}</div>
+            </div>
+            <div class="form-grid">
+                <div class="form-row">
+                    <label class="form-label" for="saml-button">Надпись на кнопке</label>
+                    <input class="form-control" id="saml-button" name="button" maxlength="64" value="{{ saml.button }}">
+                </div>
+                <div class="form-row form-row--check">
+                    <label class="form-check"><input type="checkbox" name="create_users" value="1" {{ saml.create_users ? 'checked' }}><span>Создавать учётные записи при первом входе</span></label>
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="saml-base">Адрес портала для провайдера</label>
+                    <input class="form-control" id="saml-base" name="sp_base_url" type="url" value="{{ saml.sp_base_url }}" placeholder="{{ saml.default_base|default('https://docs.example.ru') }}">
+                    <p class="form-help">Пусто — из APP_DEFAULT_URI{% if saml.default_base %} ({{ saml.default_base }}){% endif %}. Из него строятся адреса выше.</p>
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="saml-domains">Допустимые домены логинов</label>
+                    <input class="form-control" id="saml-domains" name="domains" value="{{ saml.domains }}" placeholder="corp.example.ru, CORP">
+                    <p class="form-help">Как для SSO: логины из других доменов не пускаются, существующие учётные записи связываются только при подтверждённом домене или совпавшей почте.</p>
+                    {% if not saml.domains and saml.create_users %}<p class="form-help text-warning">Список пуст, а учётные записи создаются автоматически: гость другого домена первым займёт короткий логин. Укажите свои домены.</p>{% endif %}
+                </div>
+                <div class="form-row form-row--check">
+                    <label class="form-check"><input type="checkbox" name="allow_idp_initiated" value="1" {{ saml.allow_idp_initiated ? 'checked' }}><span>Разрешить вход со стороны провайдера (из его портала приложений)</span></label>
+                    <p class="form-help">Без этого принимаются только ответы на вход, начатый кнопкой на странице портала в этом же браузере. С ним ответ, полученный посторонним для себя, можно подставить в браузер коллеги — включайте, только если вход из портала провайдера действительно нужен.</p>
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="saml-username">Атрибут с логином</label>
+                    <input class="form-control" id="saml-username" name="username_attr" value="{{ saml.username_attr }}" placeholder="пусто — NameID">
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="saml-name">Атрибут с именем</label>
+                    <input class="form-control" id="saml-name" name="name_attr" value="{{ saml.name_attr }}" placeholder="displayName">
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="saml-email">Атрибут с почтой</label>
+                    <input class="form-control" id="saml-email" name="email_attr" value="{{ saml.email_attr }}" placeholder="mail">
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="saml-dept">Атрибут с подразделением</label>
+                    <input class="form-control" id="saml-dept" name="department_attr" value="{{ saml.department_attr }}" placeholder="department">
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="saml-roles">Атрибут с группами</label>
+                    <input class="form-control" id="saml-roles" name="roles_attr" value="{{ saml.roles_attr }}" placeholder="http://schemas.microsoft.com/ws/2008/06/identity/claims/role">
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="saml-admin">Группа администраторов</label>
+                    <input class="form-control" id="saml-admin" name="admin_value" value="{{ saml.admin_value }}" placeholder="docportal-admins">
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="saml-marketer">Группа маркетологов</label>
+                    <input class="form-control" id="saml-marketer" name="marketer_value" value="{{ saml.marketer_value }}">
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="saml-assistant">Группа помощников маркетолога</label>
+                    <input class="form-control" id="saml-assistant" name="assistant_value" value="{{ saml.assistant_value }}">
+                </div>
+            </div>
+            <p class="form-help">Имя и почта без указанных атрибутов берутся из обычных: displayName, mail, утверждения AD FS. Пока атрибут с группами не задан, роли назначаются в карточке пользователя. Ответ провайдера должен быть подписан (ответ целиком или утверждение) и отвечать на запрос входа из этого браузера; зашифрованные утверждения не поддерживаются. Учётная запись привязывается к NameID формата persistent, при других форматах — к логину. Выход из портала не завершает сеанс у провайдера.</p>
+            <div class="form-actions"><button type="submit" class="btn btn--pill btn--small">Сохранить</button></div>
+        </form>
     </div>
 
     <div class="card card--form">

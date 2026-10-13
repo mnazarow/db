@@ -33,6 +33,12 @@ final class PortalUrl
         return null !== $this->fixedContext();
     }
 
+    /** Постоянный адрес портала (APP_DEFAULT_URI) без завершающей «/» или null, если не настроен. */
+    public function baseUri(): ?string
+    {
+        return null === $this->fixedContext() ? null : rtrim(trim((string) $this->defaultUri), '/');
+    }
+
     /** @param array<string, mixed> $parameters */
     public function absolute(string $route, array $parameters = []): string
     {

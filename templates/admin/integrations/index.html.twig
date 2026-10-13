@@ -204,6 +204,47 @@
     </div>
 </div>
 
+<div class="grid grid--two" id="push">
+    <div class="card card--form">
+        <div class="card__head"><h2 class="h-section">Уведомления в браузере</h2>
+            {% if push.ready %}<span class="badge badge--done"><span class="badge__dot"></span>Включены</span>{% else %}<span class="badge badge--none"><span class="badge__dot"></span>Выключены</span>{% endif %}</div>
+        <p>Уведомления на экране компьютера или телефона — даже когда портал не открыт: о назначенных ознакомлениях и напоминаниях, новых редакциях документов из подписок, ответах в обсуждении, модерации и разделе «Видео» (те же события, что в Telegram). Сотрудник включает их сам на каждом своём устройстве.</p>
+        {% if not push.https %}<div class="alert alert--warning">Портал открыт не по https — браузеры разрешают уведомления только на защищённых сайтах.</div>{% endif %}
+        <form method="post" action="{{ path('admin_integrations_push') }}" class="form">
+            <input type="hidden" name="_token" value="{{ csrf_token('integrations') }}">
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="enabled" value="1" {{ push.enabled ? 'checked' }}><span>Отправлять уведомления в браузер</span></label>
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="push-subject">Контакт администратора для служб уведомлений</label>
+                <input class="form-control" id="push-subject" name="subject" type="text" placeholder="admin@example.ru" value="{{ push.subject }}">
+                <div class="form-help">Необязательно: адрес почты или https-адрес — службы уведомлений браузеров пишут по нему при проблемах с доставкой. Пусто — адрес отправителя писем портала.</div>
+            </div>
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="hide_text" value="1" {{ push.hide_text ? 'checked' }}><span>Не показывать текст уведомлений</span></label>
+                <div class="form-help">Для общих компьютеров: на экране — только «Новое уведомление портала», подробности — на портале после входа. Устройство отключается от уведомлений при выходе из портала, но не при простом закрытии браузера.</div>
+            </div>
+            <div class="form-actions"><button type="submit" class="btn btn--pill btn--small">Сохранить</button></div>
+        </form>
+        {% if push.public_key %}
+        <form method="post" action="{{ path('admin_integrations_push_reset') }}" class="form-actions" data-confirm="Заменить ключи? Все подписки устройств будут удалены — сотрудникам придётся включить уведомления заново.">
+            <input type="hidden" name="_token" value="{{ csrf_token('integrations') }}">
+            <button type="submit" class="btn btn--ghost btn--small">Заменить ключи</button>
+        </form>
+        {% endif %}
+    </div>
+    <div class="card card--info">
+        <h2 class="h-section">Что нужно для работы</h2>
+        <p>Уведомление доставляет служба уведомлений браузера (Google — Chrome, Яндекс Браузер, Edge на Android; Mozilla — Firefox; Apple — Safari; Microsoft — Edge на Windows): серверу портала нужен исходящий доступ по https к её адресам. Без доступа в интернет уведомления не работают — пользуйтесь письмами и Telegram через внутренний Bot API Server.</p>
+        <p>На iPhone и iPad уведомления приходят, когда портал добавлен на экран «Домой» (iOS 16.4 и новее).</p>
+        <dl class="meta meta--stack">
+            <div><dt>Устройств с уведомлениями</dt><dd>{{ push.devices }} (сотрудников: {{ push.users }})</dd></div>
+            <div><dt>Адреса служб</dt><dd>{{ push.services|join(', ') }}</dd></div>
+            {% if push.public_key %}<div><dt>Открытый ключ (VAPID)</dt><dd><code class="break-all">{{ push.public_key }}</code></dd></div>{% endif %}
+        </dl>
+    </div>
+</div>
+
 <div class="grid grid--two" id="llm">
     <div class="card card--form">
         <div class="card__head"><h2 class="h-section">Языковая модель (LLM): описания и ответы</h2>

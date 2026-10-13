@@ -35,6 +35,10 @@
                 .then(function (r) { return r.json().catch(function () { return { error: 'Сервер ответил ошибкой (' + r.status + ').' }; }); })
                 .then(function (res) {
                     var html = '';
+                    if (res.verified) {
+                        html += '<p class="ai-answer__verified"><span class="badge badge--done"><span class="badge__dot"></span>Проверенный ответ</span>'
+                            + ' <span class="text-muted">составлен администратором портала' + (res.verified.updated ? ', обновлён ' + esc(res.verified.updated) : '') + '</span></p>';
+                    }
                     if (res.html) { html += '<div class="ai-answer__text">' + res.html + '</div>'; }
                     if (res.error) { html += '<p class="' + (res.html ? 'text-muted' : 'alert alert--info') + '">' + esc(res.error) + '</p>'; }
                     if (res.sources && res.sources.length) {
@@ -117,7 +121,81 @@
             .catch(function () { /* блок необязательный — без него страница работает */ });
     }
 
+    /* Уведомления в браузере (Web Push): подписка этого устройства через service worker портала */
+    function setupPush(box) {
+        var state = box.querySelector('[data-push-state]');
+        var on = box.querySelector('[data-push-on]');
+        var off = box.querySelector('[data-push-off]');
+        var key = box.getAttribute('data-key');
+        if (!key || !state) { return; }
+        function say(text) { state.textContent = text; }
+        if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+            say(window.isSecureContext ? 'Этот браузер не поддерживает уведомления. На iPhone и iPad добавьте портал на экран «Домой» и откройте его оттуда.' : 'Уведомления работают только при входе на портал по защищённому адресу (https).');
+            return;
+        }
+        function keyBytes(b64) {
+            var s = (b64 + '='.repeat((4 - b64.length % 4) % 4)).replace(/-/g, '+').replace(/_/g, '/');
+            var raw = atob(s), out = new Uint8Array(raw.length);
+            for (var i = 0; i < raw.length; i++) { out[i] = raw.charCodeAt(i); }
+            return out;
+        }
+        function post(url, data) {
+            return fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-CSRF-Token': box.getAttribute('data-token') || '' }, body: JSON.stringify(data) })
+                .then(function (r) { return r.json().catch(function () { return { error: 'Сервер ответил ошибкой (' + r.status + ').' }; }); });
+        }
+        var registration = null;
+        function render(sub) {
+            on.hidden = !!sub;
+            off.hidden = !sub;
+            if (Notification.permission === 'denied') {
+                on.hidden = true;
+                say('Уведомления от портала запрещены в настройках браузера — разрешите их для этого сайта (значок слева от адреса) и обновите страницу.');
+                return;
+            }
+            say(sub ? 'На этом устройстве уведомления включены.' : 'На этом устройстве уведомления выключены.');
+        }
+        navigator.serviceWorker.register('/sw.js', { scope: '/' }).then(function () { return navigator.serviceWorker.ready; }).then(function (reg) {
+            registration = reg;
+            return reg.pushManager.getSubscription();
+        }).then(function (sub) {
+            // Подписка есть, но ключ портала сменился — подписываемся заново.
+            if (sub && sub.options && sub.options.applicationServerKey) {
+                var current = new Uint8Array(sub.options.applicationServerKey), wanted = keyBytes(key), same = current.length === wanted.length;
+                for (var i = 0; same && i < current.length; i++) { same = current[i] === wanted[i]; }
+                if (!same) { return sub.unsubscribe().then(function () { return null; }); }
+            }
+            if (!sub) { return null; }
+            // Устройство уже включено этим сотрудником — обновляем ключи; иначе (другой сотрудник на общем
+            // компьютере) показываем «выключены»: включить можно кнопкой.
+            var data = sub.toJSON(); data.refresh = true;
+            return post(box.getAttribute('data-subscribe'), data).then(function (res) { return res && res.known ? sub : null; });
+        }).then(render).catch(function () { say('Не удалось подключить уведомления в этом браузере.'); });
+        on.addEventListener('click', function () {
+            if (!registration) { return; }
+            on.disabled = true;
+            Notification.requestPermission().then(function (permission) {
+                if (permission !== 'granted') { render(null); return null; }
+                return registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(key) }).then(function (sub) {
+                    return post(box.getAttribute('data-subscribe'), sub.toJSON()).then(function (res) {
+                        if (res.error) { say(res.error); return sub.unsubscribe(); }
+                        window.location.reload();
+                    });
+                });
+            }).catch(function () { say('Браузер не разрешил подписку на уведомления.'); }).then(function () { on.disabled = false; });
+        });
+        off.addEventListener('click', function () {
+            if (!registration) { return; }
+            off.disabled = true;
+            registration.pushManager.getSubscription().then(function (sub) {
+                if (!sub) { return null; }
+                return post(box.getAttribute('data-unsubscribe'), { endpoint: sub.endpoint }).then(function () { return sub.unsubscribe(); });
+            }).then(function () { window.location.reload(); }).catch(function () { off.disabled = false; });
+        });
+    }
+
     ready(function () {
+        var pushBox = document.querySelector('[data-push]');
+        if (pushBox && window.fetch) { setupPush(pushBox); }
         var aiBox = document.querySelector('[data-ai-answer]');
         if (aiBox && window.fetch && window.FormData) { setupAiAnswer(aiBox); }
         var semanticBox = document.querySelector('[data-semantic]');

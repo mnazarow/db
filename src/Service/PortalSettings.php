@@ -100,6 +100,27 @@ final class PortalSettings
     public const SSO_MARKETER_VALUE = 'sso.marketer_value';
     public const SSO_ASSISTANT_VALUE = 'sso.assistant_value';
 
+    /** Вход через SAML 2.0: провайдер (IdP) и сопоставление атрибутов. */
+    public const SAML_ENABLED = 'saml.enabled';
+    public const SAML_IDP_ENTITY_ID = 'saml.idp_entity_id';
+    public const SAML_IDP_SSO_URL = 'saml.idp_sso_url';
+    public const SAML_IDP_CERT = 'saml.idp_cert';
+    public const SAML_BUTTON = 'saml.button';
+    public const SAML_CREATE_USERS = 'saml.create_users';
+    public const SAML_USERNAME_ATTR = 'saml.username_attr';
+    public const SAML_NAME_ATTR = 'saml.name_attr';
+    public const SAML_EMAIL_ATTR = 'saml.email_attr';
+    public const SAML_DEPARTMENT_ATTR = 'saml.department_attr';
+    public const SAML_ROLES_ATTR = 'saml.roles_attr';
+    public const SAML_ADMIN_VALUE = 'saml.admin_value';
+    public const SAML_MARKETER_VALUE = 'saml.marketer_value';
+    public const SAML_ASSISTANT_VALUE = 'saml.assistant_value';
+    public const SAML_SP_BASE_URL = 'saml.sp_base_url';
+    public const SAML_ALLOW_IDP_INITIATED = 'saml.allow_idp_initiated';
+    public const SAML_DOMAINS = 'saml.domains';
+    public const SSO_DOMAINS = 'sso.domains';
+    public const SAML_DEFAULT_BUTTON = 'Войти через SAML';
+
     public const SSO_DEFAULT_SCOPES = 'openid profile email';
     public const SSO_DEFAULT_BUTTON = 'Войти через SSO';
 
@@ -141,6 +162,14 @@ final class PortalSettings
 
     public const TELEGRAM_DEFAULT_API_URL = 'https://api.telegram.org';
 
+    /** Уведомления в браузере (Web Push): включение и ключи VAPID портала. */
+    public const PUSH_ENABLED = 'push.enabled';
+    public const PUSH_PUBLIC_KEY = 'push.public_key';
+    public const PUSH_PRIVATE_KEY = 'push.private_key';
+    /** Контакт администратора для служб уведомлений браузеров (mailto: или https:). */
+    public const PUSH_SUBJECT = 'push.subject';
+    public const PUSH_HIDE_TEXT = 'push.hide_text';
+
     // Мониторинг (1.7.0): токен для /health/details и /metrics.
     public const MONITORING_TOKEN = 'monitoring.token';
 
@@ -166,7 +195,7 @@ final class PortalSettings
     public const OCR_DEFAULT_DPI = 200;
 
     /** Настройки, значения которых не должны попадать в журнал. */
-    private const SECRET_NAMES = [self::WEBHOOK_SECRET, self::LLM_API_KEY, self::EMBED_API_KEY, self::SSO_CLIENT_SECRET, self::TELEGRAM_TOKEN, self::MONITORING_TOKEN, self::ONLYOFFICE_SECRET];
+    private const SECRET_NAMES = [self::WEBHOOK_SECRET, self::LLM_API_KEY, self::EMBED_API_KEY, self::SSO_CLIENT_SECRET, self::TELEGRAM_TOKEN, self::MONITORING_TOKEN, self::ONLYOFFICE_SECRET, self::PUSH_PRIVATE_KEY];
 
     /** Служебные значения, которые портал меняет сам (в журнал аудита не пишутся). */
     private const INTERNAL_NAMES = [self::TELEGRAM_OFFSET, self::MATERIALS_REMIND_LAST_RUN, self::ONLYOFFICE_LINK_KEY];
@@ -415,7 +444,7 @@ final class PortalSettings
     /**
      * Настройки входа через внешнего провайдера.
      *
-     * @return array{enabled: bool, issuer: string, client_id: string, client_secret: string, scopes: string, button: string, create_users: bool, username_claim: string, name_claim: string, email_claim: string, department_claim: string, admin_claim: string, admin_value: string, marketer_value: string, assistant_value: string}
+     * @return array{enabled: bool, issuer: string, client_id: string, client_secret: string, scopes: string, button: string, create_users: bool, username_claim: string, name_claim: string, email_claim: string, department_claim: string, admin_claim: string, admin_value: string, marketer_value: string, assistant_value: string, domains: string}
      */
     public function sso(): array
     {
@@ -439,6 +468,7 @@ final class PortalSettings
             'admin_value' => trim((string) $this->get(self::SSO_ADMIN_VALUE, '')),
             'marketer_value' => trim((string) $this->get(self::SSO_MARKETER_VALUE, '')),
             'assistant_value' => trim((string) $this->get(self::SSO_ASSISTANT_VALUE, '')),
+            'domains' => self::domainList((string) $this->get(self::SSO_DOMAINS, '')),
         ];
     }
 
@@ -467,11 +497,91 @@ final class PortalSettings
             self::SSO_ADMIN_VALUE => trim((string) ($values['admin_value'] ?? '')),
             self::SSO_MARKETER_VALUE => trim((string) ($values['marketer_value'] ?? '')),
             self::SSO_ASSISTANT_VALUE => trim((string) ($values['assistant_value'] ?? '')),
+            self::SSO_DOMAINS => self::domainList((string) ($values['domains'] ?? '')),
         ];
         if (null !== ($values['client_secret'] ?? null)) {
             $update[self::SSO_CLIENT_SECRET] = (string) $values['client_secret'];
         }
         $this->setMany($update, $by);
+    }
+
+    /**
+     * Вход через SAML 2.0. Атрибуты: пустой атрибут логина — логин из NameID; для имени и почты при пустых
+     * значениях пробуются обычные названия (displayName, mail, утверждения AD FS).
+     *
+     * sp_base_url — адрес портала для провайдера (пусто — APP_DEFAULT_URI); allow_idp_initiated — принимать ответы,
+     * не запрошенные порталом (вход из портала провайдера); domains — допустимые домены логинов (через запятую).
+     *
+     * @return array{enabled: bool, idp_entity_id: string, idp_sso_url: string, idp_cert: string, button: string, create_users: bool, username_attr: string, name_attr: string, email_attr: string, department_attr: string, roles_attr: string, admin_value: string, marketer_value: string, assistant_value: string, sp_base_url: string, allow_idp_initiated: bool, domains: string}
+     */
+    public function saml(): array
+    {
+        $button = trim((string) $this->get(self::SAML_BUTTON, ''));
+
+        return [
+            'enabled' => (bool) $this->get(self::SAML_ENABLED, false),
+            'idp_entity_id' => trim((string) $this->get(self::SAML_IDP_ENTITY_ID, '')),
+            'idp_sso_url' => trim((string) $this->get(self::SAML_IDP_SSO_URL, '')),
+            'idp_cert' => trim((string) $this->get(self::SAML_IDP_CERT, '')),
+            'button' => '' !== $button ? $button : self::SAML_DEFAULT_BUTTON,
+            'create_users' => (bool) $this->get(self::SAML_CREATE_USERS, true),
+            'username_attr' => trim((string) $this->get(self::SAML_USERNAME_ATTR, '')),
+            'name_attr' => trim((string) $this->get(self::SAML_NAME_ATTR, '')),
+            'email_attr' => trim((string) $this->get(self::SAML_EMAIL_ATTR, '')),
+            'department_attr' => trim((string) $this->get(self::SAML_DEPARTMENT_ATTR, '')),
+            'roles_attr' => trim((string) $this->get(self::SAML_ROLES_ATTR, '')),
+            'admin_value' => trim((string) $this->get(self::SAML_ADMIN_VALUE, '')),
+            'marketer_value' => trim((string) $this->get(self::SAML_MARKETER_VALUE, '')),
+            'assistant_value' => trim((string) $this->get(self::SAML_ASSISTANT_VALUE, '')),
+            'sp_base_url' => rtrim(trim((string) $this->get(self::SAML_SP_BASE_URL, '')), '/'),
+            'allow_idp_initiated' => (bool) $this->get(self::SAML_ALLOW_IDP_INITIATED, false),
+            'domains' => self::domainList((string) $this->get(self::SAML_DOMAINS, '')),
+        ];
+    }
+
+    /** Список доменов «a.ru, b.ru» в нижнем регистре, без пробелов и повторов. */
+    public static function domainList(string $text): string
+    {
+        $out = [];
+        foreach (preg_split('/[\s,;]+/u', mb_strtolower($text)) ?: [] as $domain) {
+            $domain = trim($domain, " .@\\");
+            if ('' !== $domain && !\in_array($domain, $out, true)) {
+                $out[] = $domain;
+            }
+        }
+
+        return implode(', ', $out);
+    }
+
+    public function isSamlEnabled(): bool
+    {
+        $saml = $this->saml();
+
+        return $saml['enabled'] && '' !== $saml['idp_entity_id'] && '' !== $saml['idp_sso_url'] && '' !== $saml['idp_cert'];
+    }
+
+    /** @param array<string, mixed> $values */
+    public function setSaml(array $values, ?User $by = null): void
+    {
+        $this->setMany([
+            self::SAML_ENABLED => (bool) ($values['enabled'] ?? false),
+            self::SAML_IDP_ENTITY_ID => trim((string) ($values['idp_entity_id'] ?? '')),
+            self::SAML_IDP_SSO_URL => trim((string) ($values['idp_sso_url'] ?? '')),
+            self::SAML_IDP_CERT => trim(str_replace("\r\n", "\n", (string) ($values['idp_cert'] ?? ''))),
+            self::SAML_BUTTON => mb_substr(trim((string) ($values['button'] ?? '')), 0, 64),
+            self::SAML_CREATE_USERS => (bool) ($values['create_users'] ?? false),
+            self::SAML_USERNAME_ATTR => trim((string) ($values['username_attr'] ?? '')),
+            self::SAML_NAME_ATTR => trim((string) ($values['name_attr'] ?? '')),
+            self::SAML_EMAIL_ATTR => trim((string) ($values['email_attr'] ?? '')),
+            self::SAML_DEPARTMENT_ATTR => trim((string) ($values['department_attr'] ?? '')),
+            self::SAML_ROLES_ATTR => trim((string) ($values['roles_attr'] ?? '')),
+            self::SAML_ADMIN_VALUE => trim((string) ($values['admin_value'] ?? '')),
+            self::SAML_MARKETER_VALUE => trim((string) ($values['marketer_value'] ?? '')),
+            self::SAML_ASSISTANT_VALUE => trim((string) ($values['assistant_value'] ?? '')),
+            self::SAML_SP_BASE_URL => rtrim(trim((string) ($values['sp_base_url'] ?? '')), '/'),
+            self::SAML_ALLOW_IDP_INITIATED => (bool) ($values['allow_idp_initiated'] ?? false),
+            self::SAML_DOMAINS => self::domainList((string) ($values['domains'] ?? '')),
+        ], $by);
     }
 
     /** Обязателен ли второй фактор для администраторов. */
@@ -772,6 +882,27 @@ final class PortalSettings
             'bot_name' => ltrim(trim((string) $this->get(self::TELEGRAM_BOT_NAME, '')), '@'),
             'api_url' => '' !== $api ? $api : self::TELEGRAM_DEFAULT_API_URL,
             'admin_chat' => trim((string) $this->get(self::TELEGRAM_ADMIN_CHAT, '')),
+        ];
+    }
+
+    /**
+     * Уведомления в браузере: включены ли, ключи VAPID (создаются при включении) и контакт администратора.
+     *
+     * @return array{enabled: bool, public_key: string, private_key: string, subject: string, ready: bool}
+     */
+    public function push(): array
+    {
+        $public = trim((string) $this->get(self::PUSH_PUBLIC_KEY, ''));
+        $private = (string) $this->get(self::PUSH_PRIVATE_KEY, '');
+        $enabled = (bool) $this->get(self::PUSH_ENABLED, false);
+
+        return [
+            'enabled' => $enabled,
+            'public_key' => $public,
+            'private_key' => $private,
+            'subject' => trim((string) $this->get(self::PUSH_SUBJECT, '')),
+            'hide_text' => (bool) $this->get(self::PUSH_HIDE_TEXT, false),
+            'ready' => $enabled && '' !== $public && '' !== $private,
         ];
     }
 

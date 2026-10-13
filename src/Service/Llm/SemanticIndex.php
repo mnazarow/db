@@ -265,7 +265,7 @@ final class SemanticIndex
         $sig = $this->signature();
         $row = $this->connection->fetchAssociative(
             "SELECT SUM(CASE WHEN e.status = 'ok' THEN 1 ELSE 0 END) AS indexed,
-                    SUM(CASE WHEN e.status = 'empty' THEN 1 ELSE 0 END) AS empty,
+                    SUM(CASE WHEN e.status = 'empty' THEN 1 ELSE 0 END) AS empty_docs,
                     SUM(CASE WHEN e.error IS NOT NULL THEN 1 ELSE 0 END) AS errors
              FROM document_embedding e JOIN document d ON d.id = e.document_id
              WHERE d.status = :published AND e.model = :sig",
@@ -275,7 +275,7 @@ final class SemanticIndex
         return [
             'published' => (int) $this->connection->fetchOne('SELECT COUNT(*) FROM document WHERE status = :published', ['published' => Document::STATUS_PUBLISHED]),
             'indexed' => (int) ($row['indexed'] ?? 0),
-            'empty' => (int) ($row['empty'] ?? 0),
+            'empty' => (int) ($row['empty_docs'] ?? 0),
             'errors' => (int) ($row['errors'] ?? 0),
             'outdated' => \count($this->outdatedIds(100000)),
             'chunks' => (int) ($chunks['n'] ?? 0),

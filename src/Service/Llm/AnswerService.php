@@ -91,6 +91,7 @@ final class AnswerService
         private readonly ?SemanticIndex $semantic = null,
         private readonly ?EntityManagerInterface $em = null,
         private readonly ?AiQuestionRepository $questions = null,
+        private readonly ?VerifiedAnswers $verified = null,
     ) {
     }
 
@@ -121,12 +122,21 @@ final class AnswerService
         return '' !== $topic ? $topic : mb_substr(mb_strtolower(trim($question)), 0, 60);
     }
 
-    /** Включены ли ответы (LLM настроена и ответы не выключены в «Интеграциях»). */
+    /** Включены ли ответы модели (LLM настроена и ответы не выключены в «Интеграциях»). */
     public function isEnabled(): bool
     {
         $cfg = $this->settings->llm();
 
         return $cfg['enabled'] && $cfg['answers'];
+    }
+
+    /**
+     * Есть ли блок «Ответ на вопрос» на странице поиска: отвечает модель или — даже без неё — есть
+     * проверенные ответы администраторов на частые вопросы.
+     */
+    public function isAvailable(): bool
+    {
+        return $this->isEnabled() || (null !== $this->verified && $this->verified->hasActive());
     }
 
     /**
@@ -152,7 +162,10 @@ final class AnswerService
      * Ответ на вопрос: текст модели (с номерами источников), список источников, итог и номер записи в журнале
      * (по нему сотрудник оценивает ответ; null — журнал выключен).
      *
-     * @return array{answer: ?string, sources: list<array{n: int, type: string, title: string, url: string, meta: string}>, error: ?string, status: string, id: ?int, semantic: bool}
+     * Проверенный ответ администратора (если вопрос подходит к нему) выдаётся сразу, без обращения к модели:
+     * verified — когда он обновлён.
+     *
+     * @return array{answer: ?string, sources: list<array{n: int, type: string, title: string, url: string, meta: string}>, error: ?string, status: string, id: ?int, semantic: bool, verified?: array{updated_at: \DateTimeImmutable}}
      */
     public function answer(User $user, string $question): array
     {
@@ -161,10 +174,34 @@ final class AnswerService
         if (mb_strlen($question) < 3) {
             return ['answer' => null, 'sources' => [], 'error' => 'Задайте вопрос подробнее.', 'status' => AiQuestion::STATUS_NO_SOURCES, 'id' => null, 'semantic' => false];
         }
-        if (!$this->isEnabled()) {
+        if (!$this->isAvailable()) {
             return ['answer' => null, 'sources' => [], 'error' => 'Ответы на вопросы выключены администратором.', 'status' => AiQuestion::STATUS_ERROR, 'id' => null, 'semantic' => false];
         }
         $question = mb_substr($question, 0, AiQuestion::MAX_QUESTION);
+        $verified = null;
+        try {
+            $verified = $this->verified?->match($question, $user, true);
+        } catch (\Throwable $e) {
+            $this->logger->warning('Проверенные ответы недоступны', ['error' => $e->getMessage()]);
+        }
+        // Ответ, источники которого сотруднику не открыты (ограниченный доступ, снятый с публикации документ),
+        // ему не выдаётся (match() их пропускает) — отвечает модель по доступным ему документам.
+        if (null !== $verified) {
+            $verified->markUsed();
+            $result = $this->finish($user, $question, $started, AiQuestion::STATUS_VERIFIED, $verified->getAnswer(), $this->verified->sourcesFor($verified, $user), false, null);
+            try {
+                $this->em?->flush();
+            } catch (\Throwable) {
+                // Счётчик выдач — не повод отказать в ответе.
+            }
+
+            return $result + ['verified' => ['updated_at' => $verified->getUpdatedAt()]];
+        }
+        if (!$this->isEnabled()) {
+            // Модель выключена, а готового ответа на этот вопрос нет.
+            return $this->finish($user, $question, $started, AiQuestion::STATUS_NO_SOURCES, null, [], false,
+                'Готового ответа на этот вопрос пока нет — посмотрите результаты поиска ниже.');
+        }
         ['sources' => $sources, 'semantic' => $semantic] = $this->collect($user, $question);
         if ([] === $sources) {
             return $this->finish($user, $question, $started, AiQuestion::STATUS_NO_SOURCES, null, [], $semantic,
@@ -300,7 +337,7 @@ final class AnswerService
         foreach ($sources as $source) {
             $byNumber[$source['n']] = $source;
         }
-        $html = htmlspecialchars(trim($answer), \ENT_QUOTES | \ENT_SUBSTITUTE, 'UTF-8');
+        $html = htmlspecialchars(trim(str_replace(["\r\n", "\r"], "\n", $answer)), \ENT_QUOTES | \ENT_SUBSTITUTE, 'UTF-8');
         $html = (string) preg_replace('/\*\*(.+?)\*\*/u', '<b>$1</b>', $html);
         $html = (string) preg_replace_callback('/\[(\d{1,2})\]/', static function (array $m) use ($byNumber): string {
             $source = $byNumber[(int) $m[1]] ?? null;
@@ -314,10 +351,30 @@ final class AnswerService
             if ([] === $lines) {
                 continue;
             }
-            $isList = [] === array_filter($lines, static fn (string $l): bool => !preg_match('/^([-•*]|\d+[.)])\s+/u', $l));
-            $paragraphs[] = $isList
-                ? '<ul>'.implode('', array_map(static fn (string $l): string => '<li>'.preg_replace('/^([-•*]|\d+[.)])\s+/u', '', $l).'</li>', $lines)).'</ul>'
-                : '<p>'.implode('<br>', $lines).'</p>';
+            // Строки «- …», «• …», «1. …» подряд — список; текст до и после него — абзацы («Шаги:» и список под ним).
+            $text = [];
+            $items = [];
+            foreach ($lines as $line) {
+                if (preg_match('/^([-•*]|\d+[.)])\s+/u', $line)) {
+                    if ([] !== $text) {
+                        $paragraphs[] = '<p>'.implode('<br>', $text).'</p>';
+                        $text = [];
+                    }
+                    $items[] = '<li>'.preg_replace('/^([-•*]|\d+[.)])\s+/u', '', $line).'</li>';
+                    continue;
+                }
+                if ([] !== $items) {
+                    $paragraphs[] = '<ul>'.implode('', $items).'</ul>';
+                    $items = [];
+                }
+                $text[] = $line;
+            }
+            if ([] !== $text) {
+                $paragraphs[] = '<p>'.implode('<br>', $text).'</p>';
+            }
+            if ([] !== $items) {
+                $paragraphs[] = '<ul>'.implode('', $items).'</ul>';
+            }
         }
 
         return implode('', $paragraphs);

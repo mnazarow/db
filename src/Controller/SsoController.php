@@ -5,13 +5,11 @@ declare(strict_types=1);
 namespace App\Controller;
 
 use App\Entity\User;
-use App\Repository\UserRepository;
 use App\Security\PortalAuthenticator;
 use App\Service\PortalSettings;
-use App\Service\UserManager;
 use App\Service\Sso\OidcClient;
 use App\Service\Sso\SsoException;
-use Doctrine\ORM\EntityManagerInterface;
+use App\Service\Sso\SsoUserProvisioner;
 use Psr\Log\LoggerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Bundle\SecurityBundle\Security;
@@ -32,11 +30,9 @@ final class SsoController extends AbstractController
     public function __construct(
         private readonly OidcClient $oidc,
         private readonly PortalSettings $settings,
-        private readonly UserRepository $users,
-        private readonly EntityManagerInterface $em,
         private readonly Security $security,
         private readonly LoggerInterface $auditLogger,
-        private readonly UserManager $userManager,
+        private readonly SsoUserProvisioner $provisioner,
     ) {
     }
 
@@ -123,8 +119,6 @@ final class SsoController extends AbstractController
         if ('' === $username) {
             throw new SsoException('Провайдер не передал логин пользователя (утверждение '.$sso['username_claim'].').');
         }
-        // Логин из UPN вида user@domain приводим к короткому виду — так его заводят в портале.
-        $username = mb_strtolower(explode('@', $username)[0]);
         // Учётная запись привязывается к постоянному идентификатору пользователя у провайдера (iss + sub),
         // а не только к логину: логин из утверждений может совпасть с чужой учётной записью портала.
         $sub = trim((string) ($claims['sub'] ?? ''));
@@ -132,57 +126,19 @@ final class SsoController extends AbstractController
             throw new SsoException('Провайдер не передал идентификатор пользователя (утверждение sub).');
         }
         $subject = rtrim(trim((string) ($claims['iss'] ?? $sso['issuer'])), '/').'|'.$sub;
-        $existing = $this->users->findOneBy(['ssoSubject' => $subject]) ?? $this->users->findOneByUsername($username);
-        if (null !== $existing) {
-            if (null !== $existing->getSsoSubject() && $existing->getSsoSubject() !== $subject) {
-                throw new SsoException('Логин «'.$username.'» уже связан с другой учётной записью провайдера. Обратитесь к администратору портала.');
-            }
-            if (null === $existing->getSsoSubject() && $existing->isLocal()) {
-                // Локальную учётную запись (например, администратора портала) нельзя «перехватить» через SSO.
-                throw new SsoException('Учётная запись «'.$username.'» — локальная учётная запись портала, вход в неё через SSO не разрешён. Войдите по паролю или обратитесь к администратору.');
-            }
-        }
-        if (null === $existing && !$sso['create_users']) {
-            throw new SsoException('Пользователь «'.$username.'» не заведён в портале, а автоматическое создание выключено.');
-        }
-        $user = $existing ?? (new User())->setUsername($username)->setActive(true);
-        $user->setAuthSource(User::SOURCE_SSO)->setPassword('')->setMustChangePassword(false)->setSsoSubject($subject);
-        $name = trim((string) ($claims[$sso['name_claim']] ?? ''));
-        $user->setDisplayName('' !== $name ? $name : $username);
-        $email = trim((string) ($claims[$sso['email_claim']] ?? ''));
-        if ('' !== $email) {
-            $user->setEmail($email);
-        }
-        if ('' !== $sso['department_claim']) {
-            $department = trim((string) ($claims[$sso['department_claim']] ?? ''));
-            if ('' !== $department) {
-                $user->setDepartment($department);
-            }
-        }
-        // Права администратора синхронизируются, только если задано утверждение и его значение.
-        if ('' !== $sso['admin_claim'] && '' !== $sso['admin_value']) {
+        $roles = null;
+        if ('' !== $sso['admin_claim']) {
             $value = $claims[$sso['admin_claim']] ?? null;
-            $values = array_map('strval', \is_array($value) ? $value : [$value]);
-            $this->userManager->syncAdminFromDirectory($user, \in_array($sso['admin_value'], $values, true), 'SSO');
+            $roles = array_values(array_map('strval', \is_array($value) ? $value : (null === $value ? [] : [$value])));
         }
-        // Роли «Маркетолог» и «Помощник маркетолога» — по тому же утверждению, если заданы их значения.
-        if ('' !== $sso['admin_claim'] && ('' !== $sso['marketer_value'] || '' !== $sso['assistant_value'])) {
-            $value = $claims[$sso['admin_claim']] ?? null;
-            $values = array_map('strval', \is_array($value) ? $value : [$value]);
-            $position = match (true) {
-                '' !== $sso['marketer_value'] && \in_array($sso['marketer_value'], $values, true) => User::POSITION_MARKETER,
-                '' !== $sso['assistant_value'] && \in_array($sso['assistant_value'], $values, true) => User::POSITION_ASSISTANT,
-                default => User::POSITION_USER,
-            };
-            $this->userManager->syncPositionFromDirectory($user, $position, 'SSO');
-        }
-        if (null === $existing) {
-            $this->em->persist($user);
-        }
-        $this->em->flush();
-        $this->auditLogger->info(null === $existing ? 'SSO: создана учётная запись' : 'SSO: вход', ['user' => $user->getUsername()]);
 
-        return $user;
+        return $this->provisioner->provision($subject, [
+            'username' => $username,
+            'name' => (string) ($claims[$sso['name_claim']] ?? ''),
+            'email' => (string) ($claims[$sso['email_claim']] ?? ''),
+            'department' => '' !== $sso['department_claim'] ? (string) ($claims[$sso['department_claim']] ?? '') : null,
+            'roles' => $roles,
+        ], $sso, 'SSO');
     }
 
     private function redirectUri(): string

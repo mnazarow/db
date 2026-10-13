@@ -39,7 +39,6 @@ abstract class PortalTestCase extends WebTestCase
         'AcknowledgementDepartmentsTest::testSectionFilterPageAndCsv' => 'сравнение utf8mb4_bin',
         'AcknowledgementTest::testPendingListsFollowDocumentAccess' => 'LIKE с экранированием по подразделениям',
         'ApiTest::testSectionsAndDocumentsVisibility' => 'поиск по тегам без учёта регистра кириллицы',
-        'ApprovalQuizTest::testQuestionsPageIsForModeratorsOnly' => 'каскадное удаление по внешним ключам',
         'CoreFixesTest::testSearchFindsCyrillicTags' => 'поиск без учёта регистра кириллицы',
         'DirectoryImportTest::testNonUtf8NamesFromWindowsArchivesAreImported' => 'поиск разделов без учёта регистра кириллицы',
         'DirectoryImportTest::testImportCreatesTreeAndIsIdempotent' => 'поиск разделов без учёта регистра кириллицы',
@@ -50,9 +49,7 @@ abstract class PortalTestCase extends WebTestCase
         'DirectoryImportTest::testAdminPagesAndBatchJob' => 'поиск разделов без учёта регистра кириллицы',
         'DiscussionTest::testTelegramLinkingByCode' => 'блокировка GET_LOCK',
         'LinksTemplatesBulkTest::testLinksAreVisibleFromBothSides' => 'поиск документа по названию без учёта регистра кириллицы',
-        'LinksTemplatesBulkTest::testBulkActionsRespectRights' => 'каскадное удаление по внешним ключам',
         'LinksTemplatesBulkTest::testBulkFromRegistryPage' => 'поиск без учёта регистра кириллицы',
-        'MaterialsHistoryRemindTest::testRowHistoryRecordsEveryChange' => 'ON DELETE SET NULL по внешним ключам',
         'MonitoringTest::testJobsRecordedByCommandsAndScripts' => 'блокировка GET_LOCK',
         'PreviewOcrTest::testOcrRecognizesScans' => 'поиск по содержимому без учёта регистра кириллицы',
         'SearchContentTest::testContentIsIndexedAndFound' => 'поиск по содержимому',
@@ -98,8 +95,17 @@ abstract class PortalTestCase extends WebTestCase
         $em = $this->em();
         $tool = new SchemaTool($em);
         $metadata = $em->getMetadataFactory()->getAllMetadata();
+        // На SQLite внешние ключи проверяются (App\Doctrine\SqliteForeignKeysMiddleware); пересоздание схемы —
+        // без проверки: таблицы ссылаются друг на друга и сами на себя.
+        $sqlite = $em->getConnection()->getDatabasePlatform() instanceof SQLitePlatform;
+        if ($sqlite) {
+            $em->getConnection()->executeStatement('PRAGMA foreign_keys = OFF');
+        }
         $tool->dropSchema($metadata);
         $tool->createSchema($metadata);
+        if ($sqlite) {
+            $em->getConnection()->executeStatement('PRAGMA foreign_keys = ON');
+        }
         $storage = static::getContainer()->get('App\Service\FileStorage')->getStorageDir();
         if (is_dir($storage)) {
             foreach (scandir($storage) ?: [] as $entry) {
