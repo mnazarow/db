@@ -6,6 +6,7 @@ namespace App\Command;
 
 use App\Repository\AiQuestionRepository;
 use App\Service\Llm\SemanticIndex;
+use App\Service\Llm\VerifiedAnswers;
 use App\Service\PortalSettings;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -16,7 +17,7 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 
 /**
  * Обслуживание ИИ (cron раз в час): смысловой индекс для поиска по смыслу — новые и изменившиеся документы,
- * смена модели — и удаление вопросов к ИИ старше срока хранения.
+ * смена модели, — векторы формулировок проверенных ответов и удаление вопросов к ИИ старше срока хранения.
  */
 #[AsCommand(name: 'app:ai:index', description: 'Смысловой индекс документов для ответов ИИ и очистка журнала вопросов')]
 final class AiIndexCommand extends Command
@@ -25,6 +26,7 @@ final class AiIndexCommand extends Command
         private readonly SemanticIndex $index,
         private readonly PortalSettings $settings,
         private readonly AiQuestionRepository $questions,
+        private readonly ?VerifiedAnswers $verified = null,
     ) {
         parent::__construct();
     }
@@ -87,6 +89,11 @@ final class AiIndexCommand extends Command
             $io->error($message.' Модель эмбеддингов не отвечает: '.((string) $this->index->status()['last_error']));
 
             return Command::FAILURE;
+        }
+        // Проверенные ответы сравниваются с вопросами и по смыслу: векторы их формулировок — заранее, а не на вопросе.
+        $warm = $this->verified?->warmAll() ?? ['phrasings' => 0, 'embedded' => 0];
+        if ($warm['phrasings'] > 0 || $warm['embedded'] > 0) {
+            $message .= \sprintf(' Формулировок проверенных ответов с векторами: %d (новых %d).', $warm['phrasings'], $warm['embedded']);
         }
         $io->success($message);
 

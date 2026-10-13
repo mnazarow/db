@@ -243,6 +243,7 @@ final class HealthReport
             'telegram' => $this->settings->isTelegramEnabled(),
             'materials-remind' => $this->settings->materialsRemind()['enabled'],
             'ai-index' => $this->settings->embeddings()['enabled'],
+            'team-digest' => $this->settings->teamDigest()['enabled'],
             // Внешнее хранилище и проверку восстановления настраивают отдельно: следим, если они уже запускались.
             'backup-remote' => isset($records['backup-remote']),
             'backup-verify' => isset($records['backup-verify']),

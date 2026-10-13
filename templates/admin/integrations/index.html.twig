@@ -364,6 +364,11 @@
                     <div class="form-help">0–1: ниже — документ не считается найденным по смыслу. Для OpenAI обычно 0,25–0,3, для bge-m3 и nomic-embed-text — 0,45–0,5. Подбирайте по «Вопросам к ИИ».</div>
                 </div>
                 <div class="form-row">
+                    <label class="form-label" for="emb-verified">Сходство для проверенных ответов</label>
+                    <input class="form-control" id="emb-verified" name="verified_min" type="number" min="0.5" max="0.99" step="0.01" value="{{ embeddings.verified_min }}">
+                    <div class="form-help">Вопрос другими словами («при возгорании» вместо «при пожаре») получает проверенный ответ, если сходство не ниже этого. Для OpenAI text-embedding-3 обычно 0,7–0,75, для bge-m3 — 0,85. Сходство показывает «Вопросы к ИИ → Проверенные ответы → Проверить вопрос».</div>
+                </div>
+                <div class="form-row">
                     <label class="form-label" for="emb-log">Хранить вопросы к ИИ, дней</label>
                     <input class="form-control" id="emb-log" name="log_days" type="number" min="0" max="3650" value="{{ embeddings.log_days }}">
                     <div class="form-help">Вопросы, итог и оценки ответов — для страницы «Вопросы к ИИ». 0 — не сохранять.</div>

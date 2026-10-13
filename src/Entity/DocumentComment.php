@@ -43,7 +43,7 @@ class DocumentComment
 
     /** @var Collection<int, self> */
     #[ORM\OneToMany(mappedBy: 'parent', targetEntity: self::class)]
-    #[ORM\OrderBy(['createdAt' => 'ASC'])]
+    #[ORM\OrderBy(['createdAt' => \SortDirection::Ascending])]
     private Collection $replies;
 
     #[ORM\ManyToOne(targetEntity: User::class)]

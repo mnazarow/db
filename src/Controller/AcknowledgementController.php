@@ -19,6 +19,7 @@ use App\Service\Csv;
 use App\Service\AcknowledgementService;
 use App\Service\Pdf\PdfFactory;
 use App\Service\Pdf\SignatureSheetService;
+use App\Service\PortalSettings;
 use App\Service\QuizService;
 use App\Service\Video\VideoApi;
 use App\Service\Video\VideoIntegration;
@@ -45,6 +46,7 @@ final class AcknowledgementController extends AbstractController
         private readonly DocumentQuestionRepository $questions,
         private readonly SectionRepository $sections,
         private readonly SignatureSheetService $signatureSheets,
+        private readonly PortalSettings $settings,
         private readonly ?VideoApi $videoApi = null,
         private readonly ?VideoIntegration $video = null,
     ) {
@@ -345,6 +347,8 @@ final class AcknowledgementController extends AbstractController
             'tree' => 'departments' === $view || 'people' === $view ? $this->sections->findAllTree() : [],
             'section' => $section,
             'sort' => $sort,
+            'team_digest' => $this->settings->teamDigest(),
+            'managers' => \count($this->users->findManagers()),
         ]);
     }
 

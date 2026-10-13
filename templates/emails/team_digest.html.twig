@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="ru">
+<body style="font-family: Arial, Helvetica, sans-serif; color: #1D1E1E; line-height: 1.5;">
+<p>Здравствуйте, {{ manager.displayName }}!</p>
+<p>Еженедельная сводка по вашим сотрудникам ({{ totals.people }}): не выполнено <b>{{ totals.pending }}</b>{% if totals.overdue > 0 %}, из них просрочено <b style="color:#D00024;">{{ totals.overdue }}</b>{% endif %}{% if video %} — ознакомления с документами и обязательные видео{% else %} — ознакомления с документами{% endif %}.</p>
+{% if people is empty %}
+    <p>Всё назначенное выполнено — спасибо!</p>
+{% else %}
+<table cellpadding="6" cellspacing="0" style="border-collapse: collapse; font-size: 14px;">
+    <tr style="color:#5E6470; font-size: 12px; text-align: left;"><th>Сотрудник</th><th>Документы</th>{% if video %}<th>Видео</th>{% endif %}</tr>
+    {% for p in people %}
+        {% set docs = p.docs.assigned - p.docs.confirmed %}
+        {% set videos = p.video.assigned - p.video.completed %}
+        <tr style="border-top: 1px solid #EFEFEF; vertical-align: top;">
+            <td><b>{{ p.user.displayName }}</b>{% if p.user.jobTitle %}<br><span style="color:#5E6470; font-size: 13px;">{{ p.user.jobTitle }}</span>{% endif %}</td>
+            <td>{% if docs > 0 %}{{ docs }}{% if p.docs.overdue > 0 %} <span style="color:#D00024;">(просрочено {{ p.docs.overdue }})</span>{% endif %}
+                {% for d in p.shown %}<br><span style="font-size: 13px;">{{ d.title }}{% if d.due %} — до {{ d.due|date('d.m.Y') }}{% endif %}</span>{% endfor %}
+                {% if p.hidden > 0 %}<br><span style="color:#5E6470; font-size: 13px;">и ещё {{ p.hidden }}</span>{% endif %}
+            {% else %}—{% endif %}</td>
+            {% if video %}<td>{% if videos > 0 %}{{ videos }}{% if p.video.overdue > 0 %} <span style="color:#D00024;">(просрочено {{ p.video.overdue }})</span>{% endif %}{% else %}—{% endif %}</td>{% endif %}
+        </tr>
+    {% endfor %}
+</table>
+{% if more > 0 %}<p style="font-size: 13px;">…и ещё {{ more }} — на странице «Мои сотрудники».</p>{% endif %}
+{% endif %}
+<p style="margin-top: 20px;"><a href="{{ url }}" style="color:#0F4382;">Открыть «Мои сотрудники»</a> — по каждому сотруднику, что назначено и до какого срока; выгрузка в Excel (CSV).</p>
+<p style="color:#6E7480; font-size: 12px;">Письмо отправлено автоматически порталом «{{ app_name }}» по понедельникам, потому что вы — руководитель в оргструктуре портала. Письма от портала можно отключить в профиле: <a href="{{ profile_url }}" style="color:#6E7480;">Подписки и уведомления</a>. Отвечать на письмо не нужно.</p>
+</body>
+</html>

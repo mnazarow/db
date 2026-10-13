@@ -145,6 +145,8 @@ final class AiQuestionsController extends AbstractController
                 $answer->setDocumentIds($parsed['ids'])->touch($user);
                 $this->em->persist($answer);
                 $this->em->flush();
+                // Векторы формулировок — сразу, чтобы первый вопрос по смыслу не ждал модель.
+                $this->verified->warm($answer);
                 $this->auditLogger->info($isNew ? 'Проверенный ответ ИИ добавлен' : 'Проверенный ответ ИИ изменён', ['question' => $answer->getQuestion(), 'active' => $answer->isActive(), 'by' => $user->getUsername()]);
                 $this->addFlash('success', $isNew ? 'Проверенный ответ сохранён: на похожие вопросы сотрудники получат его сразу.' : 'Проверенный ответ сохранён.');
                 $limited = array_filter($this->verified->documentsOf($answer), static fn (\App\Entity\Document $d): bool => $d->isRestricted() || !$d->isPublished());
@@ -185,7 +187,7 @@ final class AiQuestionsController extends AbstractController
     /**
      * «Проверить вопрос»: какой проверенный ответ получит сотрудник на такой вопрос.
      *
-     * @return array{question: string, answer: ?AiVerifiedAnswer}|null
+     * @return array{question: string, threshold: float, answer: ?AiVerifiedAnswer, how: ?string, similarity: ?float, semantic: bool}|null
      */
     private function checkQuestion(string $question): ?array
     {
@@ -194,7 +196,7 @@ final class AiQuestionsController extends AbstractController
             return null;
         }
 
-        return ['question' => $question, 'answer' => $this->verified->match($question)];
+        return ['question' => $question, 'threshold' => $this->settings->embeddings()['verified_min']] + $this->verified->explain($question);
     }
 
     #[Route('.csv', name: 'admin_ai_questions_csv', methods: ['GET'])]

@@ -68,7 +68,7 @@ final class PreviewOcrTest extends PortalTestCase
         imagettftext($image, 48, 0, 60, 120, (int) imagecolorallocate($image, 0, 0, 0), $font, $text);
         $path = sys_get_temp_dir().'/docportal-ocr-'.bin2hex(random_bytes(4)).'.png';
         imagepng($image, $path);
-        imagedestroy($image);
+        unset($image);
 
         return $path;
     }

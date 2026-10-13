@@ -42,6 +42,8 @@ final class SemanticAnswerTest extends PortalTestCase
         parent::setUp();
         $this->settings()->setLlm(['enabled' => true, 'base_url' => 'http://llm.test/v1', 'api_key' => 'k', 'model' => 'test-model', 'answers' => true]);
         $this->settings()->setEmbeddings(['enabled' => true, 'model' => 'test-embed', 'base_url' => '', 'dimensions' => 0, 'log_days' => 180]);
+        // Пауза после сбоя модели эмбеддингов (60 с) живёт в кэше — не переносим её из теста в тест.
+        static::getContainer()->get('cache.app')->deleteItem('semantic_search_paused');
         $this->http()->reset();
         $this->http()->setDefault(new HttpResponse(200, '{"items":[]}'));
         $this->http()->setHandler(function (string $method, string $url, ?string $body): ?HttpResponse {
@@ -381,6 +383,72 @@ final class SemanticAnswerTest extends PortalTestCase
         self::assertNull($data['id']);
         self::assertNull($data['rate_url']);
         self::assertSame($total - 1, (int) $connection->fetchOne('SELECT COUNT(*) FROM ai_question'));
+    }
+
+    public function testVerifiedAnswerByMeaning(): void
+    {
+        $fire = $this->firePage();
+        $em = $this->em();
+        $em->getConnection()->executeStatement('DELETE FROM ai_verified_answer');
+        $lastQuestion = (int) $em->getConnection()->fetchOne('SELECT COALESCE(MAX(id), 0) FROM ai_question');
+        $verified = (new \App\Entity\AiVerifiedAnswer())->setQuestion('Что делать при пожаре?')->setAnswer('Звоните 112 и покиньте здание [1].')->setDocumentIds([(int) $fire->getId()]);
+        $em->persist($verified);
+        $em->flush();
+        // Векторы формулировок считает ежечасное задание индекса (ответ создан мимо формы — без warm()).
+        $embedded = $this->embedded;
+        $tester = $this->command([]);
+        self::assertStringContainsString('Формулировок проверенных ответов с векторами: 1 (новых 1)', preg_replace('/\s+/u', ' ', $tester->getDisplay()));
+        self::assertGreaterThan($embedded, $this->embedded);
+        $service = static::getContainer()->get(AnswerService::class);
+        $smirnov = $this->user('smirnov');
+        $chats = fn (): int => \count(array_filter($this->http()->all(), static fn (array $r): bool => str_ends_with($r['url'], '/chat/completions')));
+
+        // Другими словами (синоним вместо слова) — проверенный ответ по смыслу, без модели; эмбеддинг — только у вопроса.
+        $before = $chats();
+        $embedded = $this->embedded;
+        $answer = $service->answer($smirnov, 'Что делать при возгорании?');
+        self::assertSame(AiQuestion::STATUS_VERIFIED, $answer['status']);
+        self::assertSame($embedded + 1, $this->embedded);
+        self::assertSame($before, $chats(), 'модель не вызывалась');
+        self::assertTrue($em->getRepository(AiQuestion::class)->find($answer['id'])->isSemantic(), 'в журнале — «по смыслу»');
+        // Векторы формулировок — из кэша: на повторный вопрос модель эмбеддингов получает только сам вопрос.
+        $service->reset();
+        $embedded = $this->embedded;
+        self::assertSame(AiQuestion::STATUS_VERIFIED, $service->answer($smirnov, 'А что делать при возгорании')['status']);
+        self::assertSame($embedded + 1, $this->embedded);
+
+        // Модель эмбеддингов не отвечает — сравнение только по словам, а следующие вопросы её минуту не ждут.
+        $service->reset();
+        $this->embedFails = true;
+        $calls = \count($this->http()->all());
+        self::assertNotSame(AiQuestion::STATUS_VERIFIED, $service->answer($smirnov, 'Что делать при задымлении?')['status']);
+        $service->reset();
+        $failed = \count(array_filter(\array_slice($this->http()->all(), $calls), static fn (array $r): bool => str_ends_with($r['url'], '/embeddings')));
+        $service->answer($smirnov, 'Что делать при задымлении в цеху?');
+        self::assertSame($failed, \count(array_filter(\array_slice($this->http()->all(), $calls), static fn (array $r): bool => str_ends_with($r['url'], '/embeddings'))), 'на паузе модель не вызывается');
+        $this->embedFails = false;
+        static::getContainer()->get('cache.app')->deleteItem(AnswerService::EMBED_PAUSE_KEY);
+
+        // Уточнение (больше значимых слов) и отрицание по смыслу не закрываются — отвечает модель.
+        self::assertNotSame(AiQuestion::STATUS_VERIFIED, $service->answer($smirnov, 'Как тушить пламя на складе ночью?')['status']);
+        self::assertNotSame(AiQuestion::STATUS_VERIFIED, $service->answer($smirnov, 'Что не делать при возгорании?')['status']);
+        // Далёкий по смыслу вопрос — тоже модель.
+        self::assertNotSame(AiQuestion::STATUS_VERIFIED, $service->answer($smirnov, 'Сколько дней отпуска?')['status']);
+
+        // «Проверить вопрос» показывает, как подошёл ответ и сходство; выше порога из настроек — не подходит.
+        $this->loginAs('admin');
+        $this->client->request('GET', '/admin/ai-questions?view=verified&check='.rawurlencode('что делать при возгорании'));
+        self::assertSelectorTextContains('.ai-verified-check', 'по смыслу, сходство 1,00');
+        $this->client->request('GET', '/admin/ai-questions?view=verified&check='.rawurlencode('где отпуск'));
+        self::assertSelectorTextContains('.ai-verified-check', 'ответит языковая модель');
+        $this->settings()->setEmbeddings(['enabled' => false, 'model' => 'test-embed']);
+        $this->client->request('GET', '/admin/ai-questions?view=verified&check='.rawurlencode('что делать при возгорании'));
+        self::assertSelectorTextContains('.ai-verified-check', 'Сравнение по смыслу выключено');
+        $this->settings()->setEmbeddings(['enabled' => true, 'model' => 'test-embed', 'verified_min' => '0,8']);
+        self::assertSame(0.8, $this->settings()->embeddings()['verified_min']);
+        // Вопросы этого теста не должны менять статистику журнала в других тестах.
+        $em->getConnection()->executeStatement('DELETE FROM ai_question WHERE id > ?', [$lastQuestion]);
+        $em->getConnection()->executeStatement('DELETE FROM ai_verified_answer');
     }
 
     public function testAdminSettings(): void

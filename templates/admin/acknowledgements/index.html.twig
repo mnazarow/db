@@ -187,4 +187,29 @@
     </div>
 </div>
 {% endif %}
+
+<div class="card card--form" id="team-digest">
+    <div class="card__head"><h2 class="h-section">Еженедельная сводка руководителям</h2>
+        {% if team_digest.enabled %}<span class="badge badge--done"><span class="badge__dot"></span>Включена</span>{% else %}<span class="badge badge--none"><span class="badge__dot"></span>Выключена</span>{% endif %}</div>
+    <p class="form-help">По понедельникам руководитель получает письмо (и сообщение в Telegram или уведомление в браузер, если они включены): кто из его сотрудников — по оргструктуре, на всех уровнях — не ознакомился с документами{{ video_on ? ' и не посмотрел обязательные видео' }}, что просрочено, со ссылкой на «Мои сотрудники». Названия документов с ограниченным доступом, закрытых для руководителя, не показываются. Руководителей в оргструктуре: <b>{{ managers }}</b>{% if managers == 0 %} — задайте их в «Пользователи → Оргструктура из 1С» или в карточке сотрудника (поле «Руководитель»){% endif %}.</p>
+    <form method="post" action="{{ path('admin_team_digest') }}" class="form">
+        <input type="hidden" name="_token" value="{{ csrf_token('team_digest') }}">
+        <div class="form-row form-row--check"><label class="form-check"><input type="checkbox" name="enabled" value="1" {{ team_digest.enabled ? 'checked' }}><span>Присылать сводку руководителям</span></label></div>
+        <div class="form-row form-row--check"><label class="form-check"><input type="checkbox" name="only_pending" value="1" {{ team_digest.only_pending ? 'checked' }}><span>Только если у сотрудников есть невыполненное</span></label></div>
+        <div class="form-actions"><button type="submit" class="btn btn--pill btn--small">Сохранить</button></div>
+    </form>
+    <div class="form-actions">
+        <form method="post" action="{{ path('admin_team_digest_send') }}" class="inline-form">
+            <input type="hidden" name="_token" value="{{ csrf_token('team_digest') }}">
+            <input type="hidden" name="mode" value="preview">
+            <button type="submit" class="btn btn--ghost btn--small">Кому уйдёт сводка</button>
+        </form>
+        <form method="post" action="{{ path('admin_team_digest_send') }}" class="inline-form" data-confirm="Отправить сводку руководителям сейчас?">
+            <input type="hidden" name="_token" value="{{ csrf_token('team_digest') }}">
+            <input type="hidden" name="mode" value="send">
+            <button type="submit" class="btn btn--ghost btn--small">Отправить сейчас</button>
+        </form>
+    </div>
+    <p class="form-help">{% if team_digest.last_run %}Последняя отправка: {{ team_digest.last_run|date('d.m.Y H:i') }}. {% endif %}Рассылку выполняет задание cron <code>app:team:digest</code> (понедельник, 08:40; в Docker — расписание TEAM_DIGEST_CRON). Письмо одному руководителю для проверки: <code>docportal team-digest --manager=логин</code>.</p>
+</div>
 {% endblock %}

@@ -139,7 +139,7 @@ final class StatisticsController extends AbstractController
         $response = new StreamedResponse(static function () use ($header, $rows): void {
             $out = fopen('php://output', 'w');
             fwrite($out, "\xEF\xBB\xBF");
-            fputcsv($out, $header, ';');
+            fputcsv($out, $header, ';', '"', '');
             foreach ($rows as $row) {
                 Csv::put($out, $row);
             }

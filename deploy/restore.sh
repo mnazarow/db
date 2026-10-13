@@ -263,7 +263,7 @@ app_console() {
     if [[ "${INSTALL_MODE}" == "docker" ]]; then
         (cd "${APP_DIR}/docker" && docker compose exec -T -u www-data app php bin/console "$@" --no-interaction)
     else
-        runuser -u "${SERVICE_USER}" -- php "${APP_DIR}/current/bin/console" "$@" --env=prod --no-interaction
+        runuser -u "${SERVICE_USER}" -- "$(php_bin_for "${PHP_VERSION:-}" || echo php)" "${APP_DIR}/current/bin/console" "$@" --env=prod --no-interaction
     fi
 }
 

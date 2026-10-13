@@ -101,7 +101,7 @@ final class WebPush
         }
         $ephemeral ??= openssl_pkey_new(['private_key_type' => \OPENSSL_KEYTYPE_EC, 'curve_name' => 'prime256v1']) ?: throw new \RuntimeException('Не удалось создать временный ключ.');
         $asPublic = self::publicPoint($ephemeral);
-        $shared = openssl_pkey_derive(self::publicKeyFromPoint($uaPublic), $ephemeral, 32);
+        $shared = openssl_pkey_derive(self::publicKeyFromPoint($uaPublic), $ephemeral);
         if (false === $shared) {
             throw new \RuntimeException('Не удалось вычислить общий секрет (ECDH).');
         }
@@ -129,7 +129,7 @@ final class WebPush
         $asPublic = substr($body, 21, $idLength);
         $data = substr($body, 21 + $idLength);
         $uaPublic = self::publicPoint($uaPrivate);
-        $shared = openssl_pkey_derive(self::publicKeyFromPoint($asPublic), $uaPrivate, 32);
+        $shared = openssl_pkey_derive(self::publicKeyFromPoint($asPublic), $uaPrivate);
         $ikm = hash_hkdf('sha256', (string) $shared, 32, "WebPush: info\0".$uaPublic.$asPublic, self::base64UrlDecode($auth));
         $cek = hash_hkdf('sha256', $ikm, 16, "Content-Encoding: aes128gcm\0", $salt);
         $nonce = hash_hkdf('sha256', $ikm, 12, "Content-Encoding: nonce\0", $salt);

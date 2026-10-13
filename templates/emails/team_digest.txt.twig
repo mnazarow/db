@@ -1,0 +1,25 @@
+Здравствуйте, {{ manager.displayName }}!
+
+Еженедельная сводка по вашим сотрудникам ({{ totals.people }}): не выполнено {{ totals.pending }}{% if totals.overdue > 0 %}, из них просрочено {{ totals.overdue }}{% endif %}{% if video %} — ознакомления с документами и обязательные видео{% else %} — ознакомления с документами{% endif %}.
+{% for p in people %}
+{% set docs = p.docs.assigned - p.docs.confirmed %}
+{% set videos = p.video.assigned - p.video.completed %}
+
+{{ p.user.displayName }}{% if p.user.jobTitle %} ({{ p.user.jobTitle }}){% endif %}: {% if docs > 0 %}документов {{ docs }}{% if p.docs.overdue > 0 %} (просрочено {{ p.docs.overdue }}){% endif %}{% endif %}{% if video and videos > 0 %}{{ docs > 0 ? ', ' }}видео {{ videos }}{% if p.video.overdue > 0 %} (просрочено {{ p.video.overdue }}){% endif %}{% endif %}
+
+{% for d in p.shown %}  - {{ d.title }}{% if d.due %} — до {{ d.due|date('d.m.Y') }}{% endif %}
+
+{% endfor %}
+{% if p.hidden > 0 %}  - и ещё {{ p.hidden }}
+{% endif %}
+{% endfor %}
+{% if more > 0 %}
+
+…и ещё {{ more }} — на странице «Мои сотрудники».
+{% endif %}
+
+Мои сотрудники: {{ url }}
+
+--
+Письмо отправлено автоматически порталом «{{ app_name }}» по понедельникам, потому что вы — руководитель
+в оргструктуре портала. Письма от портала можно отключить в профиле: {{ profile_url }}

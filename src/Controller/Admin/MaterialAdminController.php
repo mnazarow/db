@@ -101,6 +101,11 @@ final class MaterialAdminController extends AbstractController
     {
         $this->checkToken($request);
         $dryRun = 'preview' === $request->request->get('mode');
+        if (!$dryRun) {
+            // Рассылка не обрывается на полпути, даже если браузер или nginx перестали ждать ответа.
+            ignore_user_abort(true);
+            @set_time_limit(600);
+        }
         $result = $this->reminder->run($dryRun, true);
         if ($dryRun && [] !== $result['plan']) {
             $lines = array_map(static fn (array $p): string => \sprintf('%s — %s (%d)', $p['user']->getDisplayName(), implode(', ', $p['sections']), $p['rows']), $result['plan']);
