@@ -43,7 +43,7 @@ jobs:
           mkdir -p dist/next
           tar -C "${tmp}" --owner=0 --group=0 --numeric-owner -czf "dist/next/docportal-${next}.tar.gz" docportal
           ls -la dist dist/next
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
