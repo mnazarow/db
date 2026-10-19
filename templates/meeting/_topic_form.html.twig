@@ -1,0 +1,34 @@
+{# Форма «Предложить тему» к собранию. #}
+<form method="post" action="{{ path('app_meeting_topic_new', {id: meeting.id}) }}" class="form deck-topic-form" enctype="multipart/form-data">
+    <input type="hidden" name="_token" value="{{ csrf_token('meeting_topic_' ~ meeting.id) }}">
+    <div class="deck-topic-form__row">
+        <div class="form-row">
+            <label class="form-label" for="topic-title-{{ meeting.id }}">Тема</label>
+            <input class="form-control" id="topic-title-{{ meeting.id }}" name="title" maxlength="255" required placeholder="Например: Итоги участия в выставке «Акватерм»">
+        </div>
+        <div class="form-row">
+            <label class="form-label" for="topic-resp-{{ meeting.id }}">Ответственный</label>
+            <input class="form-control" id="topic-resp-{{ meeting.id }}" name="responsible" maxlength="255" placeholder="{{ app.user.displayName }}">
+        </div>
+    </div>
+    <details class="deck-topic-form__more">
+        <summary>Начать с готовых слайдов</summary>
+        {% if my_presentations|default([])|length > 0 %}
+            <div class="form-row">
+                <label class="form-label" for="topic-source-{{ meeting.id }}">Скопировать слайды из моей презентации</label>
+                <select class="form-control" id="topic-source-{{ meeting.id }}" name="source">
+                    <option value="">— не копировать —</option>
+                    {% for mp in my_presentations %}<option value="{{ mp.id }}">{{ mp.title }} ({{ mp.slideCount|plural(['слайд', 'слайда', 'слайдов']) }})</option>{% endfor %}
+                </select>
+            </div>
+        {% endif %}
+        <div class="form-row">
+            <label class="form-label" for="topic-file-{{ meeting.id }}">Или загрузить файл PowerPoint</label>
+            <input class="form-control" id="topic-file-{{ meeting.id }}" type="file" name="pptx" accept=".pptx">
+        </div>
+    </details>
+    <div class="form-actions">
+        <button type="submit" class="btn btn--pill">Подготовить тему</button>
+        <span class="hints">Откроется редактор: слайд с шапкой «{{ meeting.displayTitle }}» в фирменном стиле; готовую тему отправьте на модерацию{% if meeting.deadline %} до {{ meeting.deadline|date('d.m H:i') }}{% endif %}.</span>
+    </div>
+</form>

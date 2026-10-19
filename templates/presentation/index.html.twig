@@ -1,0 +1,113 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}Подготовка презентаций{% endblock %}
+{% block body_class %}page-decks{% endblock %}
+{% block stylesheets %}<link rel="stylesheet" href="{{ asset('css/deck.css') }}">{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        {% include 'presentation/_tabs.html.twig' with {current: 'presentations'} %}
+        <div class="hero__row">
+            <div>
+                <h1 class="h-display">Подготовка презентаций</h1>
+                <p class="hero__meta">Презентации в корпоративном стиле — как «Презентация к собранию»: фирменные макеты слайдов, шрифты и цвета. Подготовьте презентацию и передайте на модерацию: маркетолог или помощник маркетолога проверит её, одобренную видят все сотрудники — её можно показать, выгрузить в PowerPoint или PDF.</p>
+            </div>
+            <div class="hero__actions">
+                <button type="button" class="btn btn--pill" data-dialog-open="deck-new">Новая презентация</button>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+
+    {% if is_moderator %}
+        <div class="deck-block">
+            <div class="deck-block__head">
+                <h2 class="h-section">На модерации <span class="tag">{{ queue|length }}</span></h2>
+                <span class="hints">Одобряют маркетологи и помощники маркетолога; свою презентацию помощник не одобряет.</span>
+            </div>
+            {% if queue|length > 0 %}
+                <div class="deck-grid">
+                    {% for p in queue %}{% include 'presentation/_card.html.twig' with {p: p, href: path('app_presentation_show', {id: p.id})} %}{% endfor %}
+                </div>
+            {% else %}
+                <p class="text-muted">Презентаций на модерации нет.</p>
+            {% endif %}
+        </div>
+    {% endif %}
+
+    <div class="deck-block">
+        <div class="deck-block__head">
+            <h2 class="h-section">Мои презентации <span class="tag">{{ mine|length }}</span></h2>
+        </div>
+        {% if mine|length > 0 %}
+            <div class="deck-grid">
+                {% for p in mine %}{% include 'presentation/_card.html.twig' with {p: p} %}{% endfor %}
+            </div>
+        {% else %}
+            <div class="card empty-state empty-state--compact">
+                <p>У вас пока нет презентаций. Нажмите «Новая презентация» — откроется редактор с титульным слайдом, слайдом с текстом и финальным слайдом в фирменном стиле. Можно начать и с файла PowerPoint.</p>
+                <button type="button" class="btn btn--pill" data-dialog-open="deck-new">Новая презентация</button>
+            </div>
+        {% endif %}
+    </div>
+
+    <div class="deck-block" id="ready">
+        <div class="deck-block__head">
+            <h2 class="h-section">Готовые презентации</h2>
+            <form method="get" action="{{ path('app_presentations') }}#ready" class="inline-form" role="search">
+                <label class="search search--small">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                    <input class="search__input" type="search" name="q" value="{{ q }}" placeholder="Найти презентацию" aria-label="Поиск по готовым презентациям">
+                </label>
+            </form>
+        </div>
+        {% if approved|length > 0 %}
+            <div class="deck-grid">
+                {% for p in approved %}{% include 'presentation/_card.html.twig' with {p: p, approved: true, href: path('app_presentation_show', {id: p.id})} %}{% endfor %}
+            </div>
+        {% else %}
+            <p class="text-muted">{{ q ? 'Ничего не найдено.' : 'Одобренных презентаций пока нет.' }}</p>
+        {% endif %}
+    </div>
+</section>
+
+<dialog class="deck-dialog" id="deck-new" aria-labelledby="deck-new-title">
+    <form method="post" action="{{ path('app_presentation_new') }}" class="form" enctype="multipart/form-data">
+        <h2 class="h-section" id="deck-new-title">Новая презентация</h2>
+        <input type="hidden" name="_token" value="{{ csrf_token('presentation_new') }}">
+        <div class="form-row">
+            <label class="form-label" for="deck-new-name">Название</label>
+            <input class="form-control" id="deck-new-name" name="title" maxlength="255" required placeholder="Например: Итоги продаж за III квартал">
+        </div>
+        <div class="form-row">
+            <label class="form-label" for="deck-new-responsible">Ответственный</label>
+            <input class="form-control" id="deck-new-responsible" name="responsible" maxlength="255" placeholder="{{ app.user.displayName }}">
+            <div class="form-help">Строка «Ответственный: …» в шапке слайдов; пусто — вы.</div>
+        </div>
+        <div class="form-row">
+            <label class="form-label" for="deck-new-description">Описание</label>
+            <textarea class="form-control" id="deck-new-description" name="description" rows="2" maxlength="2000" placeholder="Для кого и о чём (необязательно)"></textarea>
+        </div>
+        <div class="form-row">
+            <label class="form-label" for="deck-new-file">Начать с файла PowerPoint</label>
+            <input class="form-control" id="deck-new-file" type="file" name="pptx" accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation">
+            <div class="form-help">Необязательно: слайды .pptx перенесутся в редактор (текст, картинки, фигуры, таблицы, диаграммы, заметки).</div>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="btn btn--pill">Создать и открыть редактор</button>
+            <button type="button" class="btn btn--ghost" data-dialog-close>Отмена</button>
+        </div>
+    </form>
+</dialog>
+
+<script type="application/json" id="deck-config">{{ deck_render_config()|json_encode(constant('JSON_HEX_TAG') b-or constant('JSON_HEX_AMP') b-or constant('JSON_UNESCAPED_UNICODE') b-or constant('JSON_UNESCAPED_SLASHES'))|raw }}</script>
+{% endblock %}
+
+{% block javascripts %}
+    <script src="{{ asset('js/deck-render.js') }}" defer></script>
+    <script src="{{ asset('js/deck-pages.js') }}" defer></script>
+{% endblock %}

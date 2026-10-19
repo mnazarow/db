@@ -1,0 +1,186 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}{{ meeting.displayTitle }} — {{ meeting.dateLabel }}{% endblock %}
+{% block body_class %}page-meeting{% endblock %}
+{% block stylesheets %}<link rel="stylesheet" href="{{ asset('css/deck.css') }}">{% endblock %}
+
+{% block body %}
+{% set mtoken = csrf_token('meeting_' ~ meeting.id) %}
+{% set back_url = path('app_meeting_show', {id: meeting.id}) %}
+<section class="hero hero--compact">
+    <div class="container">
+        <nav class="breadcrumbs" aria-label="Путь">
+            <a href="{{ path('app_meetings') }}">Подготовка пятничной презентации</a>
+            <span class="breadcrumbs__sep" aria-hidden="true">/</span>
+            <span class="breadcrumbs__current">{{ meeting.displayTitle }}</span>
+        </nav>
+        <div class="hero__row">
+            <div>
+                <div class="eyebrow">{{ meeting.dateLabel }}{% if meeting.title %} · {{ meeting.title }}{% endif %}</div>
+                <h1 class="h-display">{{ meeting.displayTitle }}</h1>
+                <p class="hero__meta">
+                    {% if meeting.published %}<span class="badge badge--done"><span class="badge__dot"></span>презентация опубликована</span>{% else %}<span class="badge badge--progress"><span class="badge__dot"></span>идёт подготовка</span>{% endif %}
+                    {% if meeting.deadline %} · темы до {{ meeting.deadline|date('d.m.Y H:i') }}{% if meeting.deadlinePassed and not meeting.past %} <span class="text-danger">(срок прошёл)</span>{% endif %}{% endif %}
+                    · тем: {{ stats.total }}, одобрено {{ stats.approved }}, на модерации {{ stats.submitted }}
+                </p>
+            </div>
+            <div class="hero__actions">
+                {% if deck %}
+                    <a class="btn btn--pill" href="{{ path('app_meeting_present', {id: meeting.id}) }}" target="_blank" rel="noopener">Показ</a>
+                    <a class="btn btn--ghost" href="{{ path('app_meeting_export', {id: meeting.id}) }}">PowerPoint</a>
+                    <a class="btn btn--ghost" href="{{ path('app_meeting_print', {id: meeting.id}) }}" target="_blank" rel="noopener" title="Страница для печати: «Сохранить как PDF»">PDF</a>
+                {% endif %}
+                {% if is_moderator %}
+                    {% if meeting.published %}
+                        <form method="post" action="{{ path('app_meeting_unpublish', {id: meeting.id}) }}" class="inline-form">
+                            <input type="hidden" name="_token" value="{{ mtoken }}">
+                            <button type="submit" class="btn btn--ghost">Снять публикацию</button>
+                        </form>
+                    {% else %}
+                        <form method="post" action="{{ path('app_meeting_publish', {id: meeting.id}) }}" class="inline-form" data-confirm="Опубликовать презентацию собрания? Её увидят все сотрудники (темы — в одобренных редакциях).">
+                            <input type="hidden" name="_token" value="{{ mtoken }}">
+                            <button type="submit" class="btn btn--ghost" {{ approved_count == 0 ? 'disabled title="Нет одобренных тем"' }}>Опубликовать</button>
+                        </form>
+                    {% endif %}
+                    {% if next_meeting %}
+                        <a class="btn btn--ghost" href="{{ path('app_meeting_show', {id: next_meeting.id}) }}">Следующее собрание →</a>
+                    {% else %}
+                        <form method="post" action="{{ path('app_meeting_next', {id: meeting.id}) }}" class="inline-form">
+                            <input type="hidden" name="_token" value="{{ mtoken }}">
+                            <button type="submit" class="btn btn--ghost" title="Собрание через неделю, номер — следующий">Готовить следующее</button>
+                        </form>
+                    {% endif %}
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+
+    <div class="deck-meeting">
+        <div class="deck-meeting__main">
+            <div class="card" id="topics">
+                <div class="card__head">
+                    <h2 class="h-section">Темы собрания</h2>
+                    {% if is_moderator and topics|length > 1 %}<span class="hints">Перетащите темы, чтобы задать порядок в презентации.</span>{% endif %}
+                </div>
+                {% if topics|length > 0 %}
+                    <ol class="deck-topics" {% if is_moderator %}data-sortable data-sort-url="{{ path('app_meeting_order', {id: meeting.id}) }}" data-sort-token="{{ mtoken }}"{% endif %}>
+                        {% for t in topics %}
+                            {% set token = csrf_token('presentation_' ~ t.id) %}
+                            {% set visible_preview = (is_moderator or t.isAuthor(app.user)) ? t.preview : t.approvedPreview %}
+                            <li class="deck-topic {{ t.hasApprovedVersion ? 'is-approved' }}" data-id="{{ t.id }}" {% if is_moderator %}draggable="true"{% endif %}>
+                                {% if is_moderator %}<span class="deck-topic__grip" aria-hidden="true">⋮⋮</span>{% endif %}
+                                <a class="deck-topic__thumb" href="{{ path('app_presentation_show', {id: t.id}) }}" tabindex="-1" aria-hidden="true">
+                                    {% if visible_preview %}<div data-deck-slide="{{ visible_preview }}"></div>{% endif %}
+                                </a>
+                                <div class="deck-topic__body">
+                                    <a class="deck-topic__title" href="{{ path(is_granted('PRESENTATION_EDIT', t) ? 'app_presentation_edit' : 'app_presentation_show', {id: t.id}) }}">{{ t.title }}</a>
+                                    <div class="deck-card__meta">
+                                        {% if is_moderator or t.isAuthor(app.user) %}<span class="badge badge--{{ t|presentation_status_class }}"><span class="badge__dot"></span>{{ t.statusLabel }}</span>{% endif %}
+                                        <span>Ответственный: {{ t.responsibleLabel }}</span>
+                                        <span>{{ t.slideCount|plural(['слайд', 'слайда', 'слайдов']) }}</span>
+                                        {% if is_moderator and t.author %}<span>подготовил(а) {{ t.author.displayName }}</span>{% endif %}
+                                    </div>
+                                    {% if t.rejected and t.decisionNote and (is_moderator or t.isAuthor(app.user)) %}<p class="deck-card__note"><b>На доработку:</b> {{ t.decisionNote }}</p>{% endif %}
+                                    {% if is_granted('PRESENTATION_DECIDE', t) %}
+                                        <form method="post" action="{{ path('app_presentation_decide', {id: t.id}) }}" class="form ack-decide">
+                                            <input type="hidden" name="_token" value="{{ token }}">
+                                            <input type="hidden" name="back" value="{{ back_url }}#topics">
+                                            <input class="form-control form-control--inline" type="text" name="note" maxlength="2000" placeholder="Комментарий (обязателен при возврате)">
+                                            <button type="submit" class="btn btn--pill btn--small" name="decision" value="approve">Одобрить</button>
+                                            <button type="submit" class="btn btn--ghost btn--small btn--danger" name="decision" value="reject">На доработку</button>
+                                        </form>
+                                    {% elseif is_granted('PRESENTATION_SUBMIT', t) and t.isAuthor(app.user) %}
+                                        <form method="post" action="{{ path('app_presentation_submit', {id: t.id}) }}" class="inline-form">
+                                            <input type="hidden" name="_token" value="{{ token }}">
+                                            <input type="hidden" name="back" value="{{ back_url }}#topics">
+                                            <button type="submit" class="btn btn--pill btn--small">Отправить на модерацию</button>
+                                        </form>
+                                    {% endif %}
+                                </div>
+                                {% if is_moderator %}
+                                    <form method="post" action="{{ path('app_meeting_order', {id: meeting.id}) }}" class="deck-topic__move">
+                                        <input type="hidden" name="_token" value="{{ mtoken }}">
+                                        <button type="submit" name="move" value="{{ t.id }}:up" class="btn btn--ghost btn--small" title="Выше" {{ loop.first ? 'disabled' }}>↑</button>
+                                        <button type="submit" name="move" value="{{ t.id }}:down" class="btn btn--ghost btn--small" title="Ниже" {{ loop.last ? 'disabled' }}>↓</button>
+                                    </form>
+                                {% endif %}
+                            </li>
+                        {% endfor %}
+                    </ol>
+                {% else %}
+                    <p class="text-muted">{{ is_moderator ? 'Тем пока нет.' : (meeting.published ? 'В презентации собрания нет тем.' : 'Ваших тем к этому собранию нет.') }}</p>
+                {% endif %}
+                {% if not is_moderator and not meeting.published %}
+                    <p class="hints">Темы коллег видны маркетологам; всем сотрудникам — после публикации собрания.</p>
+                {% endif %}
+            </div>
+
+            {% if can_add %}
+                <div class="card">
+                    <h2 class="h-section">Предложить тему</h2>
+                    {% include 'meeting/_topic_form.html.twig' with {meeting: meeting} %}
+                </div>
+            {% endif %}
+        </div>
+
+        <aside class="deck-meeting__side">
+            {% if deck %}
+                <div class="card">
+                    <div class="card__head">
+                        <h2 class="h-section">Презентация собрания</h2>
+                        <span class="hints">{{ deck.slides|length|plural(['слайд', 'слайда', 'слайдов']) }}</span>
+                    </div>
+                    {% if not meeting.published %}<p class="hints">Собирается из одобренных тем (одобренные редакции) по порядку: титульный слайд, «Содержание», темы, финальный слайд. Сотрудники увидят её после публикации.</p>{% endif %}
+                    <div class="deck-slides deck-slides--compact">
+                        {% for s in deck.slides %}
+                            <a class="deck-slides__frame" href="{{ path('app_meeting_present', {id: meeting.id, slide: loop.index}) }}" target="_blank" rel="noopener" title="Показать с этого слайда">
+                                <div data-deck-slide="{{ s|json_encode(constant('JSON_UNESCAPED_UNICODE') b-or constant('JSON_UNESCAPED_SLASHES')) }}"></div>
+                            </a>
+                        {% endfor %}
+                    </div>
+                </div>
+            {% endif %}
+
+            {% if is_moderator %}
+                <div class="card">
+                    <h2 class="h-section">Собрание</h2>
+                    <form method="post" action="{{ path('app_meeting_settings', {id: meeting.id}) }}" class="form">
+                        <input type="hidden" name="_token" value="{{ mtoken }}">
+                        <div class="deck-topic-form__row">
+                            <div class="form-row">
+                                <label class="form-label" for="m-number">Номер</label>
+                                <input class="form-control" id="m-number" name="number" type="number" min="1" max="100000" value="{{ meeting.number }}" required>
+                            </div>
+                            <div class="form-row">
+                                <label class="form-label" for="m-date">Дата</label>
+                                <input class="form-control" id="m-date" name="date" type="date" value="{{ meeting.date|date('Y-m-d') }}" required>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <label class="form-label" for="m-deadline">Темы принимаются до</label>
+                            <input class="form-control" id="m-deadline" name="deadline" type="datetime-local" value="{{ meeting.deadline ? meeting.deadline|date('Y-m-d\\TH:i') }}">
+                        </div>
+                        <div class="form-row">
+                            <label class="form-label" for="m-title">Подзаголовок</label>
+                            <input class="form-control" id="m-title" name="title" maxlength="255" value="{{ meeting.title }}" placeholder="Необязательно: например, «Итоги квартала»">
+                        </div>
+                        <button type="submit" class="btn btn--pill btn--small">Сохранить</button>
+                        <p class="hints">Номер следующих собраний продолжает этот. Титульный слайд: «{{ meeting.displayTitle }}» и дата.</p>
+                    </form>
+                </div>
+            {% endif %}
+        </aside>
+    </div>
+</section>
+
+<script type="application/json" id="deck-config">{{ deck_config|json_encode(constant('JSON_HEX_TAG') b-or constant('JSON_HEX_AMP') b-or constant('JSON_UNESCAPED_UNICODE') b-or constant('JSON_UNESCAPED_SLASHES'))|raw }}</script>
+{% endblock %}
+
+{% block javascripts %}
+    <script src="{{ asset('js/deck-render.js') }}" defer></script>
+    <script src="{{ asset('js/deck-pages.js') }}" defer></script>
+{% endblock %}

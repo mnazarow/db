@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow">
+    <title>{{ title }}</title>
+    <link rel="icon" href="{{ asset('img/favicon.svg') }}" type="image/svg+xml">
+    <link rel="stylesheet" href="{{ asset('css/app.css') }}">
+    <link rel="stylesheet" href="{{ asset('css/deck.css') }}">
+    <style>@page { size: 1280px 720px; margin: 0; }</style>
+</head>
+<body class="deck-print-body">
+<div class="deck-print__bar">
+    <div>
+        <b>{{ title }}</b>
+        <span>{{ deck.slides|filter(s => not s.hidden)|length|plural(['слайд', 'слайда', 'слайдов']) }} · в окне печати выберите «Сохранить как PDF», поля — «нет», включите «Фоновая графика».</span>
+    </div>
+    <button type="button" class="btn btn--pill btn--small" data-print>Печать / PDF</button>
+</div>
+<main class="deck-print" data-deck-print>
+    {% for s in deck.slides %}
+        {% if not s.hidden %}
+            <section class="deck-print__page"><div data-print-slide="{{ s|json_encode(constant('JSON_UNESCAPED_UNICODE') b-or constant('JSON_UNESCAPED_SLASHES')) }}"></div></section>
+        {% endif %}
+    {% endfor %}
+</main>
+<script type="application/json" id="deck-config">{{ deck_render_config()|json_encode(constant('JSON_HEX_TAG') b-or constant('JSON_HEX_AMP') b-or constant('JSON_UNESCAPED_UNICODE') b-or constant('JSON_UNESCAPED_SLASHES'))|raw }}</script>
+<script src="{{ asset('js/deck-render.js') }}"></script>
+<script>
+(function () {
+    'use strict';
+    var pages = document.querySelectorAll('[data-print-slide]');
+    var pending = 0;
+    Array.prototype.forEach.call(pages, function (box) {
+        var node = window.DeckRender.slide(JSON.parse(box.getAttribute('data-print-slide')), { mode: 'print' });
+        box.replaceWith(node);
+        Array.prototype.forEach.call(node.querySelectorAll('img'), function (img) {
+            if (!img.complete) { pending++; img.addEventListener('load', done); img.addEventListener('error', done); }
+        });
+    });
+    var printed = false;
+    function done() { pending--; if (pending <= 0) { ready(); } }
+    function ready() {
+        if (printed) { return; }
+        printed = true;
+        var go = function () { setTimeout(function () { window.print(); }, 300); };
+        if (document.fonts && document.fonts.ready) { document.fonts.ready.then(go); } else { go(); }
+    }
+    document.querySelector('[data-print]').addEventListener('click', function () { window.print(); });
+    if (pending === 0) { ready(); }
+    setTimeout(ready, 8000);
+})();
+</script>
+</body>
+</html>

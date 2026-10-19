@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow">
+    <title>{{ speaker ? 'Заметки докладчика — ' : '' }}{{ title }} — {{ app_company }}</title>
+    <link rel="icon" href="{{ asset('img/favicon.svg') }}" type="image/svg+xml">
+    <link rel="preload" href="{{ asset('fonts/DINCondensed-Light.woff2') }}" as="font" type="font/woff2" crossorigin>
+    <link rel="stylesheet" href="{{ asset('css/app.css') }}">
+    <link rel="stylesheet" href="{{ asset('css/deck.css') }}">
+</head>
+<body class="deck-show-body{{ speaker ? ' deck-show-body--speaker' }}">
+<div class="deck-show" data-deck-show data-back="{{ back }}" data-start="{{ start }}" data-speaker="{{ speaker ? 1 : 0 }}" data-channel="deck-{{ back|replace({'/': '-'}) }}">
+    <noscript><p class="deck-show__noscript">Для показа нужен JavaScript. <a href="{{ back }}">Вернуться</a></p></noscript>
+</div>
+<script type="application/json" id="deck-config">{{ deck_render_config()|json_encode(constant('JSON_HEX_TAG') b-or constant('JSON_HEX_AMP') b-or constant('JSON_UNESCAPED_UNICODE') b-or constant('JSON_UNESCAPED_SLASHES'))|raw }}</script>
+<script type="application/json" id="deck-data">{{ deck|json_encode(constant('JSON_HEX_TAG') b-or constant('JSON_HEX_AMP') b-or constant('JSON_UNESCAPED_UNICODE') b-or constant('JSON_UNESCAPED_SLASHES'))|raw }}</script>
+<script src="{{ asset('js/deck-render.js') }}"></script>
+<script src="{{ asset('js/deck-present.js') }}"></script>
+</body>
+</html>

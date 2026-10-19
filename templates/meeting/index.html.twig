@@ -1,0 +1,106 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}Подготовка пятничной презентации{% endblock %}
+{% block body_class %}page-meetings{% endblock %}
+{% block stylesheets %}<link rel="stylesheet" href="{{ asset('css/deck.css') }}">{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        {% include 'presentation/_tabs.html.twig' with {current: 'meetings'} %}
+        <div class="hero__row">
+            <div>
+                <h1 class="h-display">Подготовка пятничной презентации</h1>
+                <p class="hero__meta">Каждую пятницу — собрание и общая презентация. Сотрудники готовят к нему темы — слайды в корпоративном стиле — и отправляют на модерацию. Маркетолог или помощник маркетолога одобряет темы и задаёт их порядок; презентация собрания собирается сама: титульный слайд, «Содержание», слайды тем и финальный слайд.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+
+    <div class="card deck-meeting-card">
+        <div class="deck-meeting-card__head">
+            <div>
+                <div class="eyebrow">Ближайшее собрание</div>
+                <h2 class="h-display h-display--sm"><a href="{{ path('app_meeting_show', {id: meeting.id}) }}">{{ meeting.displayTitle }}</a></h2>
+                <p class="hero__meta">{{ meeting.dateLabel }}{% if meeting.deadline %} · темы принимаются до {{ meeting.deadline|date('d.m.Y H:i') }}{% if meeting.deadlinePassed %} <span class="text-danger">(срок прошёл)</span>{% endif %}{% endif %} · {{ meeting.published ? 'презентация опубликована' : 'идёт подготовка' }}</p>
+            </div>
+            <div class="deck-stats">
+                <div><b>{{ stats.total }}</b><span>{{ stats.total|plural(['тема', 'темы', 'тем'])|split(' ')|last }}</span></div>
+                <div><b class="ms-text--ready">{{ stats.approved }}</b><span>одобрено</span></div>
+                <div><b class="ms-text--acceptable">{{ stats.submitted }}</b><span>на модерации</span></div>
+                <div><b>{{ stats.draft + stats.rejected }}</b><span>готовятся</span></div>
+            </div>
+        </div>
+        {% if not meeting.published or is_moderator %}
+            {% include 'meeting/_topic_form.html.twig' with {meeting: meeting} %}
+        {% endif %}
+        <div class="form-actions">
+            <a class="btn btn--ghost" href="{{ path('app_meeting_show', {id: meeting.id}) }}">{{ is_moderator ? 'Темы, порядок и презентация собрания' : 'Открыть собрание' }}</a>
+            {% if is_moderator or meeting.published %}
+                <a class="btn btn--ghost" href="{{ path('app_meeting_present', {id: meeting.id}) }}" target="_blank" rel="noopener">Показ</a>
+                <a class="btn btn--ghost" href="{{ path('app_meeting_export', {id: meeting.id}) }}">PowerPoint</a>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if is_moderator %}
+        <div class="deck-block">
+            <div class="deck-block__head"><h2 class="h-section">Темы на модерации <span class="tag">{{ queue|length }}</span></h2></div>
+            {% if queue|length > 0 %}
+                <div class="deck-grid">
+                    {% for p in queue %}{% include 'presentation/_card.html.twig' with {p: p, href: path('app_presentation_show', {id: p.id})} %}{% endfor %}
+                </div>
+            {% else %}
+                <p class="text-muted">Тем на модерации нет.</p>
+            {% endif %}
+        </div>
+    {% endif %}
+
+    <div class="deck-block">
+        <div class="deck-block__head"><h2 class="h-section">Мои темы <span class="tag">{{ my_topics|length }}</span></h2></div>
+        {% if my_topics|length > 0 %}
+            <div class="deck-grid">
+                {% for p in my_topics %}
+                    <div class="deck-grid__cell">
+                        {% include 'presentation/_card.html.twig' with {p: p} %}
+                        {% if p.meeting %}<div class="hints">{{ p.meeting.displayTitle }}, {{ p.meeting.dateLabel }}</div>{% endif %}
+                    </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <p class="text-muted">Вы ещё не готовили темы к собраниям.</p>
+        {% endif %}
+    </div>
+
+    {% if recent|length > 0 %}
+        <div class="card table-card">
+            <div class="card__head card__head--padded"><h2 class="h-section">Собрания</h2></div>
+            <div class="table-scroll">
+                <table class="admin-table">
+                    <thead><tr><th>Собрание</th><th>Дата</th><th>Состояние</th><th></th></tr></thead>
+                    <tbody>
+                    {% for m in recent %}
+                        <tr>
+                            <td><a class="doc-table__title" href="{{ path('app_meeting_show', {id: m.id}) }}">{{ m.displayTitle }}</a>{% if m.title %} <span class="text-muted">— {{ m.title }}</span>{% endif %}</td>
+                            <td class="col-nowrap">{{ m.dateLabel }}</td>
+                            <td>{{ m.published ? 'опубликовано' : (m.past ? 'не опубликовано' : 'идёт подготовка') }}</td>
+                            <td class="col-nowrap">{% if m.published or is_moderator %}<a href="{{ path('app_meeting_present', {id: m.id}) }}" target="_blank" rel="noopener">Показ</a> · <a href="{{ path('app_meeting_export', {id: m.id}) }}">PowerPoint</a> · <a href="{{ path('app_meeting_print', {id: m.id}) }}" target="_blank" rel="noopener">PDF</a>{% endif %}</td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    {% endif %}
+</section>
+
+<script type="application/json" id="deck-config">{{ deck_render_config()|json_encode(constant('JSON_HEX_TAG') b-or constant('JSON_HEX_AMP') b-or constant('JSON_UNESCAPED_UNICODE') b-or constant('JSON_UNESCAPED_SLASHES'))|raw }}</script>
+{% endblock %}
+
+{% block javascripts %}
+    <script src="{{ asset('js/deck-render.js') }}" defer></script>
+    <script src="{{ asset('js/deck-pages.js') }}" defer></script>
+{% endblock %}
