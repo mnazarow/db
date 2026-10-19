@@ -102,6 +102,15 @@
         </div>
     {% endif %}
 
+    {% set meeting = app.user ? upcoming_meeting() : null %}
+    {% if meeting and not meeting.published %}
+        <div class="alert alert--info home-meeting">
+            <b>{{ meeting.displayTitle }} — {{ meeting.dateLabel }}.</b>
+            {% if meeting.deadline and not meeting.deadlinePassed %}Темы для пятничной презентации принимаются до {{ meeting.deadline|date('d.m H:i') }}.{% else %}Идёт подготовка пятничной презентации.{% endif %}
+            <a href="{{ path('app_meetings') }}">Предложить тему →</a>
+        </div>
+    {% endif %}
+
     <h2 class="h-section">Разделы</h2>
     {% if roots|length == 0 %}
         <div class="card empty-state empty-state--compact">

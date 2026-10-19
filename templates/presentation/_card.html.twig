@@ -1,0 +1,20 @@
+{# Карточка презентации: миниатюра первого слайда, название, статус. approved — показывать одобренную редакцию. #}
+{% set use_approved = approved|default(false) %}
+{% set preview = use_approved ? p.approvedPreview : p.preview %}
+{% set href = href|default(path(use_approved or not (p.isAuthor(app.user) or is_presentation_moderator()) ? 'app_presentation_show' : 'app_presentation_edit', {id: p.id})) %}
+<article class="deck-card">
+    <a class="deck-card__thumb" href="{{ href }}" tabindex="-1" aria-hidden="true">
+        {% if preview %}<div class="deck-card__slide" data-deck-slide="{{ preview }}"></div>{% else %}<div class="deck-card__slide deck-card__slide--empty"></div>{% endif %}
+        <span class="deck-card__count">{{ (use_approved ? p.approvedSlideCount : p.slideCount)|plural(['слайд', 'слайда', 'слайдов']) }}</span>
+    </a>
+    <div class="deck-card__body">
+        <h3 class="deck-card__title"><a href="{{ href }}">{{ use_approved ? p.approvedTitle : p.title }}</a></h3>
+        <div class="deck-card__meta">
+            {% if not use_approved %}<span class="badge badge--{{ p|presentation_status_class }}"><span class="badge__dot"></span>{{ p.statusLabel }}</span>{% endif %}
+            <span>{{ use_approved ? p.approvedResponsible : p.responsibleLabel }}</span>
+            <span>{{ (use_approved ? p.approvedAt : p.updatedAt)|date('d.m.Y') }}</span>
+        </div>
+        {% if p.description and not use_approved %}<p class="deck-card__desc">{{ p.description|length > 140 ? p.description|slice(0, 140) ~ '…' : p.description }}</p>{% endif %}
+        {% if p.rejected and p.decisionNote and not use_approved %}<p class="deck-card__note"><b>На доработку:</b> {{ p.decisionNote }}</p>{% endif %}
+    </div>
+</article>

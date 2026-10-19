@@ -1,0 +1,133 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}{{ p.title }}{% endblock %}
+{% block body_class %}page-deck-show{% endblock %}
+{% block stylesheets %}<link rel="stylesheet" href="{{ asset('css/deck.css') }}">{% endblock %}
+
+{% block body %}
+{% set token = csrf_token('presentation_' ~ p.id) %}
+{% set back_url = path('app_presentation_show', {id: p.id}) %}
+<section class="hero hero--compact">
+    <div class="container">
+        <nav class="breadcrumbs" aria-label="Путь">
+            {% if p.topic and p.meeting %}
+                <a href="{{ path('app_meetings') }}">Подготовка пятничной презентации</a>
+                <span class="breadcrumbs__sep" aria-hidden="true">/</span>
+                <a href="{{ path('app_meeting_show', {id: p.meeting.id}) }}">{{ p.meeting.displayTitle }}, {{ p.meeting.dateLabel }}</a>
+            {% else %}
+                <a href="{{ path('app_presentations') }}">Подготовка презентаций</a>
+            {% endif %}
+            <span class="breadcrumbs__sep" aria-hidden="true">/</span>
+            <span class="breadcrumbs__current">{{ p.title }}</span>
+        </nav>
+        <div class="hero__row">
+            <div>
+                <div class="eyebrow">{{ p.topic ? 'Тема собрания' : 'Презентация' }}</div>
+                <h1 class="h-display">{{ working ? p.title : p.approvedTitle }}</h1>
+                <p class="hero__meta">
+                    {% if working %}<span class="badge badge--{{ p|presentation_status_class }}"><span class="badge__dot"></span>{{ p.statusLabel }}</span> · {% endif %}
+                    Ответственный: {{ working ? p.responsibleLabel : p.approvedResponsible }}
+                    · {{ deck.slides|length|plural(['слайд', 'слайда', 'слайдов']) }}
+                    {% if working and p.author %} · автор {{ p.author.displayName }}{% endif %}
+                    {% if p.approvedAt %} · одобрена {{ p.approvedAt|date('d.m.Y') }}{% if p.approvedBy %} ({{ p.approvedBy.displayName }}){% endif %}{% endif %}
+                </p>
+                {% if p.description and working %}<p class="hero__meta">{{ p.description }}</p>{% endif %}
+            </div>
+            <div class="hero__actions">
+                {% if is_granted('PRESENTATION_EDIT', p) %}<a class="btn btn--pill" href="{{ path('app_presentation_edit', {id: p.id}) }}">Редактировать</a>{% endif %}
+                <a class="btn btn--ghost" href="{{ path('app_presentation_present', {id: p.id}) }}" target="_blank" rel="noopener">Показ</a>
+                <a class="btn btn--ghost" href="{{ path('app_presentation_export', {id: p.id}) }}">PowerPoint</a>
+                <a class="btn btn--ghost" href="{{ path('app_presentation_print', {id: p.id}) }}" target="_blank" rel="noopener" title="Откроется страница для печати: выберите «Сохранить как PDF»">PDF</a>
+                {% if working and p.hasApprovedVersion and p.hasUnapprovedChanges %}<a class="btn btn--ghost" href="{{ path('app_presentation_export', {id: p.id, approved: 1}) }}" title="Одобренная редакция в PowerPoint">Одобренная редакция</a>{% endif %}
+                <form method="post" action="{{ path('app_presentation_duplicate', {id: p.id}) }}" class="inline-form">
+                    <input type="hidden" name="_token" value="{{ token }}">
+                    <button type="submit" class="btn btn--ghost" title="Копия станет вашим черновиком">Сделать копию</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+
+    {% if working %}
+        {% if p.rejected and p.decisionNote %}
+            <div class="alert alert--warning"><b>Возвращено на доработку{% if p.decidedBy %} ({{ p.decidedBy.displayName }}, {{ p.decidedAt|date('d.m.Y H:i') }}){% endif %}:</b> {{ p.decisionNote }}</div>
+        {% elseif p.approved and p.decisionNote %}
+            <div class="alert alert--success"><b>Одобрено{% if p.decidedBy %} ({{ p.decidedBy.displayName }}){% endif %}:</b> {{ p.decisionNote }}</div>
+        {% endif %}
+        {% if open_comments > 0 %}<div class="alert alert--info">Открытых замечаний к слайдам: {{ open_comments }}. Они видны в редакторе (панель «Замечания»).</div>{% endif %}
+
+        <div class="card deck-moderation">
+            <h2 class="h-section">Модерация</h2>
+            {% if is_granted('PRESENTATION_DECIDE', p) %}
+                <p>Отправлено на модерацию {{ p.submittedAt ? p.submittedAt|date('d.m.Y H:i') }}{% if p.author %} — {{ p.author.displayName }}{% endif %}.{% if p.submitNote %} Комментарий автора: «{{ p.submitNote }}».{% endif %}</p>
+                <form method="post" action="{{ path('app_presentation_decide', {id: p.id}) }}" class="form ack-decide">
+                    <input type="hidden" name="_token" value="{{ token }}">
+                    <input type="hidden" name="back" value="{{ back_url }}">
+                    <input class="form-control form-control--inline" type="text" name="note" maxlength="2000" placeholder="Комментарий (обязателен при возврате на доработку)">
+                    <button type="submit" class="btn btn--pill btn--small" name="decision" value="approve">{{ p.topic ? 'Одобрить тему' : 'Одобрить' }}</button>
+                    <button type="submit" class="btn btn--ghost btn--small btn--danger" name="decision" value="reject">Вернуть на доработку</button>
+                </form>
+            {% elseif p.submitted %}
+                <p>На модерации с {{ p.submittedAt ? p.submittedAt|date('d.m.Y H:i') }}: решение примут маркетологи и помощники маркетолога. Пока презентация на модерации, автор её не меняет.</p>
+                {% if p.author and p.author.id == app.user.id and not is_presentation_moderator() %}<p class="hints">Нужно что-то исправить — отзовите её с модерации.</p>{% endif %}
+                {% if p.isAuthor(app.user) and is_presentation_moderator() and not (app.user.marketer or app.user.admin) %}<p class="hints">Свою презентацию помощник не одобряет — её рассмотрит маркетолог или другой помощник.</p>{% endif %}
+            {% elseif is_granted('PRESENTATION_SUBMIT', p) %}
+                <p>{{ p.hasApprovedVersion ? 'После одобрения презентацию меняли: сотрудники видят одобренную редакцию, пока новая не пройдёт модерацию.' : 'Готово? Отправьте на модерацию — маркетологи получат уведомление.' }}</p>
+            {% else %}
+                <p class="text-muted">{{ p.approved ? 'Одобрена — сотрудники видят эту редакцию.' : 'Черновик.' }}</p>
+            {% endif %}
+            <div class="form-actions">
+                {% if is_granted('PRESENTATION_SUBMIT', p) %}
+                    <form method="post" action="{{ path('app_presentation_submit', {id: p.id}) }}" class="inline-form deck-submit">
+                        <input type="hidden" name="_token" value="{{ token }}">
+                        <input type="hidden" name="back" value="{{ back_url }}">
+                        <input class="form-control form-control--inline" type="text" name="note" maxlength="2000" placeholder="Комментарий для маркетолога (необязательно)">
+                        <button type="submit" class="btn btn--pill btn--small">Отправить на модерацию</button>
+                    </form>
+                {% endif %}
+                {% if is_granted('PRESENTATION_WITHDRAW', p) %}
+                    <form method="post" action="{{ path('app_presentation_withdraw', {id: p.id}) }}" class="inline-form">
+                        <input type="hidden" name="_token" value="{{ token }}">
+                        <input type="hidden" name="back" value="{{ back_url }}">
+                        <button type="submit" class="btn btn--ghost btn--small">Отозвать с модерации</button>
+                    </form>
+                {% endif %}
+                {% if is_presentation_moderator() and p.hasApprovedVersion %}
+                    <form method="post" action="{{ path('app_presentation_revoke', {id: p.id}) }}" class="inline-form" data-confirm="Снять одобрение? Сотрудники{{ p.topic ? ' и презентация собрания' }} перестанут видеть эту презентацию.">
+                        <input type="hidden" name="_token" value="{{ token }}">
+                        <input type="hidden" name="back" value="{{ back_url }}">
+                        <button type="submit" class="btn btn--ghost btn--small">Снять одобрение</button>
+                    </form>
+                {% endif %}
+                {% if is_granted('PRESENTATION_DELETE', p) %}
+                    <form method="post" action="{{ path('app_presentation_delete', {id: p.id}) }}" class="inline-form" data-confirm="Удалить «{{ p.title }}» вместе со слайдами и историей? Отменить нельзя.">
+                        <input type="hidden" name="_token" value="{{ token }}">
+                        <button type="submit" class="btn btn--ghost btn--small btn--danger">Удалить</button>
+                    </form>
+                {% endif %}
+            </div>
+        </div>
+    {% endif %}
+
+    <div class="deck-slides" data-deck-viewer>
+        {% for s in deck.slides %}
+            <figure class="deck-slides__item {{ s.hidden ? 'is-hidden' }}">
+                <a class="deck-slides__frame" href="{{ path('app_presentation_present', {id: p.id, slide: loop.index}) }}" target="_blank" rel="noopener" title="Показать с этого слайда">
+                    <div data-deck-slide="{{ s|json_encode(constant('JSON_UNESCAPED_UNICODE') b-or constant('JSON_UNESCAPED_SLASHES')) }}"></div>
+                </a>
+                <figcaption><span class="deck-slides__num">{{ loop.index }}</span>{% if s.hidden %} <span class="tag">скрыт</span>{% endif %}{% if working and s.notes %}<span class="deck-slides__notes" title="{{ s.notes }}">заметки</span>{% endif %}</figcaption>
+            </figure>
+        {% endfor %}
+    </div>
+</section>
+
+<script type="application/json" id="deck-config">{{ deck_config|json_encode(constant('JSON_HEX_TAG') b-or constant('JSON_HEX_AMP') b-or constant('JSON_UNESCAPED_UNICODE') b-or constant('JSON_UNESCAPED_SLASHES'))|raw }}</script>
+{% endblock %}
+
+{% block javascripts %}
+    <script src="{{ asset('js/deck-render.js') }}" defer></script>
+    <script src="{{ asset('js/deck-pages.js') }}" defer></script>
+{% endblock %}

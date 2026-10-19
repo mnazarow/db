@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow">
+    <title>{{ p.title }} — редактор слайдов — {{ app_company }}</title>
+    <link rel="icon" href="{{ asset('img/favicon.svg') }}" type="image/svg+xml">
+    <link rel="preload" href="{{ asset('fonts/DINCondensed-Light.woff2') }}" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="{{ asset('fonts/roboto-cyrillic-400-normal.woff2') }}" as="font" type="font/woff2" crossorigin>
+    <link rel="stylesheet" href="{{ asset('css/app.css') }}">
+    <link rel="stylesheet" href="{{ asset('css/deck.css') }}">
+</head>
+<body class="de-body">
+<div class="de" data-deck-editor>
+    <header class="de-top">
+        <a class="de-top__back" href="{{ config.urls.back }}" title="К списку" aria-label="Назад к списку">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5 8 12l7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+        <img class="de-top__logo" src="{{ asset('img/presentation/logo-mark.svg') }}" alt="" width="34" height="28">
+        <div class="de-top__title">
+            <input class="de-top__name" data-meta="title" value="{{ p.title }}" maxlength="255" aria-label="Название презентации" title="Название — оно же заголовок привязанных слайдов">
+            <div class="de-top__meta">
+                <span class="badge badge--{{ p|presentation_status_class }}" data-status><span class="badge__dot"></span><span data-status-label>{{ p.statusLabel }}</span></span>
+                {% if config.meeting %}<a href="{{ path('app_meeting_show', {id: config.meeting.id}) }}" class="de-top__meeting">{{ config.meeting.title }}, {{ config.meeting.date }}</a>{% endif %}
+                <span class="de-top__save" data-save-state role="status" aria-live="polite">Сохранено</span>
+            </div>
+        </div>
+        <div class="de-toolbar" role="toolbar" aria-label="Редактирование" data-toolbar></div>
+        <div class="de-top__right" data-top-right></div>
+    </header>
+
+    {% if config.decisionNote %}
+        <div class="de-banner de-banner--warn" data-banner>
+            <b>Возвращено на доработку{% if config.decidedBy %} ({{ config.decidedBy }}){% endif %}:</b> {{ config.decisionNote }}
+            <button type="button" class="de-banner__close" data-banner-close aria-label="Скрыть">×</button>
+        </div>
+    {% endif %}
+
+    <div class="de-main">
+        <aside class="de-slides" aria-label="Слайды">
+            <div class="de-slides__head">
+                <span>Слайды</span>
+                <button type="button" class="de-btn de-btn--small" data-act="slide-new" title="Новый слайд из макета (Ctrl+M)">+ Слайд</button>
+            </div>
+            <ol class="de-slides__list" data-slides tabindex="0" aria-label="Список слайдов"></ol>
+        </aside>
+
+        <section class="de-work">
+            <div class="de-textbar" data-textbar role="toolbar" aria-label="Оформление текста"></div>
+            <div class="de-canvas" data-canvas>
+                <div class="de-stage" data-stage>
+                    <div class="de-stage__slide" data-stage-slide></div>
+                    <div class="de-stage__overlay" data-overlay></div>
+                </div>
+            </div>
+            <div class="de-bottom">
+                <button type="button" class="de-btn de-btn--ghost de-btn--small" data-act="notes-toggle" aria-expanded="true">Заметки докладчика</button>
+                <span class="de-bottom__info" data-info></span>
+                <span class="de-bottom__spacer"></span>
+                <button type="button" class="de-btn de-btn--ghost de-btn--small" data-act="zoom-out" title="Уменьшить (Ctrl −)">−</button>
+                <button type="button" class="de-btn de-btn--ghost de-btn--small de-zoom" data-act="zoom-fit" title="По размеру окна (Ctrl 0)" data-zoom-label>По окну</button>
+                <button type="button" class="de-btn de-btn--ghost de-btn--small" data-act="zoom-in" title="Увеличить (Ctrl +)">+</button>
+            </div>
+            <textarea class="de-notes" data-notes placeholder="Заметки докладчика к этому слайду — видны только в окне заметок при показе (клавиша S) и в PowerPoint" aria-label="Заметки докладчика"></textarea>
+        </section>
+
+        <aside class="de-panel" aria-label="Свойства">
+            <div class="de-panel__tabs" role="tablist">
+                <button type="button" role="tab" data-tab="format" aria-selected="true">Формат</button>
+                <button type="button" role="tab" data-tab="comments">Замечания <span class="de-count" data-comments-count></span></button>
+                <button type="button" role="tab" data-tab="versions">История</button>
+                <button type="button" role="tab" data-tab="check">Проверка <span class="de-count" data-check-count></span></button>
+            </div>
+            <div class="de-panel__body" data-panel></div>
+        </aside>
+    </div>
+
+    <input type="file" hidden data-file-image accept="image/png,image/jpeg,image/gif">
+    <input type="file" hidden data-file-pptx accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation">
+    <div class="de-toast" data-toast role="status" aria-live="polite" hidden></div>
+    <div class="de-menu" data-menu hidden></div>
+    <dialog class="de-dialog" data-dialog><div data-dialog-body></div></dialog>
+    <noscript><p class="alert alert--danger">Для редактора слайдов нужен JavaScript.</p></noscript>
+</div>
+
+<script type="application/json" id="deck-editor-config">{{ config|json_encode(constant('JSON_HEX_TAG') b-or constant('JSON_HEX_AMP') b-or constant('JSON_UNESCAPED_UNICODE') b-or constant('JSON_UNESCAPED_SLASHES'))|raw }}</script>
+<script type="application/json" id="deck-data">{{ deck|json_encode(constant('JSON_HEX_TAG') b-or constant('JSON_HEX_AMP') b-or constant('JSON_UNESCAPED_UNICODE') b-or constant('JSON_UNESCAPED_SLASHES') b-or constant('JSON_PRESERVE_ZERO_FRACTION'))|raw }}</script>
+<script src="{{ asset('js/deck-render.js') }}"></script>
+<script src="{{ asset('js/deck-editor-core.js') }}"></script>
+<script src="{{ asset('js/deck-editor-canvas.js') }}"></script>
+<script src="{{ asset('js/deck-editor-ui.js') }}"></script>
+</body>
+</html>

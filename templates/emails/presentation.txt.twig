@@ -1,0 +1,41 @@
+Здравствуйте, {{ user.displayName }}!
+{% set what = presentation.topic ? 'Тема собрания' : 'Презентация' %}
+{% set meeting = presentation.topic and presentation.meeting ? ' (' ~ presentation.meeting.displayTitle ~ ', ' ~ presentation.meeting.dateLabel ~ ')' : '' %}
+{% if kind == 'submitted' %}
+
+{{ by.displayName }} {{ presentation.topic ? 'отправил(а) тему собрания' : 'отправил(а) презентацию' }} на модерацию:
+
+- {{ presentation.title }}{{ meeting }} — {{ presentation.slideCount }} сл., ответственный: {{ presentation.responsibleLabel }}
+  {{ url }}
+{% if presentation.submitNote %}
+
+Комментарий: {{ presentation.submitNote }}
+{% endif %}
+
+Откройте её в редакторе, при необходимости оставьте замечания к слайдам и примите
+решение — «Одобрить» или «Вернуть на доработку».
+{% elseif kind == 'approved' %}
+
+{{ what }} «{{ presentation.title }}»{{ meeting }} {{ presentation.topic ? 'одобрена и войдёт в презентацию собрания' : 'одобрена — её видят все сотрудники' }}.
+{{ url }}
+
+Решение принял(а): {{ by.displayName }}{% if presentation.decidedAt %}, {{ presentation.decidedAt|date('d.m.Y H:i') }}{% endif %}.
+{% if presentation.decisionNote %}
+Комментарий: {{ presentation.decisionNote }}
+{% endif %}
+{% else %}
+
+{{ what }} «{{ presentation.title }}»{{ meeting }} возвращена на доработку.
+{{ url }}
+
+Решение принял(а): {{ by.displayName }}{% if presentation.decidedAt %}, {{ presentation.decidedAt|date('d.m.Y H:i') }}{% endif %}.
+{% if presentation.decisionNote %}
+Что исправить: {{ presentation.decisionNote }}
+{% endif %}
+
+Замечания к отдельным слайдам — в редакторе, на панели «Замечания». Внесите правки и
+отправьте на модерацию заново.
+{% endif %}
+
+--
+Письмо отправлено автоматически порталом «{{ app_name }}». Отвечать на него не нужно.

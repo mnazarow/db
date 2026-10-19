@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ru">
+<body style="font-family: Arial, Helvetica, sans-serif; color: #1D1E1E; line-height: 1.5;">
+<p>Здравствуйте, {{ user.displayName }}!</p>
+{% set what = presentation.topic ? 'Тема собрания' : 'Презентация' %}
+{% set meeting = presentation.topic and presentation.meeting ? ' (' ~ presentation.meeting.displayTitle ~ ', ' ~ presentation.meeting.dateLabel ~ ')' : '' %}
+{% if kind == 'submitted' %}
+    <p>{{ by.displayName }} {{ presentation.topic ? 'отправил(а) тему собрания' : 'отправил(а) презентацию' }} на модерацию:</p>
+    <ul>
+        <li><a href="{{ url }}">{{ presentation.title }}</a>{{ meeting }} — {{ presentation.slideCount }} сл., ответственный: {{ presentation.responsibleLabel }}</li>
+    </ul>
+    {% if presentation.submitNote %}<p><b>Комментарий:</b> {{ presentation.submitNote }}</p>{% endif %}
+    <p>Откройте её в редакторе, при необходимости оставьте замечания к слайдам и примите решение — <b>«Одобрить»</b> или <b>«Вернуть на доработку»</b> (в редакторе, на странице презентации или на странице «На модерации»).</p>
+{% elseif kind == 'approved' %}
+    <p>{{ what }} <a href="{{ url }}">{{ presentation.title }}</a>{{ meeting }} <b style="color:#1F7A3D;">{{ presentation.topic ? 'одобрена и войдёт в презентацию собрания' : 'одобрена — её видят все сотрудники' }}</b>.</p>
+    <p>Решение принял(а): {{ by.displayName }}{% if presentation.decidedAt %}, {{ presentation.decidedAt|date('d.m.Y H:i') }}{% endif %}.</p>
+    {% if presentation.decisionNote %}<p><b>Комментарий:</b> {{ presentation.decisionNote }}</p>{% endif %}
+{% else %}
+    <p>{{ what }} <a href="{{ url }}">{{ presentation.title }}</a>{{ meeting }} <b style="color:#D00024;">возвращена на доработку</b>.</p>
+    <p>Решение принял(а): {{ by.displayName }}{% if presentation.decidedAt %}, {{ presentation.decidedAt|date('d.m.Y H:i') }}{% endif %}.</p>
+    {% if presentation.decisionNote %}<p><b>Что исправить:</b> {{ presentation.decisionNote }}</p>{% endif %}
+    <p>Замечания к отдельным слайдам — в редакторе, на панели «Замечания». Внесите правки и отправьте на модерацию заново.</p>
+{% endif %}
+<p style="color:#6E7480; font-size: 12px;">Письмо отправлено автоматически порталом «{{ app_name }}». Отвечать на него не нужно.</p>
+</body>
+</html>

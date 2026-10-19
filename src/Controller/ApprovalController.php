@@ -8,10 +8,12 @@ use App\Entity\Document;
 use App\Entity\DocumentApproval;
 use App\Entity\User;
 use App\Repository\DocumentApprovalRepository;
+use App\Repository\PresentationRepository;
 use App\Repository\UserRepository;
 use App\Security\Access;
 use App\Security\Voter\PortalVoter;
 use App\Service\ApprovalService;
+use App\Service\Presentation\PresentationAccess;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -150,15 +152,19 @@ final class ApprovalController extends AbstractController
      */
     #[Route('/moderation', name: 'app_moderation', methods: ['GET'])]
     #[IsGranted('ROLE_USER')]
-    public function moderation(#[CurrentUser] User $user): Response
+    public function moderation(#[CurrentUser] User $user, PresentationRepository $presentations, PresentationAccess $presentationAccess): Response
     {
         $isModerator = $this->access->isModerator($user);
-        if (!$isModerator && !$this->access->isAssistant($user)) {
+        $presentationModerator = $presentationAccess->isModerator($user);
+        if (!$isModerator && !$this->access->isAssistant($user) && !$presentationModerator) {
             throw $this->createAccessDeniedException('Страница модерации доступна маркетологам и их помощникам.');
         }
 
         return $this->render('moderation/index.html.twig', [
             'is_moderator' => $isModerator,
+            // Презентации и темы пятничных собраний: модерируют маркетологи, помощники и администраторы.
+            'presentation_moderator' => $presentationModerator,
+            'presentation_queue' => $presentationModerator ? $presentations->findModerationQueue() : [],
             'queue' => $isModerator ? $this->approvals->findModerationQueue($this->access->managedSectionIds($user)) : [],
             'requested' => $this->approvals->findRequestedBy($user, 50),
             'decided' => $isModerator ? $this->approvals->findDecidedByUser($user, 30) : [],

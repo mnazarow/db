@@ -53,6 +53,44 @@
         </div>
     {% endif %}
 
+    {% if presentation_moderator|default(false) %}
+        <div class="card table-card" id="presentations">
+            <div class="card__head card__head--padded">
+                <h2 class="h-section">Презентации и темы собраний <span class="tag">{{ presentation_queue|length }}</span></h2>
+                <span class="toolbar__row toolbar__row--compact">
+                    <a class="link-action" href="{{ path('app_presentations') }}">Подготовка презентаций</a>
+                    <a class="link-action" href="{{ path('app_meetings') }}">Пятничное собрание</a>
+                </span>
+            </div>
+            {% if presentation_queue|length > 0 %}
+                <ul class="attention-list">
+                    {% for p in presentation_queue %}
+                        {% set own = p.isAuthor(app.user) and not (app.user.marketer or app.user.admin) %}
+                        <li class="attention-item">
+                            <a href="{{ path('app_presentation_show', {id: p.id}) }}">{{ p.title }}</a>
+                            <span class="attention-item__meta">{{ p.topic ? 'тема собрания: ' ~ p.meeting.displayTitle ~ ', ' ~ p.meeting.dateLabel : 'презентация' }} · {{ p.slideCount|plural(['слайд', 'слайда', 'слайдов']) }} · {{ p.author ? p.author.displayName : '—' }}, {{ p.submittedAt ? p.submittedAt|date('d.m.Y H:i') }}</span>
+                            {% if p.submitNote %}<p class="snippet__text">{{ p.submitNote }}</p>{% endif %}
+                            {% if own %}
+                                <p class="hints">Свою презентацию помощник не одобряет — её рассмотрит маркетолог или другой помощник.</p>
+                            {% else %}
+                                <form method="post" action="{{ path('app_presentation_decide', {id: p.id}) }}" class="form ack-decide">
+                                    <input type="hidden" name="_token" value="{{ csrf_token('presentation_' ~ p.id) }}">
+                                    <input type="hidden" name="back" value="{{ path('app_moderation') }}#presentations">
+                                    <input class="form-control form-control--inline" type="text" name="note" maxlength="2000" placeholder="Комментарий (обязателен при возврате на доработку)">
+                                    <button type="submit" class="btn btn--pill btn--small" name="decision" value="approve">Одобрить</button>
+                                    <button type="submit" class="btn btn--ghost btn--small btn--danger" name="decision" value="reject">Вернуть на доработку</button>
+                                    <a class="btn btn--ghost btn--small" href="{{ path('app_presentation_edit', {id: p.id}) }}">Открыть в редакторе</a>
+                                </form>
+                            {% endif %}
+                        </li>
+                    {% endfor %}
+                </ul>
+            {% else %}
+                <p class="card__padded text-muted">Презентаций и тем на модерации нет.</p>
+            {% endif %}
+        </div>
+    {% endif %}
+
     <div class="card table-card">
         <div class="card__head card__head--padded"><h2 class="h-section">{{ is_moderator ? 'Отправлено мной' : 'Мои материалы' }}</h2></div>
         {% if requested|length > 0 %}
