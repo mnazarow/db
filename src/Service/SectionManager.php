@@ -10,6 +10,7 @@ use App\Entity\User;
 use App\Repository\MaterialRowRepository;
 use App\Repository\SectionModeratorRepository;
 use App\Repository\SectionRepository;
+use App\Service\Material\MaterialLinker;
 use Doctrine\ORM\EntityManagerInterface;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\String\Slugger\AsciiSlugger;
@@ -25,6 +26,7 @@ final class SectionManager
         private readonly SectionModeratorRepository $moderators,
         private readonly LoggerInterface $auditLogger,
         private readonly ?MaterialRowRepository $materialRows = null,
+        private readonly ?MaterialLinker $materialLinker = null,
     ) {
     }
 
@@ -63,6 +65,7 @@ final class SectionManager
     public function update(Section $section, ?Section $newParent, ?User $actor = null): void
     {
         $oldParentId = $section->getParent()?->getId();
+        $oldTable = MaterialLinker::tableSection($section);
         if ($newParent?->getId() !== $oldParentId) {
             $this->assertCanMove($section, $newParent);
             $section->setParent($newParent);
@@ -74,6 +77,11 @@ final class SectionManager
         $this->em->flush();
         if ($newParent?->getId() !== $oldParentId) {
             $this->refreshSubtreePaths($section);
+            // Документы перенесённого раздела уходят из прежней таблицы материалов и попадают в новую.
+            $newTable = MaterialLinker::tableSection($section);
+            foreach (array_filter([$oldTable, $newTable]) as $table) {
+                $this->materialLinker?->syncSection($table, $actor);
+            }
         }
         $this->auditLogger->info('Изменён раздел', ['section' => $section->getFullName(), 'by' => $actor?->getUsername()]);
     }

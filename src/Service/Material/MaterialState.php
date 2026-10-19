@@ -11,7 +11,8 @@ namespace App\Service\Material;
  *    ЕСЛИ(PM="Отсутствует";"Отсутствует";ЕСЛИ(И(PM="Соответствует";Дизайн="Соответствует");"Готово";
  *    ЕСЛИ(И(PM="Соответствует";Дизайн="Не соответствует");"Допустимо";""))))))
  *
- * где PM — «Требования PM», Дизайн — «Дизайн-требования».
+ * где PM — «Требования PM», Дизайн — «Дизайн-требования». В таблицах портала формула дополнена
+ * документами раздела (см. effective()): без файла материал «Отсутствует», с файлом — не «Отсутствует».
  */
 final class MaterialState
 {
@@ -65,6 +66,21 @@ final class MaterialState
             self::CHECK_OK === $pm && self::CHECK_FAIL === $design => self::ACCEPTABLE,
             default => '',
         };
+    }
+
+    /**
+     * Состояние с учётом документов раздела: материала без файла нет («Отсутствует»), у материала с
+     * файлом — состояние по формуле; если по оценкам он «Отсутствует» или не оценён — «Неизвестно»
+     * (файл есть, проверка PM и дизайна ещё впереди).
+     */
+    public static function effective(?string $pm, ?string $design, bool $hasFile): string
+    {
+        if (!$hasFile) {
+            return self::ABSENT;
+        }
+        $state = self::compute($pm, $design);
+
+        return '' === $state || self::ABSENT === $state ? self::UNKNOWN : $state;
     }
 
     public static function css(string $state): string

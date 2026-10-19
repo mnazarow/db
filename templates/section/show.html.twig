@@ -1,5 +1,6 @@
 {% extends 'base.html.twig' %}
 {% import '_macros.html.twig' as m %}
+{% import 'materials/_macros.html.twig' as mt %}
 
 {% block title %}{{ section.name }}{% endblock %}
 {% block body_class %}page-section{% endblock %}
@@ -49,10 +50,22 @@
                     <div class="section-card__icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
                     <div class="section-card__body">
                         <div class="section-card__title">{{ s.name }}</div>
-                        <div class="section-card__meta">{{ c.published|plural(['документ', 'документа', 'документов']) }}{% if c.children > 0 %} · {{ c.children|plural(['подраздел', 'подраздела', 'подразделов']) }}{% endif %}</div>
+                        <div class="section-card__meta">{{ c.published|plural(['документ', 'документа', 'документов']) }}{% if c.children > 0 %} · {{ c.children|plural(['подраздел', 'подраздела', 'подразделов']) }}{% endif %}{% if material_children[s.id]|default(0) > 0 %} · {{ material_children[s.id]|plural(['материал', 'материала', 'материалов']) }} в таблице{% endif %}</div>
                     </div>
                 </a>
             {% endfor %}
+        </div>
+    {% endif %}
+
+    {% if materials %}
+        <div class="card mt-section-card">
+            <div class="card__head">
+                <h2 class="h-section">Материалы{% if materials.root.id != section.id %} раздела «{{ materials.root.name }}»{% endif %}</h2>
+                {% if materials.root.id != section.id %}<a class="link-action" href="{{ path('app_section_materials', {id: materials.root.id}) }}">Таблица материалов →</a>{% endif %}
+            </div>
+            {{ include('materials/_summary_strip.html.twig', {summary: materials.summary}) }}
+            {{ mt.state_bar(materials.summary) }}
+            <p class="hints">Считается по документам раздела и подразделов: загруженный документ сам становится строкой таблицы, материал без файла — «Отсутствует».</p>
         </div>
     {% endif %}
 

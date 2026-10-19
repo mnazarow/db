@@ -25,6 +25,7 @@ class MaterialRowChange
     public const UPLOAD = 'upload';
     public const DETACH = 'detach';
     public const IMPORT = 'import';
+    public const LINK = 'link';
 
     public const ACTION_LABELS = [
         self::CREATE => 'Строка добавлена',
@@ -33,6 +34,7 @@ class MaterialRowChange
         self::UPLOAD => 'Загружен файл',
         self::DETACH => 'Файл отвязан',
         self::IMPORT => 'Импорт из Excel',
+        self::LINK => 'Привязан документ раздела',
     ];
 
     /** Длинные значения (комментарии) хранятся в журнале с обрезкой. */

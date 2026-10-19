@@ -12,6 +12,7 @@ use App\Repository\DocumentRepository;
 use App\Repository\SectionRepository;
 use App\Security\Access;
 use App\Service\Llm\AnswerService;
+use App\Service\Material\MaterialSummary;
 use App\Service\StatsService;
 use App\Service\Text\SearchQuery;
 use App\Service\Video\VideoApi;
@@ -39,7 +40,7 @@ final class HomeController extends AbstractController
      * опубликованные документы; доступ гостей регулируется настройками (GuestAccessSubscriber).
      */
     #[Route('/', name: 'app_home', methods: ['GET'])]
-    public function index(#[CurrentUser] ?User $user): Response
+    public function index(#[CurrentUser] ?User $user, MaterialSummary $materialSummary): Response
     {
         $guest = null === $user;
         $tree = $this->sections->findAllTree();
@@ -73,7 +74,30 @@ final class HomeController extends AbstractController
             // Что сотруднику нужно прочитать под подпись.
             'to_acknowledge' => $guest ? [] : $this->acknowledgements->findPendingForUser($user, 6, $viewer),
             'today' => new \DateTimeImmutable('today'),
+            // Счётчики таблиц материалов на карточках разделов — для тех, кто ведёт материалы этих разделов.
+            'materials' => $guest ? [] : $this->materialCounters($user, $tree, $materialSummary),
         ]);
+    }
+
+    /**
+     * @param list<Section> $tree
+     *
+     * @return array<int, array<string, mixed>> id раздела верхнего уровня => сводная его таблицы материалов
+     */
+    private function materialCounters(User $user, array $tree, MaterialSummary $summary): array
+    {
+        if (!$this->access->isContributor($user)) {
+            return [];
+        }
+        $visible = [];
+        foreach ($tree as $section) {
+            if (null === $section->getParent() && $section->isMaterialsEnabled()
+                && ($this->access->isAssistant($user) || $this->access->canManageSection($user, $section))) {
+                $visible[(int) $section->getId()] = true;
+            }
+        }
+
+        return [] === $visible ? [] : array_intersect_key($summary->bySection(), $visible);
     }
 
     #[Route('/search', name: 'app_search', methods: ['GET'])]

@@ -10,6 +10,7 @@ use App\Entity\DocumentLink;
 use App\Entity\DocumentTemplate;
 use App\Entity\DocumentSubscription;
 use App\Entity\DocumentEvent;
+use App\Entity\MaterialParameter;
 use App\Entity\Section;
 use App\Entity\User;
 use App\Repository\SectionRepository;
@@ -19,6 +20,7 @@ use App\Service\DocumentKindService;
 use App\Service\DocumentManager;
 use App\Service\Material\MaterialImporter;
 use App\Service\Material\MaterialService;
+use App\Service\Material\MaterialState;
 use App\Service\SectionManager;
 use App\Service\StatsAggregator;
 use App\Service\UserManager;
@@ -305,7 +307,8 @@ HTML, true, [
 
     /**
      * Две категории продуктовых материалов — так же, как листы книги Excel: материалы с типом,
-     * версией, датой, проверками PM и дизайна; к двум строкам сразу загружены файлы.
+     * версией, датой, проверками PM и дизайна. Файлы загружены ко всем материалам, кроме отсутствующих
+     * по листу: цифры считаются по документам раздела, и сводная совпадает с листом «Сводная по категориям».
      */
     private function demoMaterials(User $admin, User $moderator, string $tmp): void
     {
@@ -343,16 +346,19 @@ HTML, true, [
             if ('Насосные станции' === $section->getName()) {
                 $this->sectionManager->addModerator($section, $moderator, $admin);
             }
+            $pm = $this->materials->roleParameter($section, MaterialParameter::ROLE_PM);
             foreach ($this->materials->rows($section) as $row) {
+                $check = $row->getValue($pm);
+                if ('' === $check || MaterialState::CHECK_ABSENT === $check) {
+                    continue; // материала нет — строка «Отсутствует»
+                }
                 $file = match ($row->getTitle()) {
                     'Каталог насосных станций НС' => $this->pdf($tmp, 'NS-CAT', 'Katalog nasosnykh stantsiy NS'),
                     'Паспорт насосной станции НС-40' => $this->pdf($tmp, 'NS-40-PS', 'Pasport NS-40'),
                     'Каталог предохранительных клапанов' => $this->pdf($tmp, 'KP-CAT', 'Katalog predokhranitelnykh klapanov'),
-                    default => null,
+                    default => $this->pdf($tmp, 'MAT-'.$row->getId(), 'Demo material '.$row->getId()),
                 };
-                if (null !== $file) {
-                    $this->materials->upload($row, $this->upload($file), $admin);
-                }
+                $this->materials->upload($row, $this->upload($file), $admin);
             }
         }
     }

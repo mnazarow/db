@@ -49,6 +49,7 @@ final class MaterialImporter
         private readonly DocumentKindService $kinds,
         private readonly LoggerInterface $auditLogger,
         private readonly ?MaterialHistory $history = null,
+        private readonly ?MaterialLinker $linker = null,
     ) {
     }
 
@@ -92,6 +93,12 @@ final class MaterialImporter
             $this->materials->forgetParameters();
             $this->kinds->reset();
             throw $e;
+        }
+        // Документы разделов привязываются к загруженным строкам (по названию или типу) или добавляются строками.
+        if (null !== $this->linker) {
+            foreach ($this->sections->findBy(['parent' => null, 'materialsEnabled' => true]) as $section) {
+                $this->linker->syncSection($section, $by);
+            }
         }
         $this->auditLogger->info('Импорт таблиц материалов из Excel', [
             'sections' => \count($report['sheets']),

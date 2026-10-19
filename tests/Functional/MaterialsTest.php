@@ -110,19 +110,21 @@ final class MaterialsTest extends PortalTestCase
 
         $summary = $this->summary()->forSection($pumps);
         self::assertSame(8, $summary['total']);
-        self::assertSame(2, $summary['files']);
+        // Файлы загружены ко всем материалам, кроме отсутствующего по листу: состояние — как в Excel.
+        self::assertSame(7, $summary['files']);
         self::assertSame(['Готово' => 3, 'Допустимо' => 2, 'Не соответствует' => 2, 'Отсутствует' => 1, 'Неизвестно' => 0], $summary['states']);
         self::assertSame(3, $summary['problems']);
         self::assertSame(['Опросные листы и ТКП' => 1, 'Паспорта и руководства' => 1, 'Презентации' => 1], $this->kindNames($summary['problemsByKind']));
 
         $tanks = $this->summary()->forSection($this->section('Предохранительные клапаны'));
-        self::assertSame([6, 1, 1], [$tanks['total'], $tanks['files'], $tanks['unrated']]);
-        self::assertSame(['Готово' => 2, 'Допустимо' => 1, 'Не соответствует' => 1, 'Отсутствует' => 1, 'Неизвестно' => 0], $tanks['states']);
+        // «Памятка по продажам клапанов» без оценок и без файла — «Отсутствует» (считается по документам).
+        self::assertSame([6, 4, 0], [$tanks['total'], $tanks['files'], $tanks['unrated']]);
+        self::assertSame(['Готово' => 2, 'Допустимо' => 1, 'Не соответствует' => 1, 'Отсутствует' => 2, 'Неизвестно' => 0], $tanks['states']);
 
         $overview = $this->summary()->overview();
         self::assertSame(['Насосные станции', 'Предохранительные клапаны'], array_map(static fn (array $c): string => $c['section']->getName(), $overview['categories']));
         self::assertSame(14, $overview['totals']['total']);
-        self::assertSame(5, $overview['totals']['problems']);
+        self::assertSame(6, $overview['totals']['problems']);
 
         // Написание типов из листа приведено к справочнику, «Презентации» добавлены перед «Прочим».
         self::assertSame('Опросные листы и ТКП', $this->row('Насосные станции', 'Опросный лист подбора насосной станции')->getKind()?->getName());
@@ -229,11 +231,19 @@ final class MaterialsTest extends PortalTestCase
         self::assertNotNull($design);
         self::assertNotNull($updated);
         $row = $this->row('Насосные станции', 'Опросный лист подбора насосной станции');
+        self::assertSame('Отсутствует', $this->materials()->state($row), 'файла нет — материал отсутствует');
+
+        // Файл появился: «Отсутствует» в «Требованиях PM» сменяется на «Не выбрано», материал ждёт проверки.
+        $result = $this->api($url.'/rows/'.$row->getId().'/upload', [], $token, ['file' => $this->pdf('Опросный_лист.pdf')]);
+        self::assertTrue($result['ok']);
+        self::assertSame('Не выбрано', $result['row']['values'][$pm->key()]['value']);
+        self::assertSame(['Неизвестно', 'unknown'], [$result['row']['state'], $result['row']['stateClass']]);
+        self::assertSame([8, 0], [$result['summary']['files'], $result['summary']['states']['Отсутствует']]);
 
         $result = $this->api($url.'/rows/'.$row->getId(), ['field' => $pm->key(), 'value' => 'соответствует'], $token);
         self::assertTrue($result['ok']);
         self::assertSame('Соответствует', $result['row']['values'][$pm->key()]['value']);
-        self::assertSame('', $result['row']['state'], 'дизайн «Не выбрано» — состояние пустое, как в Excel');
+        self::assertSame('Неизвестно', $result['row']['state'], 'дизайн «Не выбрано» — по формуле Excel состояние пустое, файл есть — «Неизвестно»');
 
         $result = $this->api($url.'/rows/'.$row->getId(), ['field' => $design->key(), 'value' => 'Соответствует'], $token);
         self::assertSame(['Готово', 'ready'], [$result['row']['state'], $result['row']['stateClass']]);
@@ -325,6 +335,9 @@ final class MaterialsTest extends PortalTestCase
         $row = $this->row('Насосные станции', 'Брошюра НС-40 для дилеров');
         $updated = $this->materials()->roleParameter($pumps, MaterialParameter::ROLE_UPDATED);
         $link = $this->materials()->roleParameter($pumps, MaterialParameter::ROLE_LINK);
+        // В демо-данных у строки уже есть файл: отвязываем его, чтобы загрузка создала новый документ.
+        $row->setValue($link, '');
+        $this->materials()->detach($row);
 
         $result = $this->api($url.'/rows/'.$row->getId().'/upload', [], $token, ['file' => $this->pdf('Брошюра_НС-40.pdf')]);
         self::assertTrue($result['ok'], json_encode($result, \JSON_UNESCAPED_UNICODE));
@@ -510,8 +523,10 @@ final class MaterialsTest extends PortalTestCase
         self::assertNull($radiators->getParent());
         self::assertTrue($radiators->isMaterialsEnabled());
         $row = $this->row('Радиаторы', 'Каталог радиаторов');
-        self::assertSame('Допустимо', $this->materials()->state($row));
+        self::assertSame('Отсутствует', $this->materials()->state($row), 'файла в разделе ещё нет');
         self::assertSame('2026-08-02', $row->getValue($this->materials()->roleParameter($radiators, MaterialParameter::ROLE_UPDATED)));
+        $this->materials()->upload($row, $this->pdf('Каталог радиаторов.pdf'), $this->user('admin'));
+        self::assertSame('Допустимо', $this->materials()->state($row), 'с файлом — по проверкам PM и дизайна');
         self::assertSame('Паспорта и руководства', $this->row('Радиаторы', 'Паспорт радиатора')->getKind()?->getName());
 
         // Не .xlsx — понятная ошибка.

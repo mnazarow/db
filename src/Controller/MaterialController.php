@@ -50,6 +50,8 @@ final class MaterialController extends AbstractController
     public function table(Section $section, #[CurrentUser] User $user): Response
     {
         $this->checkAccess($section, $user);
+        // Сводная первой: при первом открытии она связывает документы раздела со строками таблицы.
+        $summary = $section->isMaterialsEnabled() ? $this->summary->forSection($section) : null;
         $rows = $this->materials->rows($section);
         if (!$this->materials->supports($section)) {
             if ([] === $rows) {
@@ -74,7 +76,7 @@ final class MaterialController extends AbstractController
             'parameters' => $parameters,
             'rows' => array_map(fn (MaterialRow $row): array => $this->materials->serializeRow($row, $user), $rows),
             'kinds' => $this->kinds->all(),
-            'summary' => $this->summary->forSection($section),
+            'summary' => $summary ?? $this->summary->forSection($section),
             'states' => MaterialState::SUMMARY,
             'kind_labels' => MaterialParameter::KIND_LABELS,
             'accept' => implode(',', array_map(static fn (string $e): string => '.'.$e, $this->storage->getAllowedExtensions())),
@@ -92,6 +94,26 @@ final class MaterialController extends AbstractController
             ],
             'can_structure' => $this->access->canManageSection($user, $section),
         ]);
+    }
+
+    /**
+     * «Связать документы раздела»: документы раздела и подразделов, которых ещё нет в таблице,
+     * привязываются к строкам с тем же названием или типом либо добавляются новыми строками.
+     */
+    #[Route('/link', name: 'app_section_materials_link', methods: ['POST'])]
+    public function link(Section $section, Request $request, #[CurrentUser] User $user): Response
+    {
+        $this->checkAccess($section, $user);
+        $this->checkFormToken($request, $section);
+        $stats = $this->materials->linkDocuments($section, $user);
+        if (0 === array_sum($stats)) {
+            $this->addFlash('info', 'Все документы раздела и подразделов уже есть в таблице.');
+        } else {
+            $this->addFlash('success', \sprintf('Документы раздела связаны с таблицей: привязано к строкам — %d, добавлено строк — %d%s.',
+                $stats['linked'], $stats['created'], $stats['unlinked'] > 0 ? ', отвязано документов из других разделов — '.$stats['unlinked'] : ''));
+        }
+
+        return $this->redirectToRoute('app_section_materials', ['id' => $section->getId()]);
     }
 
     /** Включает таблицу для раздела верхнего уровня (создаёт столбцы как в Excel). */

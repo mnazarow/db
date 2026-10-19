@@ -14,6 +14,7 @@ use App\Entity\User;
 use App\Repository\DocumentApprovalRepository;
 use App\Security\Access;
 use App\Service\Html\PageHtml;
+use App\Service\Material\MaterialLinker;
 use App\Service\Preview\DocumentPreviewer;
 use App\Service\Text\TextIndexer;
 use Doctrine\DBAL\LockMode;
@@ -41,6 +42,7 @@ final class DocumentManager
         private readonly ?PortalSettings $settings = null,
         private readonly ?DocumentApprovalRepository $approvals = null,
         private readonly ?Access $access = null,
+        private readonly ?MaterialLinker $materialLinker = null,
     ) {
     }
 
@@ -196,6 +198,8 @@ final class DocumentManager
 
         $this->indexer->index($document);
         $this->auditLogger->info('Создан документ', ['document' => $document->getId(), 'title' => $document->getTitle(), 'section' => $document->getSection()->getFullName(), 'published' => $publish, 'by' => $actor->getUsername()]);
+        // Документ раздела с таблицей материалов становится её строкой («Документы → строки»).
+        $this->materialLinker?->documentSaved($document, $actor);
 
         return $document;
     }
@@ -216,6 +220,9 @@ final class DocumentManager
             ]));
         }
         $this->em->flush();
+        if (null !== $previousSection && $previousSection->getId() !== $document->getSection()->getId()) {
+            $this->materialLinker?->documentSaved($document, $actor);
+        }
         $this->auditLogger->info('Изменена карточка документа', ['document' => $document->getId(), 'by' => $actor->getUsername()]);
     }
 
@@ -442,6 +449,8 @@ final class DocumentManager
         $document->setStatus(Document::STATUS_PUBLISHED)->setPublishedAt(new \DateTimeImmutable())->setArchivedAt(null)->touch();
         $this->em->persist(new DocumentEvent($document, DocumentEvent::PUBLISH, $actor, $document->getCurrentVersion(), $ip));
         $this->em->flush();
+        // Документ, возвращённый из архива, снова считается материалом своей таблицы.
+        $this->materialLinker?->documentSaved($document, $actor);
         $this->auditLogger->info('Документ опубликован', ['document' => $document->getId(), 'by' => $actor->getUsername()]);
     }
 

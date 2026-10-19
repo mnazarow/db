@@ -152,6 +152,15 @@ class MaterialRow
         return $this;
     }
 
+    /**
+     * Есть ли у материала файл: к строке привязан документ раздела, и он не в архиве. По этому
+     * считаются «С файлами» и «Отсутствует».
+     */
+    public function hasFile(): bool
+    {
+        return null !== $this->document && !$this->document->isArchived();
+    }
+
     public function getPosition(): int
     {
         return $this->position;
