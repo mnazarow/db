@@ -28,7 +28,7 @@
     "ldapts": "^8.0.5",
     "nodemailer": "^7.0.6",
     "pg": "^8.16.3",
-    "pino": "^9.14.0"
+    "pino": "^10.4.0"
   },
   "devDependencies": {
     "pino-pretty": "^13.1.1"
