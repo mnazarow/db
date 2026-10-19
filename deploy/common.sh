@@ -137,11 +137,15 @@ setup_traps() {
 # Одновременно может выполняться только одна операция обслуживания (install/update/backup/restore/uninstall):
 # иначе, например, ночная резервная копия может начаться посреди обновления. Вложенные вызовы
 # (update → backup.sh, update → restore.sh) наследуют блокировку. acquire_lock [ожидание в секундах]
+lock_file() {
+    if [[ -d /run && -w /run ]]; then printf '/run/%s.lock' "${APP_ID}"; else printf '/var/lock/%s.lock' "${APP_ID}"; fi
+}
+
 acquire_lock() {
     [[ "${DOCPORTAL_LOCK_HELD:-}" == "1" ]] && return 0
     command -v flock >/dev/null 2>&1 || return 0
-    local wait=${1:-0} lock="/run/${APP_ID}.lock"
-    [[ -d /run && -w /run ]] || lock="/var/lock/${APP_ID}.lock"
+    local wait=${1:-0} lock
+    lock=$(lock_file)
     # Файл блокировки доступен только root: иначе любой пользователь сервера мог бы открыть его и,
     # удерживая блокировку, остановить резервное копирование и обновления.
     ( umask 077; : >>"${lock}" ) 2>/dev/null || true
@@ -160,6 +164,10 @@ acquire_lock() {
             # Скрипты до 1.6.1 без systemd запускали службы с открытым файлом блокировки — службы держат её,
             # пока работают. Операции обслуживания при этом не идут: достаточно перезапустить службы.
             die "Блокировку операций обслуживания удерживают службы (${services% }), запущенные скриптами прежней версии. Перезапустите их, например: service ${PHP_FPM_SERVICE:-php-fpm} restart && service nginx restart — и повторите."
+        fi
+        lock_holder_summary "${lock}" 2>/dev/null || true
+        if [[ -n "${LOCK_HOLDERS:-}" ]]; then
+            die "Уже выполняется другая операция обслуживания портала: ${LOCK_HOLDERS}. Дождитесь её завершения и повторите. Если она зависла (её журнал — самый новый файл в ${LOG_DIR}), остановите её со всеми дочерними процессами: sudo kill ${LOCK_HOLDER_PIDS} (если через минуту процессы остались — sudo kill -9 ${LOCK_HOLDER_PIDS}), затем проверьте портал: sudo ${APP_ID} status."
         fi
         die "Уже выполняется другая операция обслуживания портала (установка, обновление, резервное копирование или восстановление). Дождитесь её завершения и повторите."
     fi
@@ -192,6 +200,66 @@ lock_holders() {
         [[ "${p}" == "$$" ]] && continue
         cat "/proc/${pid}/comm" 2>/dev/null || true
     done | sort -u
+}
+
+# Длительность в секундах словами: «5 сут 9 ч», «3 ч 12 мин», «7 мин», «40 с».
+human_duration() {
+    local s=${1:-0}
+    if (( s >= 86400 )); then printf '%d сут %d ч' $((s / 86400)) $((s % 86400 / 3600))
+    elif (( s >= 3600 )); then printf '%d ч %d мин' $((s / 3600)) $((s % 3600 / 60))
+    elif (( s >= 60 )); then printf '%d мин' $((s / 60))
+    else printf '%d с' "${s}"; fi
+}
+
+# Операции обслуживания, которые держат блокировку, — в LOCK_HOLDERS: «PID 756 — bash ./update.sh,
+# работает 5 сут 9 ч». Только первый в цепочке процесс: вложенные скрипты и их команды наследуют
+# блокировку. LOCK_HOLDER_MAX_AGE — сколько секунд работает самая долгая (не зависла ли она);
+# LOCK_HOLDER_PIDS — эти процессы со всеми дочерними (родители первыми), чтобы остановить операцию целиком.
+lock_holder_summary() {
+    local lock=$1 fd pid parent p args age summary="" holders=" " tops=""
+    LOCK_HOLDERS=""
+    LOCK_HOLDER_MAX_AGE=0
+    LOCK_HOLDER_PIDS=""
+    for fd in $(find /proc/[0-9]*/fd -maxdepth 1 -lname "${lock}" 2>/dev/null || true); do
+        pid=${fd#/proc/}; pid=${pid%%/*}
+        holders+="${pid} "
+    done
+    for pid in ${holders}; do
+        # Этот скрипт и его дочерние процессы не считаются.
+        p=${pid}
+        while [[ -n "${p}" && "${p}" != "0" && "${p}" != "1" && "${p}" != "$$" ]]; do
+            p=$( (sed 's/^.*) //' "/proc/${p}/stat" 2>/dev/null || true) | cut -d' ' -f2)
+        done
+        [[ "${p}" == "$$" ]] && continue
+        parent=$( (sed 's/^.*) //' "/proc/${pid}/stat" 2>/dev/null || true) | cut -d' ' -f2)
+        [[ -n "${parent}" && "${holders}" == *" ${parent} "* ]] && continue
+        args=$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null | cut -c1-100 || true)
+        args=${args% }
+        [[ -n "${args}" ]] || continue
+        age=$(ps -o etimes= -p "${pid}" 2>/dev/null | tr -d ' ' || true)
+        [[ "${age}" =~ ^[0-9]+$ ]] || age=0
+        (( age > LOCK_HOLDER_MAX_AGE )) && LOCK_HOLDER_MAX_AGE=${age}
+        summary+="${summary:+; }PID ${pid} — ${args}, работает $(human_duration "${age}")"
+        tops+="${pid} "
+    done
+    LOCK_HOLDERS=${summary}
+    if [[ -n "${tops}" ]]; then
+        LOCK_HOLDER_PIDS=$(ps -eo pid=,ppid= 2>/dev/null | awk -v tops="${tops}" '
+            { kids[$2] = kids[$2] " " $1 }
+            END {
+                n = split(tops, queue, " "); out = ""
+                for (i = 1; i <= n; i++) {
+                    if (queue[i] in seen) continue
+                    seen[queue[i]] = 1
+                    out = out (out == "" ? "" : " ") queue[i]
+                    m = split(kids[queue[i]], k, " ")
+                    for (j = 1; j <= m; j++) queue[++n] = k[j]
+                }
+                print out
+            }' || true)
+        [[ -n "${LOCK_HOLDER_PIDS}" ]] || LOCK_HOLDER_PIDS=${tops% }
+    fi
+    return 0
 }
 
 # Проверка наличия строки в потоке БЕЗ раннего выхода (grep_has в конвейере при pipefail
@@ -345,7 +413,7 @@ pkg_install() {
             ;;
         dnf)
             for n in 1 2 3; do
-                timeout 3600 dnf install -y -q --setopt=retries=10 "$@" >>"${LOG_FILE}" 2>&1 9>&- && return 0
+                timeout -k 60 3600 dnf install -y -q --setopt=retries=10 "$@" </dev/null >>"${LOG_FILE}" 2>&1 9>&- && return 0
                 [[ ${n} -lt 3 ]] || break
                 warn_transient "Установка пакетов не удалась (попытка ${n}/3) — очистка кэша dnf и повтор"
                 dnf clean metadata >>"${LOG_FILE}" 2>&1 9>&- || true
@@ -391,7 +459,7 @@ pkg_install_optional() {
             apt_wait_lock
             apt_get install -y -q --no-install-recommends "$@" >>"${LOG_FILE}" 2>&1 9>&-
             ;;
-        dnf) timeout 3600 dnf install -y -q --setopt=retries=10 "$@" >>"${LOG_FILE}" 2>&1 9>&- ;;
+        dnf) timeout -k 60 3600 dnf install -y -q --setopt=retries=10 "$@" </dev/null >>"${LOG_FILE}" 2>&1 9>&- ;;
         *) return 1 ;;
     esac
 }
@@ -1097,13 +1165,13 @@ record_job() {
     [[ -n "${APP_DIR:-}" ]] || return 0
     if [[ "${INSTALL_MODE:-}" == "docker" ]]; then
         [[ -f "${APP_DIR}/docker/docker-compose.yml" ]] || return 0
-        (cd "${APP_DIR}/docker" && timeout 120 docker compose exec -T -u www-data app php bin/console "${args[@]}" --no-interaction) \
-            >>"${LOG_FILE:-/dev/null}" 2>&1 9>&- || true
+        (cd "${APP_DIR}/docker" && timeout -k 10 120 docker compose exec -T -u www-data app php bin/console "${args[@]}" --no-interaction) \
+            </dev/null >>"${LOG_FILE:-/dev/null}" 2>&1 9>&- || true
     else
         [[ -f "${APP_DIR}/current/bin/console" ]] || return 0
         php_bin=$(php_bin_for "${PHP_VERSION:-}") || return 0
-        timeout 120 runuser -u "${SERVICE_USER}" -- "${php_bin}" "${APP_DIR}/current/bin/console" "${args[@]}" --env=prod --no-interaction \
-            >>"${LOG_FILE:-/dev/null}" 2>&1 9>&- || true
+        timeout -k 10 120 runuser -u "${SERVICE_USER}" -- "${php_bin}" "${APP_DIR}/current/bin/console" "${args[@]}" --env=prod --no-interaction \
+            </dev/null >>"${LOG_FILE:-/dev/null}" 2>&1 9>&- || true
     fi
     return 0
 }
@@ -1444,7 +1512,7 @@ remote_backup_push() {
     if remote_is_dir; then
         remote_dir_check "${dest}" || return 1
         # Сначала во временный файл: оборванная копия не должна выглядеть готовой.
-        if ! timeout "${REMOTE_TIMEOUT}" cp "${archive}" "${dest}/.${name}.part" 2>>"${log}"; then
+        if ! timeout -k 30 "${REMOTE_TIMEOUT}" cp "${archive}" "${dest}/.${name}.part" </dev/null 2>>"${log}"; then
             rm -f "${dest}/.${name}.part"
             REMOTE_RESULT="не удалось записать ${dest}/${name} (свободное место, права, доступность сетевого диска)"
             return 1
@@ -1465,19 +1533,19 @@ remote_backup_push() {
         fi
     else
         if ! command -v rclone >/dev/null 2>&1; then REMOTE_RESULT="не установлен rclone"; return 1; fi
-        if ! timeout "${REMOTE_TIMEOUT}" rclone copyto "${archive}" "${dest}/${name}" --retries 3 --low-level-retries 10 --contimeout 30s --timeout 5m >>"${log}" 2>&1 9>&-; then
+        if ! timeout -k 30 "${REMOTE_TIMEOUT}" rclone copyto "${archive}" "${dest}/${name}" --retries 3 --low-level-retries 10 --contimeout 30s --timeout 5m </dev/null >>"${log}" 2>&1 9>&-; then
             REMOTE_RESULT="rclone не смог отправить ${name} в ${dest} (подробности в журнале ${log})"
             return 1
         fi
         if [[ -f "${archive}.sha256" ]]; then
-            timeout 600 rclone copyto "${archive}.sha256" "${dest}/${name}.sha256" --contimeout 30s --timeout 5m >>"${log}" 2>&1 9>&- || true
+            timeout -k 30 600 rclone copyto "${archive}.sha256" "${dest}/${name}.sha256" --contimeout 30s --timeout 5m </dev/null >>"${log}" 2>&1 9>&- || true
         fi
         if [[ ${keep} -gt 0 ]]; then
             while IFS= read -r old; do
                 [[ -n "${old}" ]] || continue
-                if timeout 600 rclone deletefile "${dest}/${old}" --contimeout 30s --timeout 5m >>"${log}" 2>&1 9>&-; then removed=$((removed + 1)); fi
-                timeout 600 rclone deletefile "${dest}/${old}.sha256" --contimeout 30s --timeout 5m >>"${log}" 2>&1 9>&- || true
-            done < <( (timeout 600 rclone lsf "${dest}" --files-only --include "${APP_ID}-backup-*.tar.gz" --contimeout 30s --timeout 5m 2>>"${log}" 9>&- || true) | sort -r | tail -n +$((keep + 1)))
+                if timeout -k 30 600 rclone deletefile "${dest}/${old}" --contimeout 30s --timeout 5m </dev/null >>"${log}" 2>&1 9>&-; then removed=$((removed + 1)); fi
+                timeout -k 30 600 rclone deletefile "${dest}/${old}.sha256" --contimeout 30s --timeout 5m </dev/null >>"${log}" 2>&1 9>&- || true
+            done < <( (timeout -k 30 600 rclone lsf "${dest}" --files-only --include "${APP_ID}-backup-*.tar.gz" --contimeout 30s --timeout 5m </dev/null 2>>"${log}" 9>&- || true) | sort -r | tail -n +$((keep + 1)))
         fi
     fi
     REMOTE_RESULT="${name} → ${dest}"
@@ -1498,9 +1566,9 @@ remote_backup_test() {
         timeout 60 rm -f "${dest}/.${probe}" || true
     else
         if ! command -v rclone >/dev/null 2>&1; then REMOTE_RESULT="не установлен rclone"; return 1; fi
-        if printf 'ok\n' | timeout 300 rclone rcat "${dest}/.${probe}" --contimeout 30s --timeout 2m >>"${log}" 2>&1 9>&-; then
-            got=$(timeout 300 rclone cat "${dest}/.${probe}" --contimeout 30s --timeout 2m 2>>"${log}" 9>&- || true)
-            timeout 300 rclone deletefile "${dest}/.${probe}" --contimeout 30s --timeout 2m >>"${log}" 2>&1 9>&- || true
+        if printf 'ok\n' | timeout -k 30 300 rclone rcat "${dest}/.${probe}" --contimeout 30s --timeout 2m >>"${log}" 2>&1 9>&-; then
+            got=$(timeout -k 30 300 rclone cat "${dest}/.${probe}" --contimeout 30s --timeout 2m </dev/null 2>>"${log}" 9>&- || true)
+            timeout -k 30 300 rclone deletefile "${dest}/.${probe}" --contimeout 30s --timeout 2m </dev/null >>"${log}" 2>&1 9>&- || true
         fi
     fi
     if [[ "${got}" == "ok" ]]; then REMOTE_RESULT="запись в ${dest} работает"; return 0; fi
@@ -1516,11 +1584,15 @@ remote_backup_test() {
 # apt без вопросов: конфигурационные файлы остаются прежними, needrestart (Ubuntu) не открывает диалог,
 # блокировку dpkg (её держит, например, unattended-upgrades) apt ждёт до 10 минут; зависшая загрузка
 # прерывается по таймауту.
+# Команды под timeout выполняются в отдельной группе процессов — «фоновой» для терминала, из которого
+# запущен скрипт. apt-get, у которого stdin — терминал, меняет его настройки и от этого останавливается
+# (SIGTTOU) до истечения timeout, держа блокировку dpkg; поэтому stdin у таких команд — /dev/null.
+# -k: если команда не завершилась по сигналу TERM, через минуту её завершает KILL.
 apt_get() {
     env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1 UCF_FORCE_CONFFOLD=1 APT_LISTCHANGES_FRONTEND=none \
-        timeout "${APT_TIMEOUT:-3600}" apt-get \
+        timeout -k 60 "${APT_TIMEOUT:-3600}" apt-get \
         -o DPkg::Lock::Timeout=600 -o Acquire::Retries=3 -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60 \
-        -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "$@"
+        -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "$@" </dev/null
 }
 
 # Процесс менеджера пакетов, который сейчас работает (пусто — свободен). Постоянно запущенный в Ubuntu
@@ -1560,7 +1632,7 @@ apt_recover() {
     if grep_has -Ei 'dpkg was interrupted|dpkg --configure -a|E: Sub-process /usr/bin/dpkg returned' <<<"${tail}" || [[ -n "$(dpkg --audit 2>/dev/null | head -n1)" ]]; then
         info "Восстановление прерванной установки пакетов (dpkg --configure -a)…"
         apt_wait_lock
-        env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a timeout 1800 dpkg --configure -a --force-confdef --force-confold >>"${LOG_FILE}" 2>&1 9>&- || true
+        env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a timeout -k 60 1800 dpkg --configure -a --force-confdef --force-confold </dev/null >>"${LOG_FILE}" 2>&1 9>&- || true
         apt_get install -f -y -q >>"${LOG_FILE}" 2>&1 9>&- || true
     fi
     if grep_has -Ei 'Hash Sum mismatch|File has unexpected size|Release file .* is not valid yet|is not valid yet|Mirror sync in progress|Clearsigned file isn.t valid|NO_PUBKEY' <<<"${tail}"; then
@@ -1586,7 +1658,7 @@ pkg_preflight() {
             if [[ -n "$(dpkg --audit 2>/dev/null | head -n1)" ]]; then
                 warn_transient "Менеджер пакетов в незавершённом состоянии — восстановление (dpkg --configure -a)…"
                 apt_wait_lock
-                env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a timeout 1800 dpkg --configure -a --force-confdef --force-confold >>"${LOG_FILE}" 2>&1 9>&- || true
+                env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a timeout -k 60 1800 dpkg --configure -a --force-confdef --force-confold </dev/null >>"${LOG_FILE}" 2>&1 9>&- || true
                 apt_get install -f -y -q >>"${LOG_FILE}" 2>&1 9>&- || true
                 [[ -z "$(dpkg --audit 2>/dev/null | head -n1)" ]] && ok "Менеджер пакетов восстановлен" \
                     || warn "dpkg сообщает о незавершённых пакетах (dpkg --audit) — установка пакетов может завершиться ошибкой."

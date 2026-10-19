@@ -760,7 +760,7 @@ composer_install() {
     local composer_log attempt ok_install="0"
     composer_log=$(mktemp)
     for attempt in 1 2 3; do
-        if (cd "${dir}" && COMPOSER_ALLOW_SUPERUSER=1 COMPOSER_NO_INTERACTION=1 COMPOSER_PROCESS_TIMEOUT=900 timeout 3600 composer install --no-dev --optimize-autoloader --no-progress --prefer-dist --no-audit >"${composer_log}" 2>&1); then
+        if (cd "${dir}" && COMPOSER_ALLOW_SUPERUSER=1 COMPOSER_NO_INTERACTION=1 COMPOSER_PROCESS_TIMEOUT=900 timeout -k 60 3600 composer install --no-dev --optimize-autoloader --no-progress --prefer-dist --no-audit </dev/null >"${composer_log}" 2>&1); then
             ok_install="1"; break
         fi
         cat "${composer_log}" >>"${LOG_FILE}"

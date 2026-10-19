@@ -474,7 +474,7 @@ if [[ "${INSTALL_MODE}" == "native" ]]; then
             rsync -a "${PREV_RELEASE}/vendor/" "${NEW_RELEASE}/vendor/" >>"${LOG_FILE}" 2>&1 || die "Не удалось скопировать vendor/."
         else
             command -v composer >/dev/null 2>&1 || die "Composer не найден, а в поставке нет vendor/. Установите composer или используйте архив с vendor/."
-            retry 3 20 bash -c "cd '${NEW_RELEASE}' && COMPOSER_ALLOW_SUPERUSER=1 COMPOSER_PROCESS_TIMEOUT=900 timeout 3600 composer install --no-dev --optimize-autoloader --no-interaction --no-progress >>'${LOG_FILE}' 2>&1" \
+            retry 3 20 bash -c "cd '${NEW_RELEASE}' && COMPOSER_ALLOW_SUPERUSER=1 COMPOSER_PROCESS_TIMEOUT=900 timeout -k 60 3600 composer install --no-dev --optimize-autoloader --no-interaction --no-progress </dev/null >>'${LOG_FILE}' 2>&1" \
                 || die "composer install завершился с ошибкой (нужен доступ к github.com/packagist.org; надёжнее обновляться архивом дистрибутива — в нём vendor/ уже есть)."
         fi
     fi

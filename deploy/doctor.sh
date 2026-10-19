@@ -29,7 +29,7 @@ if [[ "${INSTALL_MODE}" == "docker" ]]; then
     done
     info "Состояние контейнеров:"; docker compose ps 2>/dev/null | sed 's/^/   /'
     # Задания приложения выполняет контейнер cron; в /etc/cron.d на сервере — только резервная копия.
-    if [[ -f "/etc/cron.d/${APP_ID}" ]] && grep -qE '^[[:space:]]*[^#[:space:]].*console app:(documents:expiry|documents:describe|search:reindex|documents:acknowledge-remind|telegram:poll|materials:remind)( |$)' "/etc/cron.d/${APP_ID}"; then
+    if [[ -f "/etc/cron.d/${APP_ID}" ]] && grep -qE '^[[:space:]]*[^#[:space:]].*console (app:(documents:expiry|documents:describe|search:reindex|documents:acknowledge-remind|telegram:poll|materials:remind|ai:index|team:digest|stats:aggregate)|messenger:consume)( |$)' "/etc/cron.d/${APP_ID}"; then
         warn "В /etc/cron.d/${APP_ID} есть задания приложения — в Docker они дублируют контейнер cron. Выполните: sudo ${APP_DIR}/deploy/refresh.sh"; PROBLEMS=$((PROBLEMS + 1))
     fi
 else
@@ -124,6 +124,10 @@ app:documents:describe|описания через LLM
 app:documents:acknowledge-remind|напоминания об ознакомлении
 app:telegram:poll|разбор сообщений Telegram
 app:materials:remind|напоминания по таблицам материалов
+app:ai:index|смысловой индекс для ИИ
+app:team:digest|сводка руководителям
+app:stats:aggregate|итоги статистики
+messenger:consume|обработчик фоновых задач
 JOBS
         grep -qE '^[[:space:]]*[^#[:space:]].* backup( |$)' "${cron_file}" && cron_active+=("резервные копии")
         grep -qE '^[[:space:]]*[^#[:space:]].* verify-backup( |$)' "${cron_file}" && cron_active+=("проверка копий")
@@ -151,7 +155,30 @@ JOBS
 fi
 if [[ -d "${BACKUP_DIR}" ]]; then
     last=$(ls -1t "${BACKUP_DIR}"/${APP_ID}-backup-*.tar.gz 2>/dev/null | head -n1 || true)
-    if [[ -n "${last}" ]]; then ok "Последняя резервная копия: $(basename "${last}") ($(date -r "${last}" '+%d.%m.%Y %H:%M'))"; else warn "Резервных копий пока нет (${BACKUP_DIR})"; fi
+    if [[ -n "${last}" ]]; then
+        backup_age=$(( $(date +%s) - $(stat -c %Y "${last}" 2>/dev/null || date +%s) ))
+        # Ночная копия (03:15) включена, а последней копии больше полутора суток — копии не создаются.
+        if (( backup_age > 36 * 3600 )) && grep -qE '^[[:space:]]*[^#[:space:]].* backup( |$)' "/etc/cron.d/${APP_ID}" 2>/dev/null; then
+            warn "Последняя резервная копия создана $(human_duration "${backup_age}") назад ($(basename "${last}")) — ночные копии не создаются. Причина — в ${LOG_DIR}/backup-cron.log; создать копию сейчас: sudo ${APP_ID} backup"
+            PROBLEMS=$((PROBLEMS + 1))
+        else
+            ok "Последняя резервная копия: $(basename "${last}") ($(date -r "${last}" '+%d.%m.%Y %H:%M'))"
+        fi
+    else
+        warn "Резервных копий пока нет (${BACKUP_DIR})"
+    fi
+fi
+# Операция обслуживания (обновление, копия, восстановление), которая держит блокировку: пока она работает,
+# остальные (в том числе ночная копия и автообновление) не выполняются. Работающая часами — скорее всего, зависла.
+maint_lock=$(lock_file)
+if command -v flock >/dev/null 2>&1 && [[ -e "${maint_lock}" ]] && ! flock -n "${maint_lock}" true 2>/dev/null; then
+    lock_holder_summary "${maint_lock}" || true
+    if (( LOCK_HOLDER_MAX_AGE > 3 * 3600 )); then
+        warn "Операция обслуживания работает $(human_duration "${LOCK_HOLDER_MAX_AGE}") — скорее всего, зависла: ${LOCK_HOLDERS}. Пока она работает, обновления и ночные резервные копии не выполняются. Её журнал — самый новый файл в ${LOG_DIR}; остановить: sudo kill ${LOCK_HOLDER_PIDS} (если процессы остались — sudo kill -9 ${LOCK_HOLDER_PIDS})"
+        PROBLEMS=$((PROBLEMS + 1))
+    elif [[ -n "${LOCK_HOLDERS}" ]]; then
+        info "Выполняется операция обслуживания: ${LOCK_HOLDERS}"
+    fi
 fi
 # Автоматическое обновление: расписание и версии, обновление на которые не удалось (повторно не ставятся).
 auto_line=$(grep -E "/${APP_ID} update --auto( |$)" "/etc/cron.d/${APP_ID}" 2>/dev/null | grep -v '^[[:space:]]*#' | head -n1 || true)
