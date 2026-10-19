@@ -1,5 +1,6 @@
 {% extends 'base.html.twig' %}
 {% import '_macros.html.twig' as m %}
+{% import 'materials/_macros.html.twig' as mt %}
 
 {% block title %}Разделы документации{% endblock %}
 {% block body_class %}page-home{% endblock %}
@@ -122,6 +123,13 @@
                             {{ c.published|plural(['документ', 'документа', 'документов']) }}
                             {% if c.children > 0 %} · {{ c.children|plural(['подраздел', 'подраздела', 'подразделов']) }}{% endif %}
                         </div>
+                        {% set ms = materials[s.id]|default(null) %}
+                        {% if ms %}
+                            <div class="section-card__materials" title="Таблица материалов раздела: считается по документам раздела и подразделов">
+                                <div class="section-card__materials-text">Материалы: <b>{{ ms.files }}</b> из <b>{{ ms.total }}</b> с файлами{% if ms.states['Готово']|default(0) > 0 %} · готово {{ ms.states['Готово'] }}{% endif %}{% if ms.states['Отсутствует']|default(0) > 0 %} · <span class="text-danger">отсутствует {{ ms.states['Отсутствует'] }}</span>{% endif %}</div>
+                                {{ mt.state_bar(ms) }}
+                            </div>
+                        {% endif %}
                         {% set kids = children[s.id]|default([]) %}
                         {% if kids|length > 0 %}
                             <div class="section-card__children">

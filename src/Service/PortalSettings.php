@@ -206,7 +206,8 @@ final class PortalSettings
     private const SECRET_NAMES = [self::WEBHOOK_SECRET, self::LLM_API_KEY, self::EMBED_API_KEY, self::SSO_CLIENT_SECRET, self::TELEGRAM_TOKEN, self::MONITORING_TOKEN, self::ONLYOFFICE_SECRET, self::PUSH_PRIVATE_KEY];
 
     /** Служебные значения, которые портал меняет сам (в журнал аудита не пишутся). */
-    private const INTERNAL_NAMES = [self::TELEGRAM_OFFSET, self::MATERIALS_REMIND_LAST_RUN, self::TEAM_DIGEST_LAST_RUN, self::ONLYOFFICE_LINK_KEY, self::STATS_AGGREGATED_ON];
+    private const INTERNAL_NAMES = [self::TELEGRAM_OFFSET, self::MATERIALS_REMIND_LAST_RUN, self::TEAM_DIGEST_LAST_RUN, self::ONLYOFFICE_LINK_KEY, self::STATS_AGGREGATED_ON,
+        Material\MaterialLinker::SETTING_EXCLUDED, Material\MaterialLinker::SETTING_SYNCED];
 
     private const CACHE_KEY = 'portal_settings';
 

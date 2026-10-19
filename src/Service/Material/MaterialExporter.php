@@ -151,7 +151,7 @@ final class MaterialExporter
             $sheet->set($line, 1, $row->getTitle(), XlsxWriter::STYLE_WRAP);
             $sheet->set($line, 2, $row->getKind()?->getName() ?? '');
             $state = $this->materials->state($row);
-            $formula = null !== $pm && null !== $design ? self::stateFormula($pm.$line, $design.$line) : null;
+            $formula = null !== $pm && null !== $design ? self::stateFormula($pm.$line, $design.$line, XlsxWriter::column(\count($headers)).$line) : null;
             $sheet->set($line, 3, $state, XlsxWriter::STYLE_DEFAULT, $formula);
             foreach ($parameters as $index => $parameter) {
                 $value = $row->getValue($parameter);
@@ -177,7 +177,8 @@ final class MaterialExporter
                 }
             }
             $document = $row->getDocument();
-            if (null !== $document && (null === $viewer || $this->access->canViewDocument($viewer, $document))) {
+            // Документ в столбце — только действующий (не в архиве): по нему формула состояния видит файл.
+            if (null !== $document && $row->hasFile() && (null === $viewer || $this->access->canViewDocument($viewer, $document))) {
                 $url = $this->portalUrl->absolute('app_document_show', ['id' => $document->getId()]);
                 $version = $document->getCurrentVersion()?->getNumber();
                 $sheet->set($line, \count($headers), $document->getTitle().(null !== $version ? ' (v'.$version.')' : ''), XlsxWriter::STYLE_LINK)->link($line, \count($headers), $url);
@@ -290,8 +291,20 @@ final class MaterialExporter
             && is_finite((float) $value);
     }
 
-    /** Формула состояния — та же, что в исходной книге. */
-    private static function stateFormula(string $pm, string $design): string
+    /**
+     * Формула состояния — та же, что в исходной книге, с учётом документа портала (как в таблице портала):
+     * без документа — «Отсутствует», с документом, но без оценки или с оценкой «Отсутствует» — «Неизвестно».
+     * Для документа, скрытого от выгружающего, ячейка пуста — в выгрузке он тоже «Отсутствует».
+     */
+    private static function stateFormula(string $pm, string $design, string $document): string
+    {
+        $base = self::excelFormula($pm, $design);
+
+        return \sprintf('IF(%1$s="","%2$s",IF(OR(%3$s="",%3$s="%2$s"),"%4$s",%3$s))', $document, MaterialState::ABSENT, $base, MaterialState::UNKNOWN);
+    }
+
+    /** Формула исходной книги «Продуктовые материалы». */
+    private static function excelFormula(string $pm, string $design): string
     {
         return \sprintf(
             'IF(%1$s="","",IF(%1$s="%3$s","%4$s",IF(%1$s="%5$s","%6$s",IF(%1$s="%7$s","%8$s",IF(AND(%1$s="%9$s",%2$s="%9$s"),"%10$s",IF(AND(%1$s="%9$s",%2$s="%3$s"),"%11$s",""))))))',

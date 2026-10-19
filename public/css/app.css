@@ -556,6 +556,9 @@ a.chip { text-decoration: none; }
 .section-card--compact .section-card__title { font-size: 18px; }
 .section-card__desc { font-size: 13.5px; color: var(--muted); margin-top: 6px; }
 .section-card__meta { font-size: 12.5px; color: var(--muted); margin-top: 8px; }
+.section-card__materials { margin-top: 10px; font-size: 12.5px; color: var(--muted); }
+.section-card__materials-text { margin-bottom: 6px; }
+.section-card__materials .share-bar { height: 6px; }
 .section-card__children { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .section-card__children .chip { padding: 4px 10px; font-size: 12px; }
 
@@ -1025,7 +1028,10 @@ a.chip { text-decoration: none; }
 .kinds-add__row .form-control { flex: 1; }
 
 /* Таблица материалов раздела (правка как в Excel) */
-.mt-summary { margin-bottom: 16px; }
+.mt-summary { margin-bottom: 8px; }
+.mt-live-hint { margin: 0 0 16px; max-width: 980px; }
+.mt-section-card .mt-states { margin-bottom: 10px; }
+.mt-section-card .hints { margin-bottom: 0; }
 .mt-states { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 22px; list-style: none; margin: 0; padding: 0; font-size: 14px; }
 .mt-states__item { display: inline-flex; align-items: center; white-space: nowrap; }
 .mt-states__item b { margin-left: 6px; font-variant-numeric: tabular-nums; }

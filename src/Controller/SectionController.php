@@ -12,6 +12,7 @@ use App\Repository\DocumentRepository;
 use App\Repository\SectionRepository;
 use App\Security\Access;
 use App\Security\Voter\PortalVoter;
+use App\Service\Material\MaterialSummary;
 use App\Service\SectionManager;
 use App\Service\StatsService;
 use App\Service\SubscriptionService;
@@ -41,7 +42,7 @@ final class SectionController extends AbstractController
     }
 
     #[Route('/{id}', name: 'app_section_show', requirements: ['id' => '\d+'], methods: ['GET'])]
-    public function show(Section $section, Request $request, #[CurrentUser] ?User $user): Response
+    public function show(Section $section, Request $request, #[CurrentUser] ?User $user, MaterialSummary $materialSummary): Response
     {
         $guest = null === $user;
         $canManage = $this->access->canManageSection($user, $section);
@@ -65,6 +66,16 @@ final class SectionController extends AbstractController
         $viewer = $this->access->viewer($user);
         $counts = HomeController::subtreeCounts($tree, $this->documents->countPerSection($guest, $viewer));
         $byStatus = $this->documents->countByStatus([(int) $section->getId()], $guest, $viewer);
+        // Таблица материалов раздела: живые цифры по документам раздела и подразделов.
+        $materials = null;
+        $materialChildren = [];
+        $root = $section->isTopLevel() ? $section : $section->getBreadcrumbs()[0];
+        if ($root->isMaterialsEnabled() && ($this->access->canManageSection($user, $root) || $this->access->isAssistant($user))) {
+            $materials = ['root' => $root, 'summary' => $materialSummary->forSection($root)];
+            if ($section->isTopLevel()) {
+                $materialChildren = $materialSummary->filesBySubsection($root, $section->getChildren()->toArray());
+            }
+        }
 
         return $this->render('section/show.html.twig', [
             'section' => $section,
@@ -82,6 +93,8 @@ final class SectionController extends AbstractController
             'subscriptions_enabled' => $this->subscriptions->isEnabled(),
             'subscribed' => $this->subscriptions->isSubscribedToSection($user, $section),
             'templates' => $canContribute ? $this->templates->findForSection($section) : [],
+            'materials' => $materials,
+            'material_children' => $materialChildren,
         ]);
     }
 

@@ -1,8 +1,8 @@
 {# Итоги таблицы материалов: состояния с числами, как «Общее состояние» сводной. #}
 <ul class="mt-states" aria-label="Состояние материалов">
     {% for state, css in {'Готово': 'ready', 'Допустимо': 'acceptable', 'Не соответствует': 'mismatch', 'Отсутствует': 'absent'} %}
-        <li class="mt-states__item"><span class="state-dot state-dot--{{ css }}" aria-hidden="true"></span>{{ state }} <b>{{ summary.states[state]|default(0) }}</b></li>
+        <li class="mt-states__item"{% if state == 'Отсутствует' %} title="Материалы без файла в разделе"{% endif %}><span class="state-dot state-dot--{{ css }}" aria-hidden="true"></span>{{ state }} <b>{{ summary.states[state]|default(0) }}</b></li>
     {% endfor %}
-    {% if summary.states['Неизвестно']|default(0) > 0 %}<li class="mt-states__item"><span class="state-dot state-dot--unknown" aria-hidden="true"></span>Неизвестно <b>{{ summary.states['Неизвестно'] }}</b></li>{% endif %}
+    {% if summary.states['Неизвестно']|default(0) > 0 %}<li class="mt-states__item" title="Файл есть, проверки PM и дизайна не выбраны"><span class="state-dot state-dot--unknown" aria-hidden="true"></span>Неизвестно <b>{{ summary.states['Неизвестно'] }}</b></li>{% endif %}
     <li class="mt-states__item mt-states__item--total">Всего <b>{{ summary.total }}</b>, с файлами <b>{{ summary.files }}</b>{% if summary.unrated > 0 %}, без оценки <b>{{ summary.unrated }}</b>{% endif %}</li>
 </ul>

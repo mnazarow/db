@@ -47,6 +47,7 @@ final class MaterialService implements ResetInterface
         private readonly LoggerInterface $auditLogger,
         private readonly int $defaultValidityMonths,
         private readonly ?MaterialHistory $history = null,
+        private readonly ?MaterialLinker $linker = null,
     ) {
     }
 
@@ -71,6 +72,8 @@ final class MaterialService implements ResetInterface
         $section->setMaterialsEnabled(true);
         $this->ensureDefaults($section);
         $this->em->flush();
+        // Документы, уже лежащие в разделе и подразделах, сразу становятся строками таблицы.
+        $this->linker?->syncSection($section, $by);
         $this->auditLogger->info('Включена таблица материалов', ['section' => $section->getFullName(), 'user' => $by?->getUsername()]);
     }
 
@@ -204,15 +207,29 @@ final class MaterialService implements ResetInterface
         return null === $by || $this->access->canEditDocument($by, $document);
     }
 
-    /** Состояние строки по «Требованиям PM» и «Дизайн-требованиям» — как в Excel. */
+    /**
+     * Состояние строки по «Требованиям PM» и «Дизайн-требованиям» — как в Excel, с учётом документов
+     * раздела: без файла материал «Отсутствует» (см. MaterialState::effective()).
+     */
     public function state(MaterialRow $row): string
     {
         $section = $row->getSection();
 
-        return MaterialState::compute(
+        return MaterialState::effective(
             $row->getValue($this->roleParameter($section, MaterialParameter::ROLE_PM)),
             $row->getValue($this->roleParameter($section, MaterialParameter::ROLE_DESIGN)),
+            $row->hasFile(),
         );
+    }
+
+    /**
+     * Связывает документы раздела и подразделов с таблицей (кнопка «Связать документы раздела»).
+     *
+     * @return array{linked: int, created: int, unlinked: int}
+     */
+    public function linkDocuments(Section $section, ?User $by = null): array
+    {
+        return $this->linker?->syncSection($section, $by) ?? ['linked' => 0, 'created' => 0, 'unlinked' => 0];
     }
 
     // ---- Строки ---------------------------------------------------------------------------------------
@@ -307,6 +324,10 @@ final class MaterialService implements ResetInterface
         ]);
         $this->history?->record($row, MaterialRowChange::DELETE, $by, null, null, $row->getDocument()?->getTitle(), null);
         $this->history?->forgetRow($row);
+        if (null !== $row->getDocument()) {
+            // Строку удалили — документ раздела не должен снова появиться в таблице сам.
+            $this->linker?->exclude($row->getDocument());
+        }
         $this->em->remove($row);
         $this->em->flush();
     }
@@ -433,7 +454,9 @@ final class MaterialService implements ResetInterface
             if ($this->defaultValidityMonths > 0) {
                 $document->setValidUntil(new \DateTimeImmutable('today +'.$this->defaultValidityMonths.' months'));
             }
-            $this->documents->create($document, $file, null, $note, $by, !$this->approvals->isRequired(), $ip);
+            // Документ из строки связывается со своей строкой ниже, а не автоматически с другой.
+            $create = fn () => $this->documents->create($document, $file, null, $note, $by, !$this->approvals->isRequired(), $ip);
+            null !== $this->linker ? $this->linker->withoutAutoLink($create) : $create();
             $version = $document->getCurrentVersion() ?? throw new \LogicException('У нового документа нет версии.');
             $row->setDocument($document);
             if ('' === $row->getTitle()) {
@@ -442,6 +465,13 @@ final class MaterialService implements ResetInterface
         }
         if (null === $row->getKind()) {
             $row->setKind($document->getKind());
+        }
+        $this->linker?->allow($document);
+        $pm = $this->roleParameter($section, MaterialParameter::ROLE_PM);
+        if (null !== $pm && MaterialState::CHECK_ABSENT === $row->getValue($pm) && \in_array(MaterialState::CHECK_NONE, $pm->getOptions(), true)) {
+            // Файл загружен — материал больше не «Отсутствует», он ждёт проверки.
+            $this->history?->record($row, MaterialRowChange::UPDATE, $by, $pm->key(), $pm->getName().' (файл загружен)', MaterialState::CHECK_ABSENT, MaterialState::CHECK_NONE);
+            $row->setValue($pm, MaterialState::CHECK_NONE);
         }
 
         $updated = $this->roleParameter($section, MaterialParameter::ROLE_UPDATED);
@@ -505,6 +535,8 @@ final class MaterialService implements ResetInterface
         }
         $this->auditLogger->info('Файл отвязан от строки таблицы материалов', ['material' => $row->getTitle(), 'document' => $row->getDocument()->getId(), 'user' => $by?->getUsername()]);
         $this->history?->record($row, MaterialRowChange::DETACH, $by, 'file', 'Файл', $row->getDocument()->getTitle(), null);
+        // Отвязанный вручную документ сам к таблице больше не привязывается.
+        $this->linker?->exclude($row->getDocument());
         $row->setDocument(null)->touch($by);
         $this->em->flush();
     }

@@ -45,6 +45,7 @@ final class MaterialRowRepository extends ServiceEntityRepository
         $grouped = array_fill_keys($sectionIds, []);
         /** @var MaterialRow $row */
         foreach ($this->createQueryBuilder('r')->leftJoin('r.kind', 'k')->addSelect('k')
+            ->leftJoin('r.document', 'd')->addSelect('d')
             ->andWhere('r.section IN (:ids)')->setParameter('ids', $sectionIds)
             ->orderBy('r.position', \SortDirection::Ascending)->getQuery()->getResult() as $row) {
             $grouped[(int) $row->getSection()->getId()][] = $row;

@@ -14,7 +14,13 @@
                 <h1 class="h-display">{{ section.name }}</h1>
             </div>
             <div class="hero__actions">
-                {% if enabled %}<a class="btn btn--ghost" href="{{ path('app_section_materials_export', {id: section.id}) }}">Выгрузить в Excel</a>{% endif %}
+                {% if enabled %}
+                    <form method="post" action="{{ path('app_section_materials_link', {id: section.id}) }}" class="inline-form">
+                        <input type="hidden" name="_token" value="{{ csrf_token('materials_' ~ section.id) }}">
+                        <button type="submit" class="btn btn--ghost" title="Документы раздела и подразделов, которых нет в таблице, привязываются к строкам с тем же названием или типом, остальные добавляются строками">Связать документы раздела</button>
+                    </form>
+                    <a class="btn btn--ghost" href="{{ path('app_section_materials_export', {id: section.id}) }}">Выгрузить в Excel</a>
+                {% endif %}
                 {% if enabled %}<a class="btn btn--ghost" href="{{ path('app_section_materials_history', {id: section.id}) }}">Журнал изменений</a>{% endif %}
                 {% if is_granted('ROLE_ADMIN') %}<a class="btn btn--ghost" href="{{ path('admin_materials') }}">Сводная по категориям</a>{% endif %}
                 <a class="btn btn--ghost" href="{{ path('app_section_show', {id: section.id}) }}">Документы раздела</a>
@@ -64,6 +70,7 @@
         <div class="mt-summary" data-mt-summary>
             {{ include('materials/_summary_strip.html.twig', {summary: summary}) }}
         </div>
+        <p class="hints mt-live-hint">Цифры считаются по документам раздела и его подразделов: каждый загруженный документ сам попадает в таблицу — в строку с тем же названием (или единственную строку того же типа), иначе новой строкой. Материал без файла — «Отсутствует», с файлом — по проверкам «Требования PM» и «Дизайн-требования» (пока их нет — «Неизвестно»).</p>
 
         <div class="card mt-card">
             <div class="mt-toolbar">

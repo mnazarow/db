@@ -24,6 +24,7 @@ final class MaterialSummary
         private readonly MaterialParameterRepository $parameters,
         private readonly MaterialRowRepository $rows,
         private readonly DocumentKindService $kinds,
+        private readonly ?MaterialLinker $linker = null,
     ) {
     }
 
@@ -47,6 +48,9 @@ final class MaterialSummary
     public function overview(): array
     {
         $sections = $this->categories();
+        foreach ($sections as $section) {
+            $this->linker?->ensureSynced($section);
+        }
         $ids = array_map(static fn (Section $s): int => (int) $s->getId(), $sections);
         $parameters = $this->parameters->findForSections($ids);
         $rows = $this->rows->findForSections($ids);
@@ -65,9 +69,54 @@ final class MaterialSummary
     /** @return array<string, mixed> */
     public function forSection(Section $section): array
     {
+        $this->linker?->ensureSynced($section);
         $id = (int) $section->getId();
 
         return $this->summarize($this->rows->findForSections([$id])[$id] ?? [], $this->parameters->findForSections([$id])[$id] ?? []);
+    }
+
+    /**
+     * Сводные по разделам верхнего уровня с таблицей материалов (для счётчиков на карточках разделов).
+     *
+     * @return array<int, array<string, mixed>> id раздела => сводная
+     */
+    public function bySection(): array
+    {
+        $out = [];
+        foreach ($this->overview()['categories'] as $category) {
+            $out[(int) $category['section']->getId()] = $category['summary'];
+        }
+
+        return $out;
+    }
+
+    /**
+     * Сколько материалов таблицы раздела загружено в каждый его подраздел (по документам строк).
+     *
+     * @param list<Section> $children подразделы раздела
+     *
+     * @return array<int, int> id подраздела => материалов с файлами
+     */
+    public function filesBySubsection(Section $root, array $children): array
+    {
+        $out = array_fill_keys(array_map(static fn (Section $s): int => (int) $s->getId(), $children), 0);
+        if ([] === $children) {
+            return $out;
+        }
+        foreach ($this->rows->findForSections([(int) $root->getId()])[(int) $root->getId()] ?? [] as $row) {
+            if (!$row->hasFile()) {
+                continue;
+            }
+            $section = $row->getDocument()->getSection();
+            foreach ($children as $child) {
+                if ($section->isSameOrDescendantOf($child)) {
+                    ++$out[(int) $child->getId()];
+                    break;
+                }
+            }
+        }
+
+        return $out;
     }
 
     /**
@@ -89,10 +138,10 @@ final class MaterialSummary
         $summary = self::empty();
         foreach ($rows as $row) {
             ++$summary['total'];
-            if (null !== $row->getDocument()) {
+            if ($row->hasFile()) {
                 ++$summary['files'];
             }
-            $state = MaterialState::compute($row->getValue($pm), $row->getValue($design));
+            $state = MaterialState::effective($row->getValue($pm), $row->getValue($design), $row->hasFile());
             if ('' === $state) {
                 ++$summary['unrated'];
             } else {
