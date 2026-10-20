@@ -166,9 +166,15 @@ ok "Файлов документов: ${files_count}"
 
 # Раздел «Видео»: база видеопортала (и видеофайлы, если включено) — в каталог video/ архива.
 video_backup "${WORK}/${NAME}" "${NAME}"
+# (Без «$( [[ … ]] && echo … )» в присваивании: при ложном условии присваивание вернуло бы 1 и set -e
+# прервал бы копию — так было в 1.8.0 у всех копий с включённым разделом «Видео» без видеофайлов.)
 VIDEO_NOTE=""
 if video_enabled; then
-    VIDEO_NOTE=", video/ (раздел «Видео»: db.dump$( [[ -d "${WORK}/${NAME}/video/media" || ${#VIDEO_TAR_ARGS[@]} -gt 0 ]] && echo ', media/ — видеофайлы'))"
+    VIDEO_NOTE=", video/ (раздел «Видео»: db.dump"
+    if [[ -d "${WORK}/${NAME}/video/media" || ${#VIDEO_TAR_ARGS[@]} -gt 0 ]]; then
+        VIDEO_NOTE+=", media/ — видеофайлы"
+    fi
+    VIDEO_NOTE+=")"
 fi
 
 cat > "${WORK}/${NAME}/MANIFEST.txt" <<EOF

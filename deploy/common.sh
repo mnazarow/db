@@ -1757,7 +1757,9 @@ remote_latest() {
         elif [[ -n "${UPDATE_URL:-}" ]]; then base="${UPDATE_URL%/}"
         else rm -f "${tmp}"; return 2; fi
         if ! update_http_get "${base}/latest.txt" "${tmp}"; then
-            REMOTE_ERROR="не удалось получить ${base}/latest.txt (нет доступа к источнику обновлений$([[ -n "${UPDATE_GITHUB:-}" ]] && echo ', репозиторий закрыт — нужен токен (--token-file), или в релизе нет latest.txt'))"
+            REMOTE_ERROR="не удалось получить ${base}/latest.txt (нет доступа к источнику обновлений"
+            [[ -z "${UPDATE_GITHUB:-}" ]] || REMOTE_ERROR+=", репозиторий закрыт — нужен токен (--token-file), или в релизе нет latest.txt"
+            REMOTE_ERROR+=")"
             rm -f "${tmp}"; return 1
         fi
         v=$(head -n1 "${tmp}" | tr -d ' \r\nv')
