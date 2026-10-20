@@ -58,6 +58,8 @@ services:
       db:
         condition: service_healthy
     restart: unless-stopped
+    # Обработчик фоновых задач при остановке доделывает текущую задачу (WORKER_STOP_TIMEOUT, по умолчанию 90 с).
+    stop_grace_period: 2m
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "5" }
