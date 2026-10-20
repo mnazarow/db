@@ -1,9 +1,0 @@
-{
-    "runner.bootstrap": "tests/Tests/TestInit.php",
-    "runner.path": "tests/Performance",
-    "runner.file_pattern": "*Bench.php",
-
-    "core.extensions": [
-        "PhpBench\\Extensions\\XDebug\\XDebugExtension"
-    ]
-}

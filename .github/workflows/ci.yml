@@ -1,7 +1,7 @@
 # Проверки портала на каждое изменение: синтаксис конфигурации и шаблонов, соответствие миграций
 # схеме, автотесты PHPUnit на PHP 8.2–8.5 с MariaDB 10.11 и MySQL 8.0 / 8.4, проба Symfony 8, раздел «Видео»
 # (тесты связки с порталом на PostgreSQL, сборка интерфейса, тесты API видеопортала) и проверка скриптов
-# развёртывания shellcheck.
+# развёртывания (shellcheck и scripts/check-errexit.py).
 # Установка на чистый сервер — .github/workflows/e2e.yml, выпуск версии — .github/workflows/release.yml,
 # уязвимости в зависимостях — .github/workflows/security.yml.
 name: CI
@@ -48,7 +48,7 @@ jobs:
       APP_ENV: test
       DATABASE_URL: mysql://docportal:docportal@127.0.0.1:3306/docportal?serverVersion=${{ matrix.db.version }}&charset=utf8mb4
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
@@ -84,7 +84,7 @@ jobs:
       APP_ENV: test
       DATABASE_URL: sqlite:///%kernel.project_dir%/var/test.db
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.5'
@@ -119,8 +119,8 @@ jobs:
         options: >-
           --health-cmd="pg_isready -U corpvideo" --health-interval=5s --health-timeout=5s --health-retries=20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
       - name: Сервер видеопортала — общий вход, справочник сотрудников, уведомления, сведения для портала
@@ -162,8 +162,8 @@ jobs:
       HOST: 127.0.0.1
       WORKER_CONCURRENCY: '2'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
       - name: ffmpeg
@@ -191,7 +191,7 @@ jobs:
     name: Скрипты развёртывания (shellcheck)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: shellcheck
         run: |
           sudo apt-get update -q && sudo apt-get install -y -q shellcheck
@@ -199,3 +199,5 @@ jobs:
           shellcheck -S warning video/deploy/docker/entrypoint.sh
       - name: Синтаксис bash
         run: for f in deploy/*.sh docker/entrypoint.sh scripts/*.sh; do bash -n "$f"; done
+      - name: Присваивания, которые прерывают скрипт под set -e
+        run: python3 scripts/check-errexit.py deploy/*.sh docker/entrypoint.sh scripts/*.sh video/deploy/docker/entrypoint.sh
