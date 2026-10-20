@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Command;
 
 use App\Repository\AiQuestionRepository;
+use App\Repository\ChatConversationRepository;
 use App\Service\Llm\SemanticIndex;
 use App\Service\Llm\VerifiedAnswers;
 use App\Service\PortalSettings;
@@ -17,7 +18,8 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 
 /**
  * Обслуживание ИИ (cron раз в час): смысловой индекс для поиска по смыслу — новые и изменившиеся документы,
- * смена модели, — векторы формулировок проверенных ответов и удаление вопросов к ИИ старше срока хранения.
+ * смена модели, — векторы формулировок проверенных ответов и удаление вопросов к ИИ и разговоров с помощником
+ * старше срока хранения.
  */
 #[AsCommand(name: 'app:ai:index', description: 'Смысловой индекс документов для ответов ИИ и очистка журнала вопросов')]
 final class AiIndexCommand extends Command
@@ -27,6 +29,7 @@ final class AiIndexCommand extends Command
         private readonly PortalSettings $settings,
         private readonly AiQuestionRepository $questions,
         private readonly ?VerifiedAnswers $verified = null,
+        private readonly ?ChatConversationRepository $conversations = null,
     ) {
         parent::__construct();
     }
@@ -70,6 +73,12 @@ final class AiIndexCommand extends Command
 
         // Журнал вопросов: старше срока хранения — удаляются (0 — не хранить вовсе).
         $purged = $this->questions->purgeBefore(new \DateTimeImmutable($cfg['log_days'] > 0 ? '-'.$cfg['log_days'].' days' : 'now'));
+        // Разговоры с помощником — тот же срок, но не меньше суток (иначе пропадал бы разговор, который идёт сейчас).
+        try {
+            $this->conversations?->purgeBefore(new \DateTimeImmutable('-'.max(1, $cfg['log_days']).' days'));
+        } catch (\Throwable) {
+            // Таблиц помощника ещё нет (миграция не применена) — журнал вопросов уже очищен.
+        }
 
         if (!$cfg['enabled']) {
             if (!$input->getOption('quiet-if-disabled')) {

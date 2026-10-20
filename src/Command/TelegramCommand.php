@@ -21,7 +21,7 @@ use Symfony\Component\Console\Style\SymfonyStyle;
  * чаты по коду из профиля. Команду ставят в cron раз в минуту; открывать порт наружу под webhook
  * не требуется, все обращения исходящие.
  */
-#[AsCommand(name: 'app:telegram:poll', description: 'Разобрать сообщения бота Telegram (привязка чатов) и проверить связь')]
+#[AsCommand(name: 'app:telegram:poll', description: 'Разобрать сообщения бота Telegram (привязка чатов, вопросы помощнику) и проверить связь')]
 final class TelegramCommand extends Command
 {
     public function __construct(
@@ -40,7 +40,8 @@ final class TelegramCommand extends Command
             ->addOption('chat', null, InputOption::VALUE_REQUIRED, 'Идентификатор чата для --send')
             ->addOption('user', null, InputOption::VALUE_REQUIRED, 'Логин сотрудника для --send')
             ->addOption('status', null, InputOption::VALUE_NONE, 'Показать настройки и число привязанных чатов')
-            ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Сколько сообщений разбирать за раз', '50');
+            ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Сколько сообщений разбирать за раз', '50')
+            ->addOption('wait', 'w', InputOption::VALUE_REQUIRED, 'Сколько секунд ждать новых сообщений (длинный опрос: вопросы помощнику получают ответ сразу; по расписанию — 50)', '0');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
@@ -99,7 +100,7 @@ final class TelegramCommand extends Command
 
         // Команда запускается cron каждую минуту и пишет вывод в журнал: когда разбирать нечего,
         // она молчит (подробности — с ключом -v).
-        $stats = $this->telegram->poll(max(1, (int) $input->getOption('limit')));
+        $stats = $this->telegram->poll(max(1, (int) $input->getOption('limit')), max(0, (int) $input->getOption('wait')));
         if (null !== $stats['skipped']) {
             if ($output->isVerbose()) {
                 $io->note($stats['messages']);
@@ -111,7 +112,7 @@ final class TelegramCommand extends Command
             $io->warning($message);
         }
         if ($stats['updates'] > 0 || $stats['errors'] > 0 || $output->isVerbose()) {
-            $io->writeln(\sprintf('[%s] Разобрано сообщений: %d, привязано чатов: %d, ошибок: %d.', date('Y-m-d H:i:s'), $stats['updates'], $stats['linked'], $stats['errors']));
+            $io->writeln(\sprintf('[%s] Разобрано сообщений: %d, привязано чатов: %d, ответов помощника: %d, ошибок: %d.', date('Y-m-d H:i:s'), $stats['updates'], $stats['linked'], $stats['answered'], $stats['errors']));
         }
 
         return $stats['errors'] > 0 && 0 === $stats['updates'] ? Command::FAILURE : Command::SUCCESS;

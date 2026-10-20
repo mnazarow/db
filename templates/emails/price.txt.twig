@@ -1,0 +1,37 @@
+Здравствуйте, {{ user.displayName }}!
+{% if kind == 'submitted' %}
+
+{{ by.displayName }} загрузил(а) новую редакцию прайс-листа и отправил(а) её на модерацию:
+
+- {{ list.title }} — редакция {{ revision.number }}: {{ revision.itemCount }} поз.{% if revision.stats %} (новых {{ revision.stats.added }}, убрано {{ revision.stats.removed }}, изменились цены у {{ revision.stats.changed }}){% endif %}
+
+  {{ url }}
+{% if revision.note %}
+
+Примечание: {{ revision.note }}
+{% endif %}
+
+Откройте редакцию, проверьте изменения цен и примите решение — «Одобрить и опубликовать»
+или «Вернуть на доработку».
+{% elseif kind == 'approved' %}
+
+Редакция {{ revision.number }} прайс-листа «{{ list.title }}» одобрена и опубликована.
+{{ url }}
+
+Решение принял(а): {{ by.displayName }}.
+{% if revision.decisionNote %}
+Комментарий: {{ revision.decisionNote }}
+{% endif %}
+{% else %}
+
+Редакция {{ revision.number }} прайс-листа «{{ list.title }}» возвращена на доработку.
+{{ url }}
+
+Решение принял(а): {{ by.displayName }}.
+{% if revision.decisionNote %}
+Что исправить: {{ revision.decisionNote }}
+{% endif %}
+{% endif %}
+
+--
+Письмо отправлено автоматически порталом «{{ app_name }}». Отвечать на него не нужно.

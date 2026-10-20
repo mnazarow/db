@@ -1,0 +1,146 @@
+{% extends 'base.html.twig' %}
+{% import 'prices/_macros.html.twig' as pm %}
+
+{% block title %}Сопоставление столбцов — {{ list.title }}{% endblock %}
+{% block body_class %}page-prices{% endblock %}
+
+{% block body %}
+{% set mapping = preview.mapping %}
+{% set result = preview.result %}
+<section class="hero hero--compact">
+    <div class="container">
+        <div class="eyebrow"><a href="{{ path('app_prices') }}">Прайс-листы</a> · <a href="{{ path('app_price_show', {id: list.id}) }}">{{ list.title }}</a></div>
+        <div class="hero__row">
+            <div>
+                <h1 class="h-display">Сопоставление столбцов</h1>
+                <p class="hero__meta">Редакция {{ revision.number }} · {{ revision.originalName }} · {{ (revision.fileSize / 1024)|round(0, 'ceil') }} КБ. Портал сам нашёл строку заголовков и назначил столбцам роли — проверьте их по первым строкам листа и результату справа.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+    {% if error %}<div class="alert alert--danger">{{ error }}</div>{% endif %}
+
+    <form method="post" id="map-form" class="form price-map" data-price-map>
+        <input type="hidden" name="_token" value="{{ csrf_token('prices') }}">
+        <input type="hidden" name="reset" value="0" data-map-reset-flag>
+
+        <div class="card card__padded price-map__source">
+            <div class="form-grid price-map__source-grid">
+                <div class="form-row">
+                    <label class="form-label" for="map-sheet">Лист</label>
+                    <select class="form-control" id="map-sheet" name="sheet" data-map-reload="reset">
+                        {% for s in preview.sheets %}<option value="{{ s.name }}" {{ s.name == preview.sheet ? 'selected' }}>{{ s.name }} — {{ s.rows|plural(['строка', 'строки', 'строк']) }}{{ s.hidden ? ' (скрытый)' }}</option>{% endfor %}
+                    </select>
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="map-header">Строка заголовков</label>
+                    <input class="form-control" type="number" id="map-header" name="header" value="{{ mapping.header }}" min="0" max="{{ preview.total_rows }}" data-map-reload="reset">
+                    <div class="form-help">Номер строки в Excel; 0 — заголовков нет.</div>
+                </div>
+            </div>
+            <p class="form-help">Строки выше заголовков (шапка, реквизиты) не загружаются. Строка без цены и артикула с одним-двумя словами — заголовок группы: позиции под ней получат эту группу. Роли столбцов и строка заголовков запомнятся для следующей загрузки этого прайс-листа.</p>
+        </div>
+
+        <div class="price-map__layout">
+            <div class="card table-card price-map__sheet">
+                <div class="card__head card__head--padded">
+                    <h2 class="h-section">Первые строки листа</h2>
+                    <button type="submit" class="btn btn--ghost btn--small" formmethod="get" formnovalidate data-map-refresh>Обновить предпросмотр</button>
+                </div>
+                <div class="table-scroll">
+                    <table class="admin-table map-table">
+                        <thead>
+                        <tr>
+                            <th class="map-table__row" scope="col">Стр.</th>
+                            {% for c, col in mapping.columns %}
+                                <th class="map-col map-col--{{ col.role }}" scope="col" data-col="{{ c }}">
+                                    <span class="map-table__letter">{{ letters[c] }}</span>
+                                    <select class="form-control form-control--inline map-table__role" name="roles[{{ c }}]" aria-label="Столбец {{ letters[c] }}: роль" data-map-reload="keep">
+                                        {% for value, label in roles %}<option value="{{ value }}" {{ col.role == value ? 'selected' }}>{{ label }}</option>{% endfor %}
+                                    </select>
+                                    <span class="map-table__label" title="{{ col.label }}">{{ col.label }}</span>
+                                </th>
+                            {% endfor %}
+                        </tr>
+                        </thead>
+                        <tbody>
+                        {% for r, cells in preview.rows %}
+                            <tr class="{{ r == mapping.header ? 'map-table__header-row' }}">
+                                <th class="map-table__row" scope="row">{{ r }}</th>
+                                {% for c, col in mapping.columns %}<td class="map-col map-col--{{ col.role }}">{{ cells[c] ?? '' }}</td>{% endfor %}
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <p class="form-help card__padded">Показаны строки {{ preview.rows|keys|first }}–{{ preview.rows|keys|last }} из {{ preview.total_rows }}.</p>
+            </div>
+
+            <aside class="card card__padded price-map__result">
+                <h2 class="h-section">Результат</h2>
+                {% if result %}
+                    <div class="price-map__counters">
+                        <div><span class="stat__value">{{ result.count }}</span><span class="stat__hint">{{ result.count|plural(['позиция', 'позиции', 'позиций'])|split(' ')|last }}</span></div>
+                        <div><span class="stat__value stat__value--muted">{{ result.groups }}</span><span class="stat__hint">{{ result.groups|plural(['группа', 'группы', 'групп'])|split(' ')|last }}</span></div>
+                    </div>
+                    <p class="hints">Цены: {{ result.priceColumns|join(', ') }}{% if result.extraColumns|length > 0 %}; доп. столбцы: {{ result.extraColumns|join(', ') }}{% endif %}</p>
+                    {% for w in result.warnings %}<div class="alert alert--warning">{{ w }}</div>{% endfor %}
+                    {% if preview.diff %}
+                        <p class="price-map__diff">По сравнению с действующей редакцией: {{ pm.diff_chips(preview.diff) }}</p>
+                    {% endif %}
+                {% elseif preview.error %}
+                    <div class="alert alert--danger">{{ preview.error }}</div>
+                {% endif %}
+
+                <div class="form-row">
+                    <label class="form-label" for="map-effective">Цены действуют с</label>
+                    <input class="form-control form-control--date" type="date" id="map-effective" name="effective_from" value="{{ effective_from }}">
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="map-note">Примечание к редакции</label>
+                    <textarea class="form-control" id="map-note" name="note" rows="2" maxlength="2000" placeholder="Что изменилось — увидят в истории{{ needs_moderation ? ' и маркетолог' : '' }}">{{ note }}</textarea>
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="btn btn--pill" {{ result ? '' : 'disabled' }}>{{ needs_moderation ? 'Отправить на модерацию' : 'Опубликовать' }}</button>
+                </div>
+                {% if not needs_moderation and list.currentRevision %}<p class="form-help">Опубликованная редакция сразу станет действующей; прежняя останется в истории, её можно вернуть.</p>{% endif %}
+            </aside>
+        </div>
+
+        {% if result and result.items|length > 0 %}
+            <div class="card table-card">
+                <div class="card__head card__head--padded"><h2 class="h-section">Так позиции будут выглядеть в портале</h2><span class="text-muted">первые {{ result.items|length }}</span></div>
+                <div class="table-scroll">
+                    <table class="admin-table price-table">
+                        <thead><tr><th>Группа</th><th class="price-table__sku">Артикул</th><th>Наименование</th><th class="price-table__unit">Ед.</th>{% for label in result.priceColumns %}<th class="price-num">{{ label }}</th>{% endfor %}{% for label in result.extraColumns %}<th>{{ label }}</th>{% endfor %}</tr></thead>
+                        <tbody>
+                        {% for item in result.items %}
+                            <tr>
+                                <td class="hints">{{ item.group }}</td>
+                                <td class="price-table__sku">{{ item.sku ?: '—' }}</td>
+                                <td class="price-table__name">{{ item.name }}</td>
+                                <td class="price-table__unit">{{ item.unit }}</td>
+                                {% for p in item.prices %}<td class="price-num">{{ p|price_value }}</td>{% endfor %}
+                                {% for e in item.extra %}<td class="price-table__extra">{{ e }}</td>{% endfor %}
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        {% endif %}
+    </form>
+
+    <form method="post" action="{{ path('app_price_revision_delete', {id: list.id, number: revision.number}) }}" class="inline-form" data-confirm="{{ revision.draft ? 'Отменить загрузку и удалить файл?' : 'Удалить редакцию ' ~ revision.number ~ ' вместе с файлом?' }}">
+        <input type="hidden" name="_token" value="{{ csrf_token('prices') }}">
+        <button type="submit" class="btn btn--ghost btn--small btn--danger">{{ revision.draft ? 'Отменить загрузку' : 'Удалить редакцию' }}</button>
+    </form>
+</section>
+{% endblock %}
+
+{% block javascripts %}
+    <script src="{{ asset('js/prices.js') }}" defer></script>
+{% endblock %}

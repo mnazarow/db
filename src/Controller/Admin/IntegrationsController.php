@@ -80,6 +80,7 @@ final class IntegrationsController extends AbstractController
             'extraction' => ['pdf' => $this->extractor->hasPdftotext(), 'extensions' => $this->extractor->supportedExtensions()],
             'webhook' => $webhook + ['secret_masked' => PortalSettings::mask($webhook['secret'])],
             'llm' => $llm + ['api_key_masked' => PortalSettings::mask($llm['api_key']), 'default_prompt' => PortalSettings::LLM_DEFAULT_PROMPT, 'is_default_prompt' => $llm['prompt'] === PortalSettings::LLM_DEFAULT_PROMPT],
+            'assistant' => $this->settings->assistant() + ['api_key_masked' => PortalSettings::mask($this->settings->assistant()['own_api_key'])],
             'descriptions' => $this->documents->countDescriptions(),
             'embeddings' => $this->settings->embeddings() + ['api_key_masked' => PortalSettings::mask($this->settings->embeddings()['own_api_key'])],
             'semantic_status' => $this->semanticStatus(),
@@ -301,7 +302,6 @@ final class IntegrationsController extends AbstractController
                 'max_input_chars' => (int) $request->request->get('max_input_chars', PortalSettings::LLM_DEFAULT_MAX_INPUT_CHARS),
                 'timeout' => (int) $request->request->get('timeout', PortalSettings::LLM_DEFAULT_TIMEOUT),
                 'auto_describe' => (bool) $request->request->get('auto_describe', false),
-                'answers' => (bool) $request->request->get('answers', false),
                 'temperature' => (string) $request->request->get('temperature', (string) PortalSettings::LLM_DEFAULT_TEMPERATURE),
             ], $user);
             if ((bool) $request->request->get('clear_api_key', false)) {
@@ -327,6 +327,48 @@ final class IntegrationsController extends AbstractController
         }
 
         return $this->redirectToRoute('admin_integrations', ['_fragment' => 'llm']);
+    }
+
+    // ---- Помощник: модель для ответов (та же или на другом сервере) -----------------------------------------
+
+    #[Route('/assistant', name: 'admin_integrations_assistant', methods: ['POST'])]
+    public function saveAssistant(Request $request, #[CurrentUser] User $user): Response
+    {
+        $this->checkToken($request);
+        $apiKey = (string) $request->request->get('api_key', '');
+        try {
+            $this->settings->setAssistant([
+                'enabled' => (bool) $request->request->get('enabled', false),
+                'own' => PortalSettings::ASSISTANT_OWN === $request->request->get('source'),
+                'base_url' => (string) $request->request->get('base_url', ''),
+                'model' => (string) $request->request->get('model', ''),
+                'timeout' => (int) $request->request->get('timeout', PortalSettings::ASSISTANT_DEFAULT_TIMEOUT),
+                'api_key' => '' !== $apiKey ? $apiKey : null, // пустое поле — оставить прежний ключ
+            ], $user);
+            if ((bool) $request->request->get('clear_api_key', false)) {
+                $this->settings->set(PortalSettings::ASSISTANT_API_KEY, '', $user);
+            }
+            $this->addFlash('success', 'Настройки помощника сохранены.');
+        } catch (\InvalidArgumentException $e) {
+            $this->addFlash('danger', $e->getMessage());
+        }
+
+        return $this->redirectToRoute('admin_integrations', ['_fragment' => 'assistant']);
+    }
+
+    #[Route('/assistant/test', name: 'admin_integrations_assistant_test', methods: ['POST'])]
+    public function testAssistant(Request $request): Response
+    {
+        $this->checkToken($request);
+        $cfg = $this->settings->assistant();
+        if (!$cfg['own'] && !$this->llm->isEnabled()) {
+            $this->addFlash('warning', 'Помощник отвечает моделью описаний, а она выключена: включите LLM выше или укажите отдельный сервер модели.');
+        } else {
+            $result = $this->llm->test(true);
+            $this->addFlash($result['ok'] ? 'success' : 'danger', $result['message']);
+        }
+
+        return $this->redirectToRoute('admin_integrations', ['_fragment' => 'assistant']);
     }
 
     /** Формирует описания для документов без описания — сразу, небольшой порцией (остальное — командой app:documents:describe). */

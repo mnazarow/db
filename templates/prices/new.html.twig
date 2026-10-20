@@ -1,0 +1,54 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}Новый прайс-лист{% endblock %}
+{% block body_class %}page-prices{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        <div class="eyebrow"><a href="{{ path('app_prices') }}">Прайс-листы</a></div>
+        <h1 class="h-display">Новый прайс-лист</h1>
+        <p class="hero__meta">Загрузите файл — на следующем шаге проверьте, какие столбцы портал принял за артикул, наименование и цены.{% if not app.user.marketer and not app.user.admin %} Прайс-лист увидят сотрудники после одобрения маркетолога.{% endif %}</p>
+    </div>
+</section>
+
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+    {% if errors|length > 0 %}<div class="alert alert--danger">{% for e in errors %}<div>{{ e }}</div>{% endfor %}</div>{% endif %}
+
+    <form method="post" enctype="multipart/form-data" class="card card--form form">
+        <input type="hidden" name="_token" value="{{ csrf_token('prices') }}">
+        <div class="form-row">
+            <label class="form-label" for="price-file">Файл <span class="req">*</span></label>
+            <input class="form-control" type="file" id="price-file" name="file" required accept="{% for e in extensions %}.{{ e }}{{ not loop.last ? ',' }}{% endfor %}">
+            <div class="form-help">Excel (.xlsx, .xls), OpenDocument (.ods) или CSV, до {{ max_mb }} МБ. Подойдёт прайс в том виде, в каком его рассылают клиентам: шапка с логотипом, заголовки групп («Насосы», «Комплектующие») и примечания не мешают.</div>
+        </div>
+        <div class="form-row">
+            <label class="form-label" for="price-title">Название</label>
+            <input class="form-control" id="price-title" name="title" value="{{ form.title }}" maxlength="255" placeholder="Например: Розничный прайс-лист — по имени файла, если не заполнить">
+        </div>
+        <div class="form-row">
+            <label class="form-label" for="price-description">Описание</label>
+            <textarea class="form-control" id="price-description" name="description" rows="2" maxlength="2000" placeholder="Для кого цены, условия, с НДС или без">{{ form.description }}</textarea>
+        </div>
+        <div class="form-grid">
+            <div class="form-row">
+                <label class="form-label" for="price-currency">Валюта</label>
+                <select class="form-control" id="price-currency" name="currency">
+                    {% for code, sign in currencies %}<option value="{{ code }}" {{ form.currency == code ? 'selected' }}>{{ code }} ({{ sign }})</option>{% endfor %}
+                </select>
+            </div>
+        </div>
+        <div class="form-row form-row--check">
+            <label class="form-check"><input type="checkbox" name="public" value="1" {{ form.public ? 'checked' }}> <span>Открытый — видят и гости, которые смотрят портал без входа. Снимите, если прайс-лист только для сотрудников.</span></label>
+        </div>
+        <div class="form-row form-row--check">
+            <label class="form-check"><input type="checkbox" name="original_download" value="1" {{ form.original ? 'checked' }}> <span>Исходный файл могут скачать все, кто видит прайс-лист. Не включайте, если в файле есть скрытые листы или столбцы, которые не загружаются (закупочные цены, наценка): без флажка остальным доступна только выгрузка загруженных столбцов в Excel.</span></label>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="btn btn--pill">Загрузить и сопоставить столбцы</button>
+            <a class="btn btn--ghost" href="{{ path('app_prices') }}">Отмена</a>
+        </div>
+    </form>
+</section>
+{% endblock %}

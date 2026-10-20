@@ -34,6 +34,18 @@ class Handler(BaseHTTPRequestHandler):
                  'Текст файла для анализа недоступен; описание составлено по названию и разделу.')
         if 'готово' in user.lower():
             text = 'готово'
+        if 'Вопрос сотрудника:' in user:
+            # Ответ помощника: ссылка на первый источник; для прайс-листа — первая позиция с ценами.
+            sources = re.findall(r'^\[(\d+)\] (Документ|Видео|Прайс-лист) «(.+?)»', user, re.M)
+            if sources:
+                n, kind, src = sources[0]
+                lines = re.findall(r'^- (.+)$', user, re.M)
+                where = {'Документ': 'документу', 'Видео': 'видео', 'Прайс-лист': 'прайс-листу'}[kind]
+                text = f'По {where} «{src}»: ' + (lines[0] if kind == 'Прайс-лист' and lines else 'порядок описан в документе') + f' [{n}].'
+            else:
+                text = 'В документах портала ответа не нашлось.'
+            if 'Предыдущий разговор:' in user:
+                text += ' Учтён предыдущий вопрос.'
         body = json.dumps({
             'id': 'chatcmpl-mock',
             'object': 'chat.completion',

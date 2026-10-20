@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Command;
 
+use App\Service\Price\PriceListService;
 use App\Service\StatsAggregator;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -14,13 +15,16 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 
 /**
  * Ежедневные итоги статистики (cron после полуночи): журнал событий сводится по дням и за периоды страницы
- * «Статистика», чтобы она открывалась быстро и на крупном портале.
+ * «Статистика», чтобы она открывалась быстро и на крупном портале. Заодно удаляются брошенные черновики
+ * прайс-листов (файл загружен, столбцы за неделю так и не сопоставили).
  */
 #[AsCommand(name: 'app:stats:aggregate', description: 'Пересчитать ежедневные итоги статистики по журналу событий')]
 final class StatsAggregateCommand extends Command
 {
-    public function __construct(private readonly StatsAggregator $aggregator)
-    {
+    public function __construct(
+        private readonly StatsAggregator $aggregator,
+        private readonly ?PriceListService $prices = null,
+    ) {
         parent::__construct();
     }
 
@@ -45,6 +49,14 @@ final class StatsAggregateCommand extends Command
         }
         $io->success(\sprintf('Итоги статистики пересчитаны за %.1f с: дней и типов событий — %d, строк по документам — %d, по сотрудникам — %d.',
             $result['seconds'], $result['days'], $result['documents'], $result['users']));
+        try {
+            $drafts = $this->prices?->cleanupDrafts() ?? 0;
+            if ($drafts > 0) {
+                $io->writeln(\sprintf('Удалено брошенных черновиков прайс-листов: %d.', $drafts));
+            }
+        } catch (\Throwable $e) {
+            $io->warning('Не удалось удалить старые черновики прайс-листов: '.$e->getMessage());
+        }
 
         return Command::SUCCESS;
     }

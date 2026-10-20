@@ -67,6 +67,18 @@ final class PortalSettings
     public const EMBED_VERIFIED_MIN = 'llm.embed.verified_min';
     public const EMBED_DEFAULT_VERIFIED_MIN = 0.85;
     public const EMBED_DEFAULT_MODEL = 'text-embedding-3-small';
+    /**
+     * Помощник и ответы на вопросы: модель — та же, что для описаний (shared), или своя на другом сервере (own):
+     * Ollama или vLLM на сервере с видеокартой, облачный OpenAI-совместимый сервис.
+     */
+    public const ASSISTANT_SOURCE = 'assistant.source';
+    public const ASSISTANT_BASE_URL = 'assistant.base_url';
+    public const ASSISTANT_API_KEY = 'assistant.api_key';
+    public const ASSISTANT_MODEL = 'assistant.model';
+    public const ASSISTANT_TIMEOUT = 'assistant.timeout';
+    public const ASSISTANT_SHARED = 'shared';
+    public const ASSISTANT_OWN = 'own';
+    public const ASSISTANT_DEFAULT_TIMEOUT = 240;
     /** Сколько дней хранить вопросы к ИИ и оценки ответов (0 — не сохранять). */
     public const AI_LOG_DAYS = 'ai.log_days';
     public const AI_LOG_DEFAULT_DAYS = 180;
@@ -365,6 +377,70 @@ final class PortalSettings
             'temperature' => (float) $this->get(self::LLM_TEMPERATURE, self::LLM_DEFAULT_TEMPERATURE),
             'answers' => (bool) $this->get(self::LLM_ANSWERS, true),
         ];
+    }
+
+    /**
+     * Модель помощника (чат на портале и в Telegram, ответы на странице поиска, API помощника): enabled — ответы
+     * включены; own — своё подключение (иначе — модель описаний); ready — помощник может спрашивать модель;
+     * base_url, api_key, model, timeout — действующее подключение (своё или модели описаний).
+     *
+     * @return array{enabled: bool, own: bool, ready: bool, base_url: string, api_key: string, model: string, timeout: int, temperature: float, max_input_chars: int, own_base_url: string, own_api_key: string, own_model: string, own_timeout: int}
+     */
+    public function assistant(): array
+    {
+        $llm = $this->llm();
+        $own = self::ASSISTANT_OWN === $this->get(self::ASSISTANT_SOURCE, self::ASSISTANT_SHARED);
+        $ownUrl = rtrim(trim((string) $this->get(self::ASSISTANT_BASE_URL, '')), '/');
+        $ownModel = trim((string) $this->get(self::ASSISTANT_MODEL, ''));
+        $ownTimeout = max(5, min(900, (int) $this->get(self::ASSISTANT_TIMEOUT, self::ASSISTANT_DEFAULT_TIMEOUT)));
+        $ownKey = (string) $this->get(self::ASSISTANT_API_KEY, '');
+
+        return [
+            'enabled' => $llm['answers'],
+            'own' => $own,
+            'ready' => $llm['answers'] && ($own ? '' !== $ownUrl && '' !== $ownModel : $llm['enabled']),
+            'base_url' => $own ? $ownUrl : $llm['base_url'],
+            'api_key' => $own ? $ownKey : $llm['api_key'],
+            'model' => $own ? $ownModel : $llm['model'],
+            'timeout' => $own ? $ownTimeout : $llm['timeout'],
+            'temperature' => $llm['temperature'],
+            'max_input_chars' => $llm['max_input_chars'],
+            'own_base_url' => $ownUrl,
+            'own_api_key' => $ownKey,
+            'own_model' => $ownModel,
+            'own_timeout' => $ownTimeout,
+        ];
+    }
+
+    /**
+     * @param array{enabled?: bool, own?: bool, base_url?: string, api_key?: ?string, model?: string, timeout?: int} $values
+     */
+    public function setAssistant(array $values, ?User $by = null): void
+    {
+        $own = (bool) ($values['own'] ?? false);
+        $baseUrl = rtrim(trim((string) ($values['base_url'] ?? '')), '/');
+        $model = trim((string) ($values['model'] ?? ''));
+        if ($own) {
+            if ('' === $baseUrl || false === filter_var($baseUrl, \FILTER_VALIDATE_URL) || !preg_match('#^https?://#i', $baseUrl)) {
+                throw new \InvalidArgumentException('Адрес сервера модели помощника должен начинаться с http:// или https:// (например, http://gpu-server:11435/v1).');
+            }
+            if ('' === $model) {
+                throw new \InvalidArgumentException('Укажите модель помощника (например, qwen2.5:14b).');
+            }
+        }
+        $set = [
+            self::ASSISTANT_SOURCE => $own ? self::ASSISTANT_OWN : self::ASSISTANT_SHARED,
+            self::ASSISTANT_BASE_URL => $baseUrl,
+            self::ASSISTANT_MODEL => mb_substr($model, 0, 128),
+            self::ASSISTANT_TIMEOUT => max(5, min(900, (int) ($values['timeout'] ?? self::ASSISTANT_DEFAULT_TIMEOUT))),
+        ];
+        if (\array_key_exists('enabled', $values)) {
+            $set[self::LLM_ANSWERS] = (bool) $values['enabled'];
+        }
+        if (\array_key_exists('api_key', $values) && null !== $values['api_key']) {
+            $set[self::ASSISTANT_API_KEY] = trim((string) $values['api_key']);
+        }
+        $this->setMany($set, $by);
     }
 
     /**

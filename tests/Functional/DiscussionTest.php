@@ -246,7 +246,7 @@ final class DiscussionTest extends PortalTestCase
             new HttpResponse(200, '{"ok":true,"result":{"message_id":2}}'),
         );
         $stats = $this->telegram()->poll();
-        self::assertSame(['updates' => 1, 'linked' => 1, 'errors' => 0, 'skipped' => null, 'messages' => []], $stats);
+        self::assertSame(['updates' => 1, 'linked' => 1, 'answered' => 0, 'errors' => 0, 'skipped' => null, 'messages' => []], $stats);
         $this->em()->clear();
         self::assertSame('4004', $this->user('petrova')->getTelegramChatId());
         self::assertNull($this->user('petrova')->getTelegramCode(), 'код гасится после привязки');

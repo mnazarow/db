@@ -83,6 +83,32 @@
         </div>
         {% endif %}
 
+        {% if price_results|default([])|length > 0 %}
+        <div class="card table-card">
+            <div class="card__head card__head--padded">
+                <h2 class="h-section">В прайс-листах</h2>
+                <a class="text-muted" href="{{ path('app_prices', {q: q}) }}">Все совпадения в прайс-листах →</a>
+            </div>
+            <div class="table-scroll">
+                <table class="admin-table price-table">
+                    <thead><tr><th>Прайс-лист</th><th class="price-table__sku">Артикул</th><th>Наименование</th><th class="price-num">Цена</th></tr></thead>
+                    <tbody>
+                    {% for item in price_results|slice(0, 10) %}
+                        {% set list = item.revision.priceList %}
+                        <tr>
+                            <td class="col-nowrap"><a href="{{ path('app_price_show', {id: list.id, q: q}) }}">{{ list.title }}</a></td>
+                            <td class="price-table__sku" data-label="Артикул">{{ item.sku ?: '—' }}</td>
+                            <td class="price-table__name">{{ item.name }}{% if item.unit %} <span class="text-muted">({{ item.unit }})</span>{% endif %}</td>
+                            <td class="price-num col-nowrap" data-label="Цена">{{ (item.prices[0] ?? '')|price_value(list.currencySign) }}</td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% if price_results|length > 10 %}<p class="form-help card__padded"><a href="{{ path('app_prices', {q: q}) }}">Показать все совпадения</a></p>{% endif %}
+        </div>
+        {% endif %}
+
         {% if video_results and video_results.items|length > 0 %}
         <div class="card table-card">
             <div class="card__head card__head--padded">

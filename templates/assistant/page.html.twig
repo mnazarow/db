@@ -1,0 +1,20 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}Помощник{% endblock %}
+{% block body_class %}page-assistant{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        <div class="hero__row">
+            <div>
+                <h1 class="h-display">Помощник</h1>
+                <p class="hero__meta">Ответы на вопросы по документам, видео и прайс-листам портала — с учётом ваших прав доступа и со ссылками на источники.{% if not has_model %} Сейчас помощник выдаёт только проверенные ответы на частые вопросы: языковая модель не подключена.{% endif %} В Telegram тот же помощник отвечает в чате с ботом портала, если чат привязан в разделе <a href="{{ path('app_profile_subscriptions') }}">«Подписки и уведомления»</a>.</p>
+            </div>
+        </div>
+    </div>
+</section>
+<section class="container section">
+    {% include 'assistant/_chat.html.twig' with {mode: 'page', current: current, conversations: conversations} only %}
+</section>
+{% endblock %}

@@ -1,0 +1,116 @@
+{% extends 'base.html.twig' %}
+{% import 'prices/_macros.html.twig' as pm %}
+
+{% block title %}Прайс-листы{% endblock %}
+{% block body_class %}page-prices{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        <div class="eyebrow">Цены</div>
+        <div class="hero__row">
+            <div>
+                <h1 class="h-display">Прайс-листы</h1>
+                <p class="hero__meta">Действующие цены компании. Ищите позицию по артикулу или словам из названия сразу во всех прайс-листах, откройте прайс-лист — там поиск, группы и выгрузка в Excel.</p>
+            </div>
+            <div class="hero__actions">
+                {% if can_upload %}<a class="btn btn--pill" href="{{ path('app_price_new') }}">Новый прайс-лист</a>{% endif %}
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+
+    <form method="get" class="price-search card" role="search">
+        <label class="search price-search__field">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input class="search__input" type="search" name="q" value="{{ q }}" placeholder="Артикул или название позиции во всех прайс-листах…" aria-label="Поиск по прайс-листам" autocomplete="off" minlength="2">
+        </label>
+        <button class="btn btn--pill btn--small" type="submit">Найти</button>
+        {% if q %}<a class="btn btn--ghost btn--small" href="{{ path('app_prices') }}">Сбросить</a>{% endif %}
+    </form>
+
+    {% if q %}
+        <div class="card table-card">
+            <div class="card__head card__head--padded">
+                <h2 class="h-section">Найдено <span class="tag">{{ hits|length }}{{ hits|length >= 200 ? '+' }}</span></h2>
+            </div>
+            {% if hits|length > 0 %}
+                <div class="table-scroll">
+                    <table class="admin-table price-table">
+                        <thead><tr><th>Прайс-лист</th><th class="price-table__sku">Артикул</th><th>Наименование</th><th class="price-table__unit">Ед.</th><th class="price-num">Цена</th></tr></thead>
+                        <tbody>
+                        {% for item in hits %}
+                            {% set list = item.revision.priceList %}
+                            <tr>
+                                <td class="col-nowrap"><a href="{{ path('app_price_show', {id: list.id, q: q}) }}">{{ list.title }}</a></td>
+                                <td class="price-table__sku" data-label="Артикул">{{ item.sku ?: '—' }}</td>
+                                <td class="price-table__name">{{ item.name }}{% if item.groupName %}<div class="hints">{{ item.groupName }}</div>{% endif %}</td>
+                                <td class="price-table__unit" data-label="Ед.">{{ item.unit }}</td>
+                                <td class="price-num col-nowrap" data-label="Цена">{{ (item.prices[0] ?? '')|price_value(list.currencySign) }}{% if item.revision.priceColumns|length > 1 %}<div class="hints">{{ item.revision.priceColumns[0] }}</div>{% endif %}</td>
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <p class="card__padded text-muted">В действующих прайс-листах ничего не нашлось. Проверьте артикул или попробуйте часть названия.</p>
+            {% endif %}
+        </div>
+    {% endif %}
+
+    {% if pending|length > 0 %}
+        <div class="card table-card">
+            <div class="card__head card__head--padded"><h2 class="h-section">{{ can_manage ? 'Ждут решения' : 'Мои редакции на модерации' }} <span class="tag">{{ pending|length }}</span></h2></div>
+            <ul class="attention-list">
+                {% for r in pending %}
+                    <li class="attention-item">
+                        <a href="{{ path('app_price_revision', {id: r.priceList.id, number: r.number}) }}">{{ r.priceList.title }} — редакция {{ r.number }}</a>
+                        <span class="attention-item__meta">{{ r.itemCount|plural(['позиция', 'позиции', 'позиций']) }} · {{ r.uploadedBy ? r.uploadedBy.displayName : '—' }}, {{ r.uploadedAt|date('d.m.Y H:i') }} {{ pm.diff_chips(r.stats) }}</span>
+                    </li>
+                {% endfor %}
+            </ul>
+        </div>
+    {% endif %}
+
+    {% if active|length > 0 %}
+        <div class="section-grid price-grid">
+            {% for list in active %}
+                {% set rev = list.currentRevision %}
+                <a class="section-card price-card" href="{{ path('app_price_show', {id: list.id}) }}">
+                    <div class="section-card__icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg>
+                    </div>
+                    <div class="section-card__body">
+                        <div class="section-card__title">{{ list.title }}</div>
+                        {% if list.description %}<div class="section-card__desc">{{ list.description|length > 140 ? list.description|slice(0, 140) ~ '…' : list.description }}</div>{% endif %}
+                        <div class="section-card__meta">
+                            {% if rev %}
+                                {{ rev.itemCount|plural(['позиция', 'позиции', 'позиций']) }} · {{ rev.effectiveFrom ? 'действует с ' ~ rev.effectiveFrom|date('d.m.Y') : 'обновлён ' ~ (rev.publishedAt ?? rev.uploadedAt)|date('d.m.Y') }}
+                            {% else %}
+                                <span class="text-warning">ещё не опубликован</span>
+                            {% endif %}
+                            {% if not list.public %} · <span class="tag tag--internal" title="Гости без входа этот прайс-лист не видят">для сотрудников</span>{% endif %}
+                        </div>
+                    </div>
+                </a>
+            {% endfor %}
+        </div>
+    {% elseif not q %}
+        <div class="card empty-state empty-state--compact">
+            <p>{% if can_upload %}Прайс-листов пока нет. Нажмите «Новый прайс-лист» и загрузите файл Excel — портал сам найдёт строку заголовков и столбцы с артикулом, наименованием и ценами; их можно поправить перед публикацией.{% else %}Прайс-листов пока нет — их загружают маркетологи.{% endif %}</p>
+        </div>
+    {% endif %}
+
+    {% if archived|length > 0 %}
+        <details class="card card__padded price-archive">
+            <summary class="h-section">Архив <span class="tag">{{ archived|length }}</span></summary>
+            <ul class="bullets">
+                {% for list in archived %}<li><a href="{{ path('app_price_show', {id: list.id}) }}">{{ list.title }}</a> <span class="text-muted">— в архиве с {{ list.updatedAt|date('d.m.Y') }}</span></li>{% endfor %}
+            </ul>
+        </details>
+    {% endif %}
+</section>
+{% endblock %}

@@ -781,7 +781,7 @@ cron_app_jobs() {
 40 * * * * root /usr/local/bin/${APP_ID} console app:search:reindex --limit=500 --no-interaction >> ${LOG_DIR}/reindex-cron.log 2>&1
 50 * * * * root /usr/local/bin/${APP_ID} console app:ai:index --limit=200 --quiet-if-disabled --no-interaction >> ${LOG_DIR}/ai-index-cron.log 2>&1
 30 8 * * * root /usr/local/bin/${APP_ID} console app:documents:acknowledge-remind --no-interaction >> ${LOG_DIR}/acknowledge-cron.log 2>&1
-* * * * * root /usr/local/bin/${APP_ID} console app:telegram:poll --no-interaction >> ${LOG_DIR}/telegram-cron.log 2>&1
+* * * * * root /usr/local/bin/${APP_ID} console app:telegram:poll --wait=50 --no-interaction >> ${LOG_DIR}/telegram-cron.log 2>&1
 10 9 * * 1 root /usr/local/bin/${APP_ID} console app:materials:remind --no-interaction >> ${LOG_DIR}/materials-remind-cron.log 2>&1
 40 8 * * 1 root /usr/local/bin/${APP_ID} console app:team:digest --no-interaction >> ${LOG_DIR}/team-digest-cron.log 2>&1
 5 0 * * * root /usr/local/bin/${APP_ID} console app:stats:aggregate --no-interaction >> ${LOG_DIR}/stats-cron.log 2>&1
@@ -860,6 +860,9 @@ ensure_cron_entries() {
             { print }
             END { if (!done) put() }' "${tmp}" > "${tmp}.env" && mv -f "${tmp}.env" "${tmp}"
     fi
+    # 1.8.0: разбор сообщений Telegram ждёт новых сообщений до 50 секунд — вопросы помощнику в Telegram получают
+    # ответ сразу, а не в начале следующей минуты. Заменяется только стандартная строка прежних версий.
+    sed -i -E "s#^(\* \* \* \* \* root /usr/local/bin/${APP_ID} console app:telegram:poll) --no-interaction( >>)#\1 --wait=50 --no-interaction\2#" "${tmp}"
     if [[ "${INSTALL_MODE}" != "docker" ]]; then
         while IFS= read -r line; do
             cmd=$(awk '{print $9}' <<<"${line}")
@@ -931,7 +934,7 @@ DEXEC=(docker compose exec -u www-data)
 PHPX=\$(command -v "php\${PHP_VERSION:-}" 2>/dev/null || command -v php 2>/dev/null || echo php)
 cmd="\${1:-help}"; shift || true
 case "\${cmd}" in
-    update|backup|restore|uninstall|status|doctor|maintenance|verify-backup|remote-backup|video|auto-update|kerberos|php-upgrade)
+    update|backup|restore|uninstall|status|doctor|maintenance|verify-backup|remote-backup|video|auto-update|kerberos|php-upgrade|ai)
         [[ "\${cmd}" == "status" ]] && cmd="doctor"
         exec "\${DEPLOY}/\${cmd}.sh" "\$@" ;;
     console)
@@ -1034,6 +1037,9 @@ case "\${cmd}" in
                       on --keytab ФАЙЛ --service HTTP/имя.портала [--realm ОБЛАСТЬ] [--auto]
   org-import ФАЙЛ     Оргструктура из 1С:ЗУП (CSV или Excel): подразделения, должности, руководители, уволенные
                       (--dry-run — только показать изменения; --create — создать недостающих; --no-deactivate; --names)
+  ai <команда>        Языковая модель на своём сервере для помощника, ответов и поиска по смыслу:
+                      enable [--model ИМЯ] [--gpu] (Ollama здесь) | connect --url АДРЕС --model ИМЯ [--api-key КЛЮЧ]
+                      [--assistant-only] (модель на другом сервере) | status | test | models | pull ИМЯ | disable [--remove]
   video <команда>     Раздел «Видео» (видеопортал по адресу /video, общий вход и роли с порталом):
                       enable [--no-live] [--backup-media] | status | restart | sync-users | logs [api|worker|mediamtx] | disable
   logs                Журнал приложения

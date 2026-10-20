@@ -1,0 +1,11 @@
+# Языковая модель на видеокарте NVIDIA (docportal ai enable --gpu): подключается к docker-compose.yml через
+# COMPOSE_FILE в docker/.env. На сервере нужны драйвер NVIDIA и nvidia-container-toolkit.
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
