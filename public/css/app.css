@@ -1541,3 +1541,8 @@ thead .map-col--price .map-table__role { border-color: var(--green-text); }
 @media print { .assistant { display: none !important; } }
 /* Кнопка «Помощник» не закрывает низ страницы. */
 body:has(.assistant--panel) .site-footer { padding-bottom: 88px; }
+.assistant__body--setup { overflow-y: auto; }
+.assistant__setup { padding: 18px 20px; font-size: 14px; line-height: 1.55; }
+.assistant__setup ol { padding-left: 20px; margin: 0 0 12px; }
+.assistant__setup li { margin-bottom: 10px; }
+.assistant__setup code { font-size: 12.5px; word-break: break-word; }

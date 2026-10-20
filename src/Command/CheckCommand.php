@@ -191,6 +191,12 @@ final class CheckCommand extends Command
             $io->writeln(\sprintf('Ключи REST API: %s', [] === $keys ? 'не созданы (панель администратора → Интеграции или app:api-key create)' : \sprintf('<info>%d</info>, активных %d', \count($keys), $active)));
             $llm = $this->settings->llm();
             $io->writeln(\sprintf('Описания через LLM: %s', $llm['enabled'] ? \sprintf('<info>включены</info> (%s, модель %s%s)', $llm['base_url'], $llm['model'], $llm['auto_describe'] ? ', автоописание новых документов' : '') : 'выключены'));
+            $assistant = $this->settings->assistant();
+            $io->writeln(\sprintf('Помощник и ответы ИИ: %s', match (true) {
+                $assistant['ready'] => \sprintf('<info>отвечают</info> (%s, модель %s)', $assistant['base_url'], $assistant['model']),
+                !$assistant['enabled'] => 'выключены администратором (Интеграции → «Помощник»)',
+                default => '<comment>модель не подключена</comment> — кнопки «Помощник» у сотрудников нет: docportal ai enable (модель на этом сервере) или docportal ai connect (на другом)',
+            }));
             $webhook = $this->settings->webhook();
             $io->writeln(\sprintf('Webhook об изменениях: %s', $webhook['enabled'] ? '<info>включён</info> ('.$webhook['url'].')' : 'выключен'));
             $telegram = $this->settings->telegram();

@@ -48,12 +48,16 @@ final class AiConfigureCommand extends Command
             ->addOption('enable', null, InputOption::VALUE_NONE, 'Включить ответы модели (и поиск по смыслу, если задана модель эмбеддингов)')
             ->addOption('disable', null, InputOption::VALUE_NONE, 'Выключить модель и поиск по смыслу')
             ->addOption('test', null, InputOption::VALUE_NONE, 'Проверить связь: пробный вопрос модели и пробный вектор')
-            ->addOption('status', null, InputOption::VALUE_NONE, 'Показать текущие настройки');
+            ->addOption('status', null, InputOption::VALUE_NONE, 'Показать текущие настройки')
+            ->addOption('ready', null, InputOption::VALUE_NONE, 'Только проверить: отвечает ли помощник (код 0 — да, 1 — модель не подключена; для скриптов)');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $io = new SymfonyStyle($input, $output);
+        if ($input->getOption('ready')) {
+            return $this->settings->assistant()['ready'] ? Command::SUCCESS : Command::FAILURE;
+        }
         // Своя инструкция для описаний хранится как есть: пустая — значит «по умолчанию» (не подставляем текст по умолчанию).
         $llm = ['prompt' => (string) $this->settings->get(PortalSettings::LLM_PROMPT, '')] + $this->settings->llm();
         $emb = $this->settings->embeddings();

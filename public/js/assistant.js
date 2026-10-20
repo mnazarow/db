@@ -18,6 +18,23 @@
     }
     var mode = root.getAttribute('data-mode');
     var panel = root.querySelector('.assistant__panel');
+    var setupToggle = root.querySelector('[data-assistant-toggle]');
+    if (!root.querySelector('[data-assistant-form]')) {
+        // Модель не подключена: окно с подсказкой администратору, без чата.
+        if (setupToggle && panel) {
+            var hide = function () { panel.hidden = true; root.classList.remove('is-open'); setupToggle.setAttribute('aria-expanded', 'false'); };
+            setupToggle.addEventListener('click', function () {
+                var open = panel.hidden;
+                panel.hidden = !open;
+                root.classList.toggle('is-open', open);
+                setupToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+            });
+            var x = root.querySelector('[data-assistant-close]');
+            if (x) { x.addEventListener('click', hide); }
+            document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { hide(); } });
+        }
+        return;
+    }
     var log = root.querySelector('[data-assistant-log]');
     var welcome = root.querySelector('[data-assistant-welcome]');
     var form = root.querySelector('[data-assistant-form]');

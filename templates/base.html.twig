@@ -160,11 +160,12 @@
     </div>
 </footer>
 
-{% if assistant_available() and app.request.attributes.get('_route') != 'app_assistant' %}
-    {% include 'assistant/_chat.html.twig' with {mode: 'panel'} only %}
+{% set assistant_setup = not assistant_available() and assistant_setup_needed() %}
+{% if (assistant_available() or assistant_setup) and app.request.attributes.get('_route') != 'app_assistant' %}
+    {% include 'assistant/_chat.html.twig' with {mode: 'panel', setup: assistant_setup} only %}
 {% endif %}
 <script src="{{ asset('js/app.js') }}" defer></script>
-{% if assistant_available() %}<script src="{{ asset('js/assistant.js') }}" defer></script>{% endif %}
+{% if assistant_available() or assistant_setup %}<script src="{{ asset('js/assistant.js') }}" defer></script>{% endif %}
 {% block javascripts %}{% endblock %}
 </body>
 </html>
