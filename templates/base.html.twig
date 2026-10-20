@@ -43,6 +43,7 @@
                 {% if video_enabled() %}
                     <a class="site-nav__link" href="{{ video_url('/') }}">Видео</a>
                 {% endif %}
+                <a class="site-nav__link {{ route starts with 'app_price' ? 'is-active' }}" href="{{ path('app_prices') }}">Прайс-листы</a>
                 {% if app.user %}
                     {# Два раздела — «Подготовка презентаций» и «Подготовка пятничной презентации» — под одним пунктом меню; между ними — вкладки на странице. #}
                     <a class="site-nav__link {{ route starts with 'app_presentation' or route starts with 'app_meeting' or route starts with 'app_slide_library' ? 'is-active' }}" href="{{ path('app_presentations') }}" title="Подготовка презентаций и пятничной презентации">Презентации</a>
@@ -72,9 +73,9 @@
                         <span class="ack-chip__text">на ознакомление</span>
                     </a>
                 {% endif %}
-                {% set moderation_total = moderation_pending() + video_moderation_pending() + presentation_moderation_pending() %}
+                {% set moderation_total = moderation_pending() + video_moderation_pending() + presentation_moderation_pending() + price_moderation_pending() %}
                 {% if moderation_total > 0 %}
-                    <a class="ack-chip ack-chip--approval" href="{{ path('app_moderation') }}" title="Материалы, видео и презентации, которые ждут решения">
+                    <a class="ack-chip ack-chip--approval" href="{{ path('app_moderation') }}" title="Материалы, видео, презентации и прайс-листы, которые ждут решения">
                         <span class="ack-chip__count">{{ moderation_total }}</span>
                         <span class="ack-chip__text">на модерации</span>
                     </a>
@@ -140,6 +141,7 @@
                 {% if approvals_pending() > 0 %}<a href="{{ path('app_profile_approvals') }}">Мне на согласование</a>{% endif %}
                 {% if is_contributor() %}<a href="{{ path('app_moderation') }}">Модерация материалов</a>{% endif %}
                 {% if video_enabled() %}<a href="{{ video_url('/') }}">Видео</a>{% endif %}
+                <a href="{{ path('app_prices') }}">Прайс-листы</a>
                 <a href="{{ path('app_presentations') }}">Подготовка презентаций</a>
                 <a href="{{ path('app_meetings') }}">Подготовка пятничной презентации</a>
                 <a href="{{ path('app_profile_subscriptions') }}">Подписки и уведомления</a>
@@ -147,6 +149,7 @@
                 <a href="{{ path('app_2fa_setup') }}">Двухфакторная аутентификация</a>
                 {% if is_granted('ROLE_ADMIN') %}<a href="{{ path('admin_dashboard') }}">Панель администратора</a>{% endif %}
             {% else %}
+                <a href="{{ path('app_prices') }}">Прайс-листы</a>
                 <a href="{{ path('app_login') }}">Вход</a>
             {% endif %}
         </div>
@@ -157,7 +160,11 @@
     </div>
 </footer>
 
+{% if assistant_available() and app.request.attributes.get('_route') != 'app_assistant' %}
+    {% include 'assistant/_chat.html.twig' with {mode: 'panel'} only %}
+{% endif %}
 <script src="{{ asset('js/app.js') }}" defer></script>
+{% if assistant_available() %}<script src="{{ asset('js/assistant.js') }}" defer></script>{% endif %}
 {% block javascripts %}{% endblock %}
 </body>
 </html>

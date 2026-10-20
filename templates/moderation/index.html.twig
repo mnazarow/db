@@ -91,6 +91,36 @@
         </div>
     {% endif %}
 
+    {% if price_moderator|default(false) %}
+        <div class="card table-card" id="prices">
+            <div class="card__head card__head--padded">
+                <h2 class="h-section">Прайс-листы <span class="tag">{{ price_queue|length }}</span></h2>
+                <a class="link-action" href="{{ path('app_prices') }}">Все прайс-листы</a>
+            </div>
+            {% if price_queue|length > 0 %}
+                <ul class="attention-list">
+                    {% for r in price_queue %}
+                        <li class="attention-item">
+                            <a href="{{ path('app_price_revision', {id: r.priceList.id, number: r.number}) }}">{{ r.priceList.title }} — редакция {{ r.number }}</a>
+                            <span class="attention-item__meta">{{ r.itemCount|plural(['позиция', 'позиции', 'позиций']) }}{% if r.stats %} · новых {{ r.stats.added }}, убрано {{ r.stats.removed }}, цены изменились у {{ r.stats.changed }}{% endif %} · {{ r.uploadedBy ? r.uploadedBy.displayName : '—' }}, {{ r.uploadedAt|date('d.m.Y H:i') }}</span>
+                            {% if r.note %}<p class="snippet__text">{{ r.note }}</p>{% endif %}
+                            <form method="post" action="{{ path('app_price_decide', {id: r.priceList.id, number: r.number}) }}" class="form ack-decide">
+                                <input type="hidden" name="_token" value="{{ csrf_token('prices') }}">
+                                <input type="hidden" name="back" value="{{ path('app_moderation') }}#prices">
+                                <input class="form-control form-control--inline" type="text" name="note" maxlength="2000" placeholder="Комментарий (обязателен при возврате на доработку)">
+                                <button type="submit" class="btn btn--pill btn--small" name="decision" value="approve">Одобрить и опубликовать</button>
+                                <button type="submit" class="btn btn--ghost btn--small btn--danger" name="decision" value="reject">Вернуть на доработку</button>
+                                <a class="btn btn--ghost btn--small" href="{{ path('app_price_revision', {id: r.priceList.id, number: r.number}) }}">Что изменилось</a>
+                            </form>
+                        </li>
+                    {% endfor %}
+                </ul>
+            {% else %}
+                <p class="card__padded text-muted">Прайс-листов на модерации нет.</p>
+            {% endif %}
+        </div>
+    {% endif %}
+
     <div class="card table-card">
         <div class="card__head card__head--padded"><h2 class="h-section">{{ is_moderator ? 'Отправлено мной' : 'Мои материалы' }}</h2></div>
         {% if requested|length > 0 %}

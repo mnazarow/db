@@ -9,11 +9,13 @@ use App\Entity\DocumentApproval;
 use App\Entity\User;
 use App\Repository\DocumentApprovalRepository;
 use App\Repository\PresentationRepository;
+use App\Repository\PriceRevisionRepository;
 use App\Repository\UserRepository;
 use App\Security\Access;
 use App\Security\Voter\PortalVoter;
 use App\Service\ApprovalService;
 use App\Service\Presentation\PresentationAccess;
+use App\Service\Price\PriceAccess;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -152,11 +154,12 @@ final class ApprovalController extends AbstractController
      */
     #[Route('/moderation', name: 'app_moderation', methods: ['GET'])]
     #[IsGranted('ROLE_USER')]
-    public function moderation(#[CurrentUser] User $user, PresentationRepository $presentations, PresentationAccess $presentationAccess): Response
+    public function moderation(#[CurrentUser] User $user, PresentationRepository $presentations, PresentationAccess $presentationAccess, PriceRevisionRepository $priceRevisions, PriceAccess $priceAccess): Response
     {
         $isModerator = $this->access->isModerator($user);
         $presentationModerator = $presentationAccess->isModerator($user);
-        if (!$isModerator && !$this->access->isAssistant($user) && !$presentationModerator) {
+        $priceModerator = $priceAccess->canManage($user);
+        if (!$isModerator && !$this->access->isAssistant($user) && !$presentationModerator && !$priceModerator) {
             throw $this->createAccessDeniedException('Страница модерации доступна маркетологам и их помощникам.');
         }
 
@@ -165,6 +168,9 @@ final class ApprovalController extends AbstractController
             // Презентации и темы пятничных собраний: модерируют маркетологи, помощники и администраторы.
             'presentation_moderator' => $presentationModerator,
             'presentation_queue' => $presentationModerator ? $presentations->findModerationQueue() : [],
+            // Новые редакции прайс-листов от помощников маркетолога: решают маркетологи и администраторы.
+            'price_moderator' => $priceModerator,
+            'price_queue' => $priceModerator ? $priceRevisions->findPending() : [],
             'queue' => $isModerator ? $this->approvals->findModerationQueue($this->access->managedSectionIds($user)) : [],
             'requested' => $this->approvals->findRequestedBy($user, 50),
             'decided' => $isModerator ? $this->approvals->findDecidedByUser($user, 30) : [],

@@ -59,7 +59,7 @@ if [[ "${1:-php-fpm}" == "cron" ]]; then
     # Напоминания сотрудникам о документах, с которыми они не ознакомились.
     printf '%s cd /var/www/html && su-exec www-data php bin/console app:documents:acknowledge-remind --no-interaction >> /var/www/html/var/log/acknowledge-cron.log 2>&1\n' "${ACKNOWLEDGE_CRON:-30 8 * * *}" >> /etc/crontabs/root
     # Разбор сообщений бота Telegram (привязка чатов; без включённых уведомлений ничего не делает).
-    printf '%s cd /var/www/html && su-exec www-data php bin/console app:telegram:poll --no-interaction >> /var/www/html/var/log/telegram-cron.log 2>&1\n' "${TELEGRAM_CRON:-* * * * *}" >> /etc/crontabs/root
+    printf '%s cd /var/www/html && su-exec www-data php bin/console app:telegram:poll --wait=50 --no-interaction >> /var/www/html/var/log/telegram-cron.log 2>&1\n' "${TELEGRAM_CRON:-* * * * *}" >> /etc/crontabs/root
     # Еженедельная сводка по таблицам материалов («Не соответствует», «Отсутствует»; включается в панели администратора).
     printf '%s cd /var/www/html && su-exec www-data php bin/console app:materials:remind --no-interaction >> /var/www/html/var/log/materials-remind-cron.log 2>&1\n' "${MATERIALS_REMIND_CRON:-10 9 * * 1}" >> /etc/crontabs/root
     # Еженедельная сводка руководителям: кто из сотрудников не ознакомился (включается в панели администратора).

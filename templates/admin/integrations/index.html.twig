@@ -258,9 +258,7 @@
             <div class="form-row form-row--check">
                 <label class="form-check"><input type="checkbox" name="auto_describe" value="1" {{ llm.auto_describe ? 'checked' }}><span>Автоматически описывать новые документы (при создании и импорте), если описание не заполнено</span></label>
             </div>
-            <div class="form-row form-row--check">
-                <label class="form-check"><input type="checkbox" name="answers" value="1" {{ llm.answers ? 'checked' }}><span>Отвечать на вопросы сотрудников на странице поиска — по фрагментам доступных им документов и видео, со ссылками на источники</span></label>
-            </div>
+            <p class="form-help">Ответы на вопросы сотрудников (помощник, страница поиска, Telegram) настраиваются ниже, в блоке «Помощник».</p>
             <div class="form-grid">
                 <div class="form-row">
                     <label class="form-label" for="llm-base-url">Адрес API</label>
@@ -321,6 +319,61 @@
         <h3 class="h-sub">Массовая обработка</h3>
         <p>Для всех документов без описания: <code>docportal console app:documents:describe --missing</code> (порциями по <code>--limit=50</code>; в cron добавлен ежечасный запуск). Переформировать сгенерированные ранее: <code>--regenerate</code>; переписать и ручные: <code>--force</code>. Предпросмотр без записи: <code>--dry-run</code>.</p>
         <p>При импорте из каталога есть флажок «Сформировать описания через LLM» (в консоли — <code>--describe</code>). В карточке документа модераторам доступна кнопка «Описать через ИИ».</p>
+    </div>
+</div>
+
+<div class="grid grid--two" id="assistant">
+    <div class="card card--form">
+        <div class="card__head"><h2 class="h-section">Помощник: ответы на вопросы</h2>
+            {% if assistant.ready %}<span class="badge badge--done"><span class="badge__dot"></span>Отвечает</span>{% elseif assistant.enabled %}<span class="badge badge--soon"><span class="badge__dot"></span>Нет модели</span>{% else %}<span class="badge badge--none"><span class="badge__dot"></span>Выключен</span>{% endif %}</div>
+        <p>Кнопка «Помощник» на страницах портала, ответы на странице поиска, бот в Telegram и API помощника для внешних систем: модель отвечает по фрагментам документов, видео и прайс-листов, доступных сотруднику, со ссылками на источники. Модель — та же, что для описаний, или своя на другом сервере: например, на сервере с видеокартой (Ollama, vLLM) или в облачном сервисе с OpenAI-совместимым API.</p>
+        <form method="post" action="{{ path('admin_integrations_assistant') }}" class="form">
+            <input type="hidden" name="_token" value="{{ csrf_token('integrations') }}">
+            <div class="form-row form-row--check">
+                <label class="form-check"><input type="checkbox" name="enabled" value="1" {{ assistant.enabled ? 'checked' }}><span>Отвечать на вопросы сотрудников</span></label>
+            </div>
+            <div class="form-row choice-list">
+                <label class="form-check form-check--radio"><input type="radio" name="source" value="shared" {{ not assistant.own ? 'checked' }}><span><b>Та же модель, что для описаний</b><br><span class="text-muted">{{ llm.model }} · {{ llm.base_url }}{% if not llm.enabled %} — сейчас выключена{% endif %}</span></span></label>
+                <label class="form-check form-check--radio"><input type="radio" name="source" value="own" {{ assistant.own ? 'checked' }}><span><b>Отдельный сервер модели</b><br><span class="text-muted">свой адрес, модель и ключ — описания документов продолжают работать как настроены выше</span></span></label>
+            </div>
+            <div class="form-grid">
+                <div class="form-row">
+                    <label class="form-label" for="assistant-base-url">Адрес API</label>
+                    <input class="form-control" id="assistant-base-url" name="base_url" type="url" value="{{ assistant.own_base_url }}" placeholder="http://gpu-server:11435/v1">
+                    <div class="form-help">Запрос идёт на <code>&lt;адрес&gt;/chat/completions</code>. Сервер, подготовленный скриптом <code>ai-server.sh</code>: <code>http://сервер:11435/v1</code>.</div>
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="assistant-model">Модель</label>
+                    <input class="form-control" id="assistant-model" name="model" value="{{ assistant.own_model }}" placeholder="qwen2.5:14b">
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="assistant-api-key">Ключ API</label>
+                    <input class="form-control" id="assistant-api-key" name="api_key" type="password" autocomplete="new-password" placeholder="{{ assistant.own_api_key ? 'сохранён (' ~ assistant.api_key_masked ~ ') — введите новый, чтобы заменить' : 'не задан' }}">
+                    {% if assistant.own_api_key %}<div class="form-help"><label class="form-check form-check--inline"><input type="checkbox" name="clear_api_key" value="1"><span>удалить сохранённый ключ</span></label></div>{% endif %}
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="assistant-timeout">Ожидание ответа, с</label>
+                    <input class="form-control" id="assistant-timeout" name="timeout" type="number" min="5" max="900" value="{{ assistant.own_timeout }}">
+                    <div class="form-help">На процессоре без видеокарты ответ может идти минуту и дольше.</div>
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn--pill btn--small">Сохранить</button>
+            </div>
+        </form>
+        <div class="form-actions">
+            <form method="post" action="{{ path('admin_integrations_assistant_test') }}" class="inline-form">
+                <input type="hidden" name="_token" value="{{ csrf_token('integrations') }}">
+                <button type="submit" class="btn btn--ghost btn--small">Проверить подключение</button>
+            </form>
+        </div>
+    </div>
+    <div class="card card--info">
+        <h2 class="h-section">Модель на своём сервере</h2>
+        <p><b>На сервере портала:</b> <code>sudo docportal ai enable</code> — ставит Ollama, скачивает модель по объёму памяти и включает помощника.</p>
+        <p><b>На отдельном сервере</b> (лучше — с видеокартой): скопируйте на него <code>deploy/ai-server.sh</code> из дистрибутива и выполните <code>sudo bash ai-server.sh --allow IP_портала</code>. Скрипт поставит Ollama и модели, закроет вход ключом и откроет порт только для портала, а в конце выведет команду для сервера портала: <code>sudo docportal ai connect --url http://сервер:11435/v1 --api-key … --model … --assistant-only</code> (или впишите адрес и ключ здесь).</p>
+        <p><b>Облачный сервис</b> с OpenAI-совместимым API — адрес, модель и ключ из его кабинета.</p>
+        <p><b>Внешний чат-бот</b> (корпоративный мессенджер, сайт): <code>POST {{ api_base }}/assistant</code> с ключом API «с внутренними документами» и логином сотрудника — помощник ответит по его правам (см. РУКОВОДСТВО).</p>
     </div>
 </div>
 

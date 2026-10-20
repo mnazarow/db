@@ -4,12 +4,16 @@ declare(strict_types=1);
 
 namespace App\Service\Notification;
 
+use App\Entity\ChatConversation;
 use App\Entity\User;
 use App\Repository\UserRepository;
+use App\Service\Assistant\ChatAssistant;
 use App\Service\Http\HttpTransportInterface;
 use App\Service\PortalSettings;
 use Doctrine\ORM\EntityManagerInterface;
 use Psr\Log\LoggerInterface;
+use Symfony\Component\DependencyInjection\Attribute\Target;
+use Symfony\Component\RateLimiter\RateLimiterFactoryInterface;
 
 /**
  * Уведомления в Telegram через бота компании.
@@ -21,6 +25,11 @@ use Psr\Log\LoggerInterface;
  *
  * Привязка чата: сотрудник получает в профиле одноразовый код и отправляет его боту; команда разбора
  * сообщений находит код, привязывает chat_id к учётной записи и отвечает подтверждением.
+ *
+ * Сотруднику, привязавшему чат, бот отвечает и на вопросы — как помощник на портале (ChatAssistant): по
+ * документам, видео и прайс-листам, которые этому сотруднику доступны, со ссылками на них. Команда /new
+ * начинает новый разговор, /help — подсказка. Чтобы ответ приходил сразу, а не через минуту, команда разбора
+ * может ждать новых сообщений (длинный опрос getUpdates, ключ --wait).
  */
 final class TelegramNotifier
 {
@@ -38,6 +47,9 @@ final class TelegramNotifier
         private readonly LoggerInterface $auditLogger,
         private readonly int $timeoutSeconds = 15,
         private readonly ?PushNotifier $push = null,
+        private readonly ?ChatAssistant $assistant = null,
+        #[Target('assistant_chat')]
+        private readonly ?RateLimiterFactoryInterface $assistantLimiter = null,
     ) {
     }
 
@@ -157,11 +169,13 @@ final class TelegramNotifier
      * skipped — почему разбор не выполнялся: disabled (уведомления выключены) или busy (сообщения
      * уже разбирает другой процесс); messages — ошибки и пояснения.
      *
-     * @return array{updates: int, linked: int, errors: int, skipped: ?string, messages: list<string>}
+     * $wait — сколько секунд ждать новых сообщений (длинный опрос; 0 — забрать накопившиеся и выйти).
+     *
+     * @return array{updates: int, linked: int, answered: int, errors: int, skipped: ?string, messages: list<string>}
      */
-    public function poll(int $limit = 50): array
+    public function poll(int $limit = 50, int $wait = 0): array
     {
-        $stats = ['updates' => 0, 'linked' => 0, 'errors' => 0, 'skipped' => null, 'messages' => []];
+        $stats = ['updates' => 0, 'linked' => 0, 'answered' => 0, 'errors' => 0, 'skipped' => null, 'messages' => []];
         if (!$this->isEnabled()) {
             $stats['skipped'] = 'disabled';
             $stats['messages'][] = 'Уведомления в Telegram выключены.';
@@ -179,7 +193,14 @@ final class TelegramNotifier
             return $stats;
         }
         try {
-            $this->pollUpdates(max(1, min(100, $limit)), $stats);
+            $until = time() + max(0, min(300, $wait));
+            do {
+                // Длинный опрос: Telegram держит запрос, пока не придёт сообщение (не дольше 25 с).
+                $hold = $wait > 0 ? max(0, min(25, $until - time())) : 0;
+                if (!$this->pollUpdates(max(1, min(100, $limit)), $stats, $hold)) {
+                    break; // Bot API не ответил — следующий запуск по расписанию попробует снова
+                }
+            } while ($wait > 0 && time() < $until - 1);
         } finally {
             if (true === $lock) {
                 $this->releaseLock();
@@ -190,9 +211,9 @@ final class TelegramNotifier
     }
 
     /**
-     * @param array{updates: int, linked: int, errors: int, skipped: ?string, messages: list<string>} $stats
+     * @param array{updates: int, linked: int, answered: int, errors: int, skipped: ?string, messages: list<string>} $stats
      */
-    private function pollUpdates(int $limit, array &$stats): void
+    private function pollUpdates(int $limit, array &$stats, int $hold = 0): bool
     {
         $bot = self::botId($this->settings->telegram()['token']);
         // Позиция читается прямо из базы: кэш настроек мог быть прочитан до того, как её сдвинул
@@ -201,14 +222,14 @@ final class TelegramNotifier
         $response = $this->call('getUpdates', array_filter([
             'offset' => $offset > 0 ? $offset : null,
             'limit' => $limit,
-            'timeout' => 0,
+            'timeout' => $hold,
             'allowed_updates' => '["message"]',
-        ], static fn ($value): bool => null !== $value));
+        ], static fn ($value): bool => null !== $value), false, $hold + $this->timeoutSeconds);
         if (!$response['ok']) {
             ++$stats['errors'];
             $stats['messages'][] = $response['message'];
 
-            return;
+            return false;
         }
         $updates = \is_array($response['result'] ?? null) ? $response['result'] : [];
         $maxId = $offset;
@@ -227,6 +248,12 @@ final class TelegramNotifier
                 if ('' === $chatId || '' === $text) {
                     continue;
                 }
+                // Позиция сохраняется до ответа: ответ помощника может идти долго, а повторно разбирать уже
+                // принятые сообщения (и отвечать дважды) нельзя, если процесс прервут.
+                if ($maxId > $offset) {
+                    $this->settings->set(PortalSettings::TELEGRAM_OFFSET, '' !== $bot ? $bot.':'.$maxId : $maxId);
+                    $offset = $maxId;
+                }
                 $this->handleMessage($chatId, $text, $message, $stats);
             }
         } finally {
@@ -234,6 +261,8 @@ final class TelegramNotifier
                 $this->settings->set(PortalSettings::TELEGRAM_OFFSET, '' !== $bot ? $bot.':'.$maxId : $maxId);
             }
         }
+
+        return true;
     }
 
     /**
@@ -297,15 +326,20 @@ final class TelegramNotifier
     }
 
     /**
-     * @param array<string, mixed>                                                                   $message
-     * @param array{updates: int, linked: int, errors: int, skipped: ?string, messages: list<string>} $stats
+     * Входящее сообщение: команды (/start с кодом привязки, /stop, /help, /new), код привязки от непривязанного
+     * чата или вопрос помощнику от привязанного.
+     *
+     * @param array<string, mixed>                                                                                  $message
+     * @param array{updates: int, linked: int, answered: int, errors: int, skipped: ?string, messages: list<string>} $stats
      */
     private function handleMessage(string $chatId, string $text, array $message, array &$stats): void
     {
-        $code = strtoupper(trim(preg_replace('/^\/start\s*/i', '', $text) ?? ''));
-        if ('' === $code || '/STOP' === $code) {
-            if ('/STOP' === $code) {
-                $user = $this->users->findOneBy(['telegramChatId' => $chatId]);
+        $user = $this->users->findOneBy(['telegramChatId' => $chatId]);
+        $first = (string) (preg_split('/\s+/u', $text, 2)[0] ?? '');
+        $command = str_starts_with($first, '/') ? strtolower((string) preg_replace('/@\S*$/', '', $first)) : null;
+        $argument = trim(mb_substr($text, mb_strlen($first)));
+        switch ($command) {
+            case '/stop':
                 if (null !== $user) {
                     $user->unlinkTelegram();
                     $this->em->flush();
@@ -314,11 +348,124 @@ final class TelegramNotifier
 
                     return;
                 }
+                $this->send($chatId, 'Отправьте код привязки из профиля портала документации.');
+
+                return;
+            case '/start':
+                if ('' !== $argument) {
+                    $this->link($chatId, $argument, $message, $stats);
+                } elseif (null !== $user) {
+                    $this->send($chatId, $this->help($user));
+                } else {
+                    $this->send($chatId, 'Отправьте код привязки из профиля портала документации.');
+                }
+
+                return;
+            case '/help':
+                $this->send($chatId, $this->help($user));
+
+                return;
+            case '/new':
+                if (null !== $user && null !== $this->assistant) {
+                    $this->assistant->finishTelegram($user);
+                    $this->send($chatId, 'Начат новый разговор — задайте вопрос.');
+                } else {
+                    $this->send($chatId, $this->help($user));
+                }
+
+                return;
+            case null:
+                break;
+            default:
+                $this->send($chatId, 'Такой команды нет. '.$this->help($user));
+
+                return;
+        }
+        if (null === $user) {
+            // Одно «слово» от непривязанного чата — код привязки; иначе — подсказка, как привязать чат.
+            if (1 === preg_match('/^\S{4,32}$/u', $text)) {
+                $this->link($chatId, $text, $message, $stats);
+            } else {
+                $this->send($chatId, $this->help(null));
             }
-            $this->send($chatId, 'Отправьте код привязки из профиля портала документации.');
 
             return;
         }
+        $this->answer($user, $chatId, $text, $message, $stats);
+    }
+
+    /**
+     * Вопрос помощнику из Telegram.
+     *
+     * @param array<string, mixed>                                                                                  $message
+     * @param array{updates: int, linked: int, answered: int, errors: int, skipped: ?string, messages: list<string>} $stats
+     */
+    private function answer(User $user, string $chatId, string $text, array $message, array &$stats): void
+    {
+        if ('private' !== (string) ($message['chat']['type'] ?? 'private')) {
+            return; // в группах помощник не отвечает: ответ зависит от прав конкретного сотрудника
+        }
+        if (null === $this->assistant || !$this->assistant->isAvailable()) {
+            $this->send($chatId, 'Помощник по документам выключен администратором портала — сюда приходят только уведомления. Команда /stop отключает их.');
+
+            return;
+        }
+        if (!$user->isActive()) {
+            $this->send($chatId, 'Учётная запись на портале отключена.');
+
+            return;
+        }
+        if (null !== $this->assistantLimiter) {
+            $limit = $this->assistantLimiter->create('assistant-'.$user->getId())->consume();
+            if (!$limit->isAccepted()) {
+                $this->send($chatId, \sprintf('Слишком много вопросов подряд — повторите через %d мин.', max(1, (int) ceil(($limit->getRetryAfter()->getTimestamp() - time()) / 60))));
+
+                return;
+            }
+        }
+        $this->call('sendChatAction', ['chat_id' => $chatId, 'action' => 'typing']);
+        try {
+            $result = $this->assistant->ask($user, $this->assistant->ongoingTelegram($user), $text, ChatConversation::CHANNEL_TELEGRAM);
+        } catch (\InvalidArgumentException|\DomainException $e) {
+            $this->send($chatId, htmlspecialchars($e->getMessage(), \ENT_QUOTES));
+
+            return;
+        } catch (\Throwable $e) {
+            ++$stats['errors'];
+            $stats['messages'][] = 'Помощник не ответил: '.$e->getMessage();
+            $this->auditLogger->warning('Помощник в Telegram не ответил', ['user' => $user->getUsername(), 'error' => $e->getMessage()]);
+            $this->send($chatId, 'Не получилось ответить — повторите вопрос чуть позже.');
+
+            return;
+        }
+        if ($this->send($chatId, $this->assistant->telegramText($result['reply']))['ok']) {
+            ++$stats['answered'];
+        }
+    }
+
+    /** Подсказка: что умеет бот (привязанному чату — с помощником). */
+    private function help(?User $user): string
+    {
+        if (null === $user) {
+            return 'Это бот портала документации. Чтобы получать уведомления и задавать вопросы помощнику, привяжите чат: на портале откройте «Подписки и уведомления» → Telegram, получите код и отправьте его сюда.';
+        }
+        $assistant = null !== $this->assistant && $this->assistant->isAvailable();
+
+        return ($assistant
+            ? "Задайте вопрос — помощник ответит по документам, видео и прайс-листам портала, которые вам доступны, и пришлёт ссылки на них. Можно уточнять в том же разговоре.\n\n/new — начать новый разговор\n"
+            : "Сюда приходят уведомления портала документации.\n\n")
+            .'/stop — отключить уведомления и отвязать чат';
+    }
+
+    /**
+     * Привязка чата по коду из профиля.
+     *
+     * @param array<string, mixed>                                                                                  $message
+     * @param array{updates: int, linked: int, answered: int, errors: int, skipped: ?string, messages: list<string>} $stats
+     */
+    private function link(string $chatId, string $code, array $message, array &$stats): void
+    {
+        $code = strtoupper(trim($code));
         $user = $this->users->findOneByTelegramCode($code);
         if (null === $user || !self::codeIsFresh($user)) {
             ++$stats['errors'];
@@ -330,7 +477,9 @@ final class TelegramNotifier
         $user->linkTelegram($chatId, '' !== $name ? $name : (string) ($message['from']['username'] ?? ''));
         $this->em->flush();
         ++$stats['linked'];
-        $this->send($chatId, \sprintf('Готово, %s. Уведомления портала документации будут приходить сюда. Команда /stop отключает их.', htmlspecialchars($user->getDisplayName(), \ENT_QUOTES)));
+        $assistant = null !== $this->assistant && $this->assistant->isAvailable();
+        $this->send($chatId, \sprintf('Готово, %s. Уведомления портала документации будут приходить сюда.%s Команда /stop отключает их.',
+            htmlspecialchars($user->getDisplayName(), \ENT_QUOTES), $assistant ? ' Здесь же можно задавать вопросы помощнику по документам и прайс-листам.' : ''));
         $this->auditLogger->info('Привязан Telegram', ['user' => $user->getUsername(), 'chat' => $chatId]);
     }
 
@@ -391,7 +540,7 @@ final class TelegramNotifier
      *
      * @return array{ok: bool, message: string, result?: mixed}
      */
-    private function call(string $method, array $params = [], bool $force = false): array
+    private function call(string $method, array $params = [], bool $force = false, ?int $timeout = null): array
     {
         $telegram = $this->settings->telegram();
         if ('' === $telegram['token'] || (!$force && !$telegram['enabled'])) {
@@ -399,7 +548,7 @@ final class TelegramNotifier
         }
         $url = \sprintf('%s/bot%s/%s', $telegram['api_url'], $telegram['token'], $method);
         $body = json_encode($params, \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES);
-        $response = $this->http->request('POST', $url, false !== $body ? $body : '{}', ['Content-Type' => 'application/json'], $this->timeoutSeconds);
+        $response = $this->http->request('POST', $url, false !== $body ? $body : '{}', ['Content-Type' => 'application/json'], $timeout ?? $this->timeoutSeconds);
         $json = $response->json();
         if ($response->ok() && true === ($json['ok'] ?? false)) {
             return ['ok' => true, 'message' => 'Запрос выполнен.', 'result' => $json['result'] ?? null];

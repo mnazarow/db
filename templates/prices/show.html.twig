@@ -1,0 +1,104 @@
+{% extends 'base.html.twig' %}
+{% import 'prices/_macros.html.twig' as pm %}
+
+{% block title %}{{ list.title }} — прайс-лист{% endblock %}
+{% block body_class %}page-prices{% endblock %}
+
+{% block body %}
+{% set current = revision and revision.current %}
+<section class="hero hero--compact">
+    <div class="container">
+        <div class="eyebrow"><a href="{{ path('app_prices') }}">Прайс-листы</a></div>
+        <div class="hero__row">
+            <div>
+                <h1 class="h-display">{{ list.title }}</h1>
+                <p class="hero__meta">
+                    {% if revision %}
+                        {{ revision.itemCount|plural(['позиция', 'позиции', 'позиций']) }}
+                        · {{ revision.effectiveFrom ? 'действует с ' ~ revision.effectiveFrom|date('d.m.Y') : 'обновлён ' ~ (revision.publishedAt ?? revision.uploadedAt)|date('d.m.Y') }}
+                        · цены в {{ {RUB: 'рублях', USD: 'долларах', EUR: 'евро', CNY: 'юанях', KZT: 'тенге', BYN: 'белорусских рублях'}[list.currency] ?? list.currency }} ({{ list.currencySign }})
+                    {% else %}
+                        Прайс-лист ещё не опубликован.
+                    {% endif %}
+                    {% if not list.public %} · <span class="tag tag--internal">только для сотрудников</span>{% endif %}
+                    {% if list.archived %} · <span class="tag">в архиве</span>{% endif %}
+                </p>
+                {% if list.description %}<p class="hero__meta price-description">{{ list.description|nl2br }}</p>{% endif %}
+            </div>
+            <div class="hero__actions">
+                {% if revision %}
+                    <a class="btn btn--pill btn--small" href="{{ path('app_price_export', filters.revision is defined ? {id: list.id, revision: filters.revision} : {id: list.id}) }}" title="Позиции в виде таблицы Excel">Скачать Excel</a>
+                    {% if can_original %}<a class="btn btn--ghost btn--small" href="{{ path('app_price_file', {id: list.id, number: revision.number}) }}" title="{{ revision.originalName }}">Исходный файл</a>{% endif %}
+                {% endif %}
+                <a class="btn btn--ghost btn--small" href="{{ path('app_price_history', {id: list.id}) }}">История</a>
+                {% if can_manage %}<a class="btn btn--ghost btn--small" href="{{ path('app_price_settings', {id: list.id}) }}">Настройки</a>{% endif %}
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+
+    {% if revision and not current %}
+        <div class="alert alert--warning">Вы смотрите редакцию {{ revision.number }} ({{ revision.statusLabel|lower }}), а не действующую. <a href="{{ path('app_price_revision', {id: list.id, number: revision.number}) }}">Подробнее о редакции</a>{% if list.currentRevision %} · <a href="{{ path('app_price_show', {id: list.id}) }}">к действующей</a>{% endif %}</div>
+    {% endif %}
+
+    {% if unfinished|length > 0 %}
+        <div class="alert alert--info">
+            {% for r in unfinished %}
+                <div>Редакция {{ r.number }} от {{ r.uploadedAt|date('d.m.Y H:i') }} — {{ r.statusLabel|lower }}:
+                    {% if r.draft %}<a href="{{ path('app_price_mapping', {id: list.id, number: r.number}) }}">сопоставить столбцы</a>{% else %}<a href="{{ path('app_price_revision', {id: list.id, number: r.number}) }}">{{ r.pending and can_manage ? 'рассмотреть' : 'открыть' }}</a>{% endif %}
+                    {% if r.decisionNote and r.status == 'rejected' %} — «{{ r.decisionNote }}»{% endif %}
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+
+    {% if can_upload %}
+        <details class="card card__padded price-upload" {{ not list.currentRevision and unfinished is empty ? 'open' }}>
+            <summary class="link-action">Загрузить новую редакцию из Excel</summary>
+            <form method="post" action="{{ path('app_price_upload', {id: list.id}) }}" enctype="multipart/form-data" class="form price-upload__form">
+                <input type="hidden" name="_token" value="{{ csrf_token('prices') }}">
+                <input class="form-control" type="file" name="file" required accept=".xlsx,.xlsm,.xls,.ods,.csv" aria-label="Файл прайс-листа">
+                <button type="submit" class="btn btn--pill btn--small">Загрузить</button>
+                <p class="form-help">Столбцы сопоставятся так же, как в прошлый раз (по названиям), — проверите их на следующем шаге. Прежняя редакция останется в истории.{% if not can_manage %} Новые цены увидят после одобрения маркетолога.{% endif %}</p>
+            </form>
+        </details>
+    {% endif %}
+
+    {% if revision %}
+        <div class="card table-card">
+            <form method="get" class="toolbar__row card__padded price-toolbar">
+                {% if filters.revision is defined %}<input type="hidden" name="revision" value="{{ filters.revision }}">{% endif %}
+                <label class="search price-toolbar__search">
+                    <input class="search__input" type="search" name="q" value="{{ q }}" placeholder="Артикул или слова из названия…" aria-label="Поиск в прайс-листе" autocomplete="off">
+                </label>
+                {% if groups|length > 0 %}
+                    <select class="form-control form-control--inline" name="group" aria-label="Группа" data-autosubmit>
+                        <option value="">Все группы</option>
+                        {% for g in groups %}<option value="{{ g }}" {{ g == group ? 'selected' }}>{{ g }}</option>{% endfor %}
+                    </select>
+                {% endif %}
+                <select class="form-control form-control--inline" name="sort" aria-label="Порядок" data-autosubmit>
+                    {% for value, label in {position: 'Как в файле', name: 'По наименованию', sku: 'По артикулу', price_asc: 'Сначала дешевле', price_desc: 'Сначала дороже'} %}
+                        <option value="{{ value }}" {{ sort == value ? 'selected' }}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+                <button class="btn btn--pill btn--small" type="submit">Показать</button>
+                {% if q or group or sort != 'position' %}<a class="btn btn--ghost btn--small" href="{{ path('app_price_show', filters.revision is defined ? {id: list.id, revision: filters.revision} : {id: list.id}) }}">Сбросить</a>{% endif %}
+                <span class="text-muted price-toolbar__count">{{ (q or group) ? 'найдено ' ~ total|plural(['позиция', 'позиции', 'позиций']) : '' }}</span>
+            </form>
+            {{ pm.items_table(items, revision, {groups_inline: sort == 'position' and not group, empty: q or group ? 'По запросу ничего не нашлось.' : 'В редакции нет позиций.'}) }}
+            {% if pages > 1 %}
+                <div class="pager card__padded">
+                    {% if page > 1 %}<a class="btn btn--ghost btn--small" href="{{ path('app_price_show', filters|merge({id: list.id, page: page - 1})) }}">← Предыдущие</a>{% endif %}
+                    <span class="text-muted">Страница {{ page }} из {{ pages }}</span>
+                    {% if page < pages %}<a class="btn btn--ghost btn--small" href="{{ path('app_price_show', filters|merge({id: list.id, page: page + 1})) }}">Следующие →</a>{% endif %}
+                </div>
+            {% endif %}
+        </div>
+        {% if revision.note %}<p class="form-help">Примечание к редакции: {{ revision.note }}</p>{% endif %}
+    {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,105 @@
+{% extends 'base.html.twig' %}
+{% import 'prices/_macros.html.twig' as pm %}
+
+{% block title %}Редакция {{ revision.number }} — {{ list.title }}{% endblock %}
+{% block body_class %}page-prices{% endblock %}
+
+{% macro diff_rows(rows, revision, kind) %}
+    {% set prices = revision.priceColumns %}
+    <div class="table-scroll">
+        <table class="admin-table price-table">
+            <thead><tr><th class="price-table__sku">Артикул</th><th>Наименование</th>{% if kind == 'changed' %}<th class="price-num">Было</th><th class="price-num">Стало</th><th class="price-num">Изменение</th>{% else %}<th class="price-num">{{ prices[0] ?? 'Цена' }}</th>{% endif %}</tr></thead>
+            <tbody>
+            {% for row in rows|slice(0, 500) %}
+                <tr>
+                    <td class="price-table__sku">{{ row.sku ?: '—' }}</td>
+                    <td class="price-table__name">{{ row.name }}{% if row.groupName %}<div class="hints">{{ row.groupName }}</div>{% endif %}</td>
+                    {% if kind == 'changed' %}
+                        <td class="price-num">{{ (row.old_prices|first ?: '')|price_value }}</td>
+                        <td class="price-num">{{ (row.prices|first ?: '')|price_value }}</td>
+                        <td class="price-num {{ row.delta is not null ? (row.delta > 0 ? 'price-up' : (row.delta < 0 ? 'price-down')) }}">{{ row.delta is not null ? row.delta|price_delta : (row.prices != row.old_prices ? 'другие цены' : '') }}</td>
+                    {% else %}
+                        <td class="price-num">{{ (row.prices|first ?: '')|price_value }}</td>
+                    {% endif %}
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% if rows|length > 500 %}<p class="form-help card__padded">Показаны первые 500 из {{ rows|length }}.</p>{% endif %}
+{% endmacro %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        <div class="eyebrow"><a href="{{ path('app_prices') }}">Прайс-листы</a> · <a href="{{ path('app_price_show', {id: list.id}) }}">{{ list.title }}</a> · <a href="{{ path('app_price_history', {id: list.id}) }}">история</a></div>
+        <div class="hero__row">
+            <div>
+                <h1 class="h-display">Редакция {{ revision.number }}</h1>
+                <p class="hero__meta">{{ pm.status_badge(revision) }} {{ revision.originalName }} · загрузил(а) {{ revision.uploadedBy ? revision.uploadedBy.displayName : '—' }}, {{ revision.uploadedAt|date('d.m.Y H:i') }}{% if revision.effectiveFrom %} · цены действуют с {{ revision.effectiveFrom|date('d.m.Y') }}{% endif %}</p>
+            </div>
+            <div class="hero__actions">
+                {% if not revision.draft %}<a class="btn btn--pill btn--small" href="{{ path('app_price_show', revision.current ? {id: list.id} : {id: list.id, revision: revision.number}) }}">Позиции ({{ revision.itemCount }})</a>{% endif %}
+                {% if can_original %}<a class="btn btn--ghost btn--small" href="{{ path('app_price_file', {id: list.id, number: revision.number}) }}">Исходный файл</a>{% endif %}
+                {% if can_edit %}<a class="btn btn--ghost btn--small" href="{{ path('app_price_mapping', {id: list.id, number: revision.number}) }}">{{ revision.draft ? 'Сопоставить столбцы' : 'Изменить сопоставление' }}</a>{% endif %}
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+
+    {% if revision.note %}<div class="alert alert--info">Примечание: {{ revision.note }}</div>{% endif %}
+    {% if revision.status == 'rejected' %}
+        <div class="alert alert--danger">Возвращена на доработку{% if revision.decidedBy %} ({{ revision.decidedBy.displayName }}){% endif %}{% if revision.decisionNote %}: «{{ revision.decisionNote }}»{% endif %}. Исправьте файл и загрузите новую редакцию или измените сопоставление столбцов.</div>
+    {% elseif revision.published and revision.decidedBy and revision.decidedBy.id != (revision.uploadedBy.id ?? 0) %}
+        <p class="form-help">Одобрил(а): {{ revision.decidedBy.displayName }}{% if revision.publishedAt %}, {{ revision.publishedAt|date('d.m.Y H:i') }}{% endif %}{% if revision.decisionNote %} — «{{ revision.decisionNote }}»{% endif %}</p>
+    {% endif %}
+
+    {% if revision.pending and can_manage %}
+        <div class="card card__padded">
+            <h2 class="h-section">Решение</h2>
+            <p class="text-muted">Проверьте изменения ниже. Одобренная редакция сразу станет действующей.</p>
+            <form method="post" action="{{ path('app_price_decide', {id: list.id, number: revision.number}) }}" class="form ack-decide">
+                <input type="hidden" name="_token" value="{{ csrf_token('prices') }}">
+                <input class="form-control form-control--inline" type="text" name="note" maxlength="2000" placeholder="Комментарий (обязателен при возврате на доработку)">
+                <button type="submit" class="btn btn--pill btn--small" name="decision" value="approve">Одобрить и опубликовать</button>
+                <button type="submit" class="btn btn--ghost btn--small btn--danger" name="decision" value="reject">Вернуть на доработку</button>
+            </form>
+        </div>
+    {% endif %}
+
+    {% if diff %}
+        <div class="card card__padded">
+            <h2 class="h-section">Изменения</h2>
+            {% if diff.base %}
+                <p>По сравнению с {{ revision.published ? 'предыдущей' : 'действующей' }} редакцией <a href="{{ path('app_price_revision', {id: list.id, number: diff.base.number}) }}">{{ diff.base.number }}</a>: {{ pm.diff_chips(diff.stats) }}</p>
+            {% else %}
+                <p class="text-muted">Первая редакция прайс-листа — сравнивать не с чем.</p>
+            {% endif %}
+        </div>
+        {% if diff.base %}
+            {% for kind, title in {changed: 'Изменились цены', added: 'Новые позиции', removed: 'Больше нет в прайс-листе'} %}
+                {% if diff[kind]|length > 0 %}
+                    <details class="card table-card" {{ loop.first ? 'open' }}>
+                        <summary class="card__head card__head--padded"><h2 class="h-section">{{ title }} <span class="tag">{{ diff[kind]|length }}</span></h2></summary>
+                        {{ _self.diff_rows(diff[kind], kind == 'removed' ? diff.base : revision, kind) }}
+                    </details>
+                {% endif %}
+            {% endfor %}
+        {% endif %}
+    {% elseif revision.draft %}
+        <div class="alert alert--info">Столбцы ещё не сопоставлены — <a href="{{ path('app_price_mapping', {id: list.id, number: revision.number}) }}">сопоставить</a>. Черновик без сопоставления удаляется через неделю.</div>
+    {% endif %}
+
+    <div class="form-actions">
+        {% if can_delete %}
+            <form method="post" action="{{ path('app_price_revision_delete', {id: list.id, number: revision.number}) }}" class="inline-form" data-confirm="Удалить редакцию {{ revision.number }} вместе с файлом?">
+                <input type="hidden" name="_token" value="{{ csrf_token('prices') }}">
+                <button type="submit" class="btn btn--ghost btn--small btn--danger">Удалить редакцию</button>
+            </form>
+        {% endif %}
+    </div>
+</section>
+{% endblock %}

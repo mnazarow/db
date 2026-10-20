@@ -114,6 +114,12 @@ abstract class PortalTestCase extends WebTestCase
                 }
             }
         }
+        // Файлы прайс-листов прежних прогонов.
+        if (is_dir($storage.'/prices')) {
+            foreach (new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($storage.'/prices', \FilesystemIterator::SKIP_DOTS), \RecursiveIteratorIterator::CHILD_FIRST) as $f) {
+                $f->isDir() ? @rmdir($f->getPathname()) : @unlink($f->getPathname());
+            }
+        }
         $app = new Application(static::$kernel);
         $app->setAutoExit(false);
         $out = new BufferedOutput();

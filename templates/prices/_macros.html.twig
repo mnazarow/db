@@ -1,0 +1,54 @@
+{# Таблица позиций прайс-листа; options: revision (PriceRevision), list (PriceList), groups_inline (заголовки групп в таблице) #}
+{% macro items_table(items, revision, options = {}) %}
+    {% set prices = revision.priceColumns %}
+    {% set extras = revision.extraColumns %}
+    {% set cols = 3 + prices|length + extras|length %}
+    <div class="table-scroll">
+        <table class="admin-table price-table">
+            <thead>
+            <tr>
+                <th class="price-table__sku">Артикул</th>
+                <th>Наименование</th>
+                <th class="price-table__unit">Ед.</th>
+                {% for label in prices %}<th class="price-num">{{ label }}</th>{% endfor %}
+                {% for label in extras %}<th>{{ label }}</th>{% endfor %}
+            </tr>
+            </thead>
+            <tbody>
+            {% set current_group = '__none__' %}
+            {% for item in items %}
+                {% if options.groups_inline|default(false) and item.groupName != current_group %}
+                    {% set current_group = item.groupName %}
+                    {% if item.groupName %}<tr class="price-table__group"><th colspan="{{ cols }}" scope="rowgroup">{{ item.groupName }}</th></tr>{% endif %}
+                {% endif %}
+                <tr>
+                    <td class="price-table__sku" data-label="Артикул">{{ item.sku ?: '—' }}</td>
+                    <td class="price-table__name">{{ item.name }}{% if not options.groups_inline|default(false) and item.groupName %}<div class="hints">{{ item.groupName }}</div>{% endif %}</td>
+                    <td class="price-table__unit" data-label="Ед.">{{ item.unit ?: '' }}</td>
+                    {% for i in prices is empty ? [] : 0..(prices|length - 1) %}<td class="price-num" data-label="{{ prices[i] }}">{{ (item.prices[i] ?? '')|price_value }}</td>{% endfor %}
+                    {% for i in extras is empty ? [] : 0..(extras|length - 1) %}<td class="price-table__extra" data-label="{{ extras[i] }}">{{ item.extra[i] ?? '' }}</td>{% endfor %}
+                </tr>
+            {% else %}
+                <tr><td colspan="{{ cols }}" class="text-muted">{{ options.empty|default('Позиций не найдено.') }}</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+{% endmacro %}
+
+{# Отличия редакции: «+12 новых · −3 убрано · 40 изменили цену (↑35 ↓5)» #}
+{% macro diff_chips(stats) %}
+    {% if stats %}
+        <span class="price-diff">
+            {% if stats.added > 0 %}<span class="price-diff__item price-diff__item--added" title="Новые позиции">+{{ stats.added|plural(['новая', 'новые', 'новых']) }}</span>{% endif %}
+            {% if stats.removed > 0 %}<span class="price-diff__item price-diff__item--removed" title="Позиции, которых больше нет">−{{ stats.removed }} убрано</span>{% endif %}
+            {% if stats.changed > 0 %}<span class="price-diff__item" title="Позиции с другой ценой">{{ stats.changed|plural(['цена изменилась', 'цены изменились', 'цен изменилось']) }}{% if stats.up > 0 or stats.down > 0 %} (<span class="price-up">↑{{ stats.up }}</span> <span class="price-down">↓{{ stats.down }}</span>){% endif %}</span>{% endif %}
+            {% if stats.added == 0 and stats.removed == 0 and stats.changed == 0 %}<span class="price-diff__item">без изменений</span>{% endif %}
+        </span>
+    {% endif %}
+{% endmacro %}
+
+{% macro status_badge(revision) %}
+    {%- set cls = {draft: 'none', pending: 'soon', published: 'done', rejected: 'overdue'}[revision.status] ?? 'none' -%}
+    <span class="chip chip--small chip--static chip--{{ cls }}"><span class="chip__dot"></span>{{ revision.current ? 'Действующая' : revision.statusLabel }}</span>
+{%- endmacro %}

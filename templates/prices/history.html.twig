@@ -1,0 +1,50 @@
+{% extends 'base.html.twig' %}
+{% import 'prices/_macros.html.twig' as pm %}
+
+{% block title %}История — {{ list.title }}{% endblock %}
+{% block body_class %}page-prices{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        <div class="eyebrow"><a href="{{ path('app_prices') }}">Прайс-листы</a> · <a href="{{ path('app_price_show', {id: list.id}) }}">{{ list.title }}</a></div>
+        <h1 class="h-display">История редакций</h1>
+        <p class="hero__meta">Каждая загрузка файла — редакция. Откройте редакцию, чтобы увидеть, какие позиции появились, пропали и как изменились цены по сравнению с предыдущей.</p>
+    </div>
+</section>
+
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+    <div class="card table-card">
+        <div class="table-scroll">
+            <table class="admin-table">
+                <thead><tr><th>№</th><th>Состояние</th><th>Действует с</th><th>Позиций</th><th>Изменения</th><th>Файл</th><th>Загрузил(а)</th><th></th></tr></thead>
+                <tbody>
+                {% for r in revisions %}
+                    <tr>
+                        <td><a href="{{ path('app_price_revision', {id: list.id, number: r.number}) }}">{{ r.number }}</a></td>
+                        <td>{{ pm.status_badge(r) }}</td>
+                        <td class="col-nowrap">{{ r.effectiveFrom ? r.effectiveFrom|date('d.m.Y') : (r.publishedAt ? r.publishedAt|date('d.m.Y') : '—') }}</td>
+                        <td>{{ r.draft ? '—' : r.itemCount }}</td>
+                        <td>{{ r.stats ? pm.diff_chips(r.stats) : (r.draft ? 'столбцы не сопоставлены' : '—') }}</td>
+                        <td class="col-comment">{% if can_original %}<a href="{{ path('app_price_file', {id: list.id, number: r.number}) }}">{{ r.originalName }}</a>{% else %}{{ r.originalName }}{% endif %}</td>
+                        <td class="col-nowrap">{{ r.uploadedBy ? r.uploadedBy.displayName : '—' }}<div class="hints">{{ r.uploadedAt|date('d.m.Y H:i') }}</div></td>
+                        <td class="col-nowrap">
+                            {% if r.published and not r.current %}<a class="link-action" href="{{ path('app_price_show', {id: list.id, revision: r.number}) }}">Позиции</a>{% endif %}
+                            {% if can_manage and r.published and not r.current %}
+                                <form method="post" action="{{ path('app_price_make_current', {id: list.id, number: r.number}) }}" class="inline-form" data-confirm="Сделать действующей редакцию {{ r.number }}? Сотрудники снова увидят её цены.">
+                                    <input type="hidden" name="_token" value="{{ csrf_token('prices') }}">
+                                    <button type="submit" class="btn btn--ghost btn--small">Сделать действующей</button>
+                                </form>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% else %}
+                    <tr><td colspan="8" class="text-muted">Редакций нет.</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+{% endblock %}

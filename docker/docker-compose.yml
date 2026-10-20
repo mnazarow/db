@@ -234,6 +234,33 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
 
+  # --- Языковая модель на своём сервере (Ollama) ---------------------------------------------------------
+  # Помощник, ответы на странице поиска, описания документов и поиск по смыслу — моделью в своём контуре, без
+  # облачных сервисов. Включение: docportal ai enable (профиль «ai» в COMPOSE_PROFILES, скачивание моделей,
+  # настройка портала). Портал обращается к модели по адресу http://ollama:11434/v1; наружу порт не открывается.
+  # Видеокарта NVIDIA: docportal ai enable --gpu (подключает docker-compose.gpu.yml; нужен nvidia-container-toolkit).
+  ollama:
+    image: ${OLLAMA_IMAGE:-ollama/ollama:latest}
+    profiles: ["ai"]
+    environment:
+      # Модель держится в памяти сутки после последнего вопроса — первый ответ утром не ждёт загрузки.
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-24h}
+      OLLAMA_NUM_PARALLEL: ${OLLAMA_NUM_PARALLEL:-2}
+      OLLAMA_MAX_LOADED_MODELS: ${OLLAMA_MAX_LOADED_MODELS:-2}
+      # Окно контекста: источники ответа (до ~12 000 символов) должны поместиться целиком.
+      OLLAMA_CONTEXT_LENGTH: ${OLLAMA_CONTEXT_LENGTH:-8192}
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
 volumes:
   db-data:
   storage:
@@ -244,3 +271,4 @@ volumes:
   video-uploads:
   video-live:
   video-import:
+  ollama-data:

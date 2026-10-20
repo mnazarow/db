@@ -10,8 +10,10 @@ use App\Entity\User;
 use App\Repository\AiQuestionRepository;
 use App\Repository\DocumentRepository;
 use App\Repository\DocumentTextRepository;
+use App\Repository\PriceItemRepository;
 use App\Security\Access;
 use App\Service\PortalSettings;
+use App\Service\Price\PriceFormat;
 use App\Service\Text\SearchQuery;
 use App\Service\Video\VideoApi;
 use Doctrine\ORM\EntityManagerInterface;
@@ -28,8 +30,13 @@ use Symfony\Contracts\Service\ResetInterface;
  *  - по смыслу (если включён смысловой индекс, SemanticIndex): вектор вопроса сравнивается с векторами
  *    документов и их фрагментов — находятся и документы, где нужные слова не встречаются («возгорание» →
  *    «пожарная безопасность»); источником становятся самые близкие к вопросу фрагменты.
- * В источники попадают только документы и видео, которые этот сотрудник может открыть. Модель отвечает строго
- * по ним и ссылается номерами [1], [2]… Ничего не найдено — модель не вызывается.
+ * Кроме документов и видео источником бывает прайс-лист: позиции действующих прайс-листов, в которых встречаются
+ * слова вопроса («сколько стоит станция Аква-50»), — с ценами, как в прайс-листе.
+ * В источники попадают только документы, видео и прайс-листы, которые этот сотрудник может открыть. Модель отвечает
+ * строго по ним и ссылается номерами [1], [2]… Ничего не найдено — модель не вызывается.
+ *
+ * Для чата помощника (на портале и в Telegram) в ответ передаются предыдущие вопросы и ответы разговора: короткий
+ * уточняющий вопрос («а для скважины?») ищется вместе с предыдущим, а модель видит, о чём шла речь.
  *
  * Каждый вопрос с итогом (ответ, «в документах ответа нет», ничего не найдено, ошибка) пишется в журнал
  * (AiQuestion), если он включён: сотрудник оценивает ответ, администратор видит вопросы без ответа.
@@ -41,6 +48,23 @@ final class AnswerService implements ResetInterface
 
     /** Видео-источников в одном ответе. */
     public const MAX_VIDEOS = 2;
+
+    /** Прайс-листов-источников в одном ответе и позиций из каждого. */
+    public const MAX_PRICE_LISTS = 2;
+    public const MAX_PRICE_ITEMS = 12;
+
+    /** Вопрос о цене — прайс-листы идут в источниках первыми. */
+    private const PRICE_PATTERN = '/цен[аыуе]?\b|стоим|стоит|почём|почем|прайс|руб\b|рублей|дорож|дешев/iu';
+
+    /** Слова о цене — по ним позиции прайс-листа не ищутся. */
+    private const PRICE_WORDS = ['цена', 'цены', 'цену', 'цене', 'ценой', 'стоимость', 'стоимости', 'стоит', 'стоят', 'почём', 'почем', 'прайс', 'прайсе',
+        'прайс-лист', 'прайс-листе', 'прайс-листу', 'руб', 'рублей', 'рубля', 'дороже', 'дешевле', 'купить', 'заказать'];
+
+    /** Уточняющий вопрос: короткий или со ссылкой на сказанное раньше («а он…», «это», «там»). */
+    private const FOLLOW_UP_PATTERN = '/^(а|и|но|ещё|еще|тогда|также)\s|\b(он|она|оно|они|его|её|ее|их|него|неё|нее|нему|ней|ним|этот|эта|это|эти|этого|этой|этим|этих|там|тут|туда|такой|такая|такое|такие|тот|та|те|того|той|тех)\b/iu';
+
+    /** Сколько предыдущих вопросов и ответов разговора видит модель. */
+    public const HISTORY_TURNS = 3;
 
     /** Символов текста одного источника. */
     private const SOURCE_CHARS = 1800;
@@ -81,7 +105,10 @@ final class AnswerService implements ResetInterface
         После каждого утверждения указывай номер источника в квадратных скобках, например [1] или [2][3].
         Если во фрагментах нет ответа, так и скажи: «В документах портала ответа не нашлось» — и предложи, где уточнить
         (например, у ответственного за документ). Не придумывай сведений, которых нет во фрагментах, не цитируй
-        фрагменты целиком и не упоминай слово «фрагмент» — говори «документ» или «видео».
+        фрагменты целиком и не упоминай слово «фрагмент» — говори «документ», «видео» или «прайс-лист».
+        Цены называй точно так, как в прайс-листе (с единицей и названием столбца цены), не пересчитывай и не округляй;
+        если цен несколько (опт, розница), назови нужную по вопросу или все.
+        Если приведён предыдущий разговор, учитывай его, чтобы понять, о чём спрашивают, но факты бери только из источников.
         PROMPT;
 
     public function __construct(
@@ -97,6 +124,7 @@ final class AnswerService implements ResetInterface
         private readonly ?EntityManagerInterface $em = null,
         private readonly ?AiQuestionRepository $questions = null,
         private readonly ?VerifiedAnswers $verified = null,
+        private readonly ?PriceItemRepository $priceItems = null,
     ) {
     }
 
@@ -130,9 +158,8 @@ final class AnswerService implements ResetInterface
     /** Включены ли ответы модели (LLM настроена и ответы не выключены в «Интеграциях»). */
     public function isEnabled(): bool
     {
-        $cfg = $this->settings->llm();
-
-        return $cfg['enabled'] && $cfg['answers'];
+        // Модель — та же, что для описаний, или своя на другом сервере (Интеграции → «Помощник»).
+        return $this->settings->assistant()['ready'];
     }
 
     /**
@@ -170,9 +197,13 @@ final class AnswerService implements ResetInterface
      * Проверенный ответ администратора (если вопрос подходит к нему) выдаётся сразу, без обращения к модели:
      * verified — когда он обновлён.
      *
+     * $history — предыдущие вопросы и ответы разговора (чат помощника), старые первыми.
+     *
+     * @param list<array{question: string, answer: string}> $history
+     *
      * @return array{answer: ?string, sources: list<array{n: int, type: string, title: string, url: string, meta: string}>, error: ?string, status: string, id: ?int, semantic: bool, verified?: array{updated_at: \DateTimeImmutable}}
      */
-    public function answer(User $user, string $question): array
+    public function answer(User $user, string $question, array $history = []): array
     {
         $started = microtime(true);
         $question = trim((string) preg_replace('/\s+/u', ' ', $question));
@@ -211,16 +242,19 @@ final class AnswerService implements ResetInterface
             return $this->finish($user, $question, $started, AiQuestion::STATUS_NO_SOURCES, null, [], false,
                 'Готового ответа на этот вопрос пока нет — посмотрите результаты поиска ниже.');
         }
-        ['sources' => $sources, 'semantic' => $semantic] = $this->collect($user, $question);
+        $history = \array_slice(array_values(array_filter($history, static fn ($h): bool => \is_array($h) && '' !== trim((string) ($h['question'] ?? '')))), -self::HISTORY_TURNS);
+        // Уточняющий вопрос ищется вместе с предыдущим: «а для скважины?» после «какой нужен гидроаккумулятор…».
+        $searchText = [] !== $history && self::isFollowUp($question) ? $history[\count($history) - 1]['question'].' '.$question : $question;
+        ['sources' => $sources, 'semantic' => $semantic] = $this->collect($user, $searchText, $question);
         if ([] === $sources) {
             return $this->finish($user, $question, $started, AiQuestion::STATUS_NO_SOURCES, null, [], $semantic,
-                'В документах и видео портала не нашлось материалов по этому вопросу — попробуйте сформулировать иначе или воспользуйтесь обычным поиском.');
+                'В документах, видео и прайс-листах портала не нашлось материалов по этому вопросу — попробуйте сформулировать иначе или воспользуйтесь обычным поиском.');
         }
         $budget = max(2000, $this->settings->llm()['max_input_chars']);
         $context = '';
         $out = [];
         foreach ($sources as $i => $source) {
-            $block = \sprintf("[%d] %s «%s»%s:\n%s\n\n", $i + 1, 'video' === $source['type'] ? 'Видео' : 'Документ', $source['title'], '' !== $source['meta'] ? ' ('.$source['meta'].')' : '', $source['text']);
+            $block = \sprintf("[%d] %s «%s»%s:\n%s\n\n", $i + 1, ['video' => 'Видео', 'price' => 'Прайс-лист'][$source['type']] ?? 'Документ', $source['title'], '' !== $source['meta'] ? ' ('.$source['meta'].')' : '', $source['text']);
             if ('' !== $context && mb_strlen($context) + mb_strlen($block) > $budget) {
                 break;
             }
@@ -228,7 +262,7 @@ final class AnswerService implements ResetInterface
             $out[] = ['n' => $i + 1, 'type' => $source['type'], 'title' => $source['title'], 'url' => $source['url'], 'meta' => $source['meta']];
         }
         try {
-            $answer = $this->llm->complete(self::SYSTEM, "Вопрос сотрудника: {$question}\n\nИсточники:\n\n".rtrim($context), 700);
+            $answer = $this->llm->complete(self::SYSTEM, self::conversation($history)."Вопрос сотрудника: {$question}\n\nИсточники:\n\n".rtrim($context), 700, true);
         } catch (LlmException $e) {
             $this->logger->warning('Ответ на вопрос не получен', ['error' => $e->getMessage()]);
 
@@ -241,6 +275,31 @@ final class AnswerService implements ResetInterface
         $status = $notFound ? AiQuestion::STATUS_NOT_FOUND : AiQuestion::STATUS_ANSWERED;
 
         return $this->finish($user, $question, $started, $status, $answer, $out, $semantic, null);
+    }
+
+    /** Похож ли вопрос на уточнение к предыдущему (короткий или со словами «он», «это», «там»…). */
+    public static function isFollowUp(string $question): bool
+    {
+        return \count(self::keywords($question)) <= 2 || 1 === preg_match(self::FOLLOW_UP_PATTERN, mb_strtolower(trim($question)));
+    }
+
+    /**
+     * Предыдущий разговор для модели: вопросы и ответы без номеров источников (у нового ответа свои номера).
+     *
+     * @param list<array{question: string, answer: string}> $history
+     */
+    private static function conversation(array $history): string
+    {
+        if ([] === $history) {
+            return '';
+        }
+        $out = "Предыдущий разговор:\n";
+        foreach ($history as $turn) {
+            $answer = trim((string) preg_replace(['/\[\d{1,2}\]/', '/\s+/u'], ['', ' '], (string) ($turn['answer'] ?? '')));
+            $out .= 'Сотрудник: '.mb_substr(trim((string) $turn['question']), 0, 300)."\n".'Помощник: '.('' !== $answer ? mb_strimwidth($answer, 0, 600, '…') : '(ответа не было)')."\n";
+        }
+
+        return $out."\n";
     }
 
     /**
@@ -394,7 +453,7 @@ final class AnswerService implements ResetInterface
      *
      * @return array{sources: list<array{type: string, title: string, url: string, meta: string, text: string}>, semantic: bool}
      */
-    private function collect(User $user, string $question): array
+    private function collect(User $user, string $question, ?string $current = null): array
     {
         $words = self::keywords($question);
         $viewer = $this->access->viewer($user);
@@ -461,8 +520,132 @@ final class AnswerService implements ResetInterface
                 }
             }
         }
+        // Прайс-листы: о цене спросили — они первыми, иначе — после документов, если позиции явно подходят.
+        $priceQuestion = 1 === preg_match(self::PRICE_PATTERN, $question);
+        $prices = $this->priceSources($user, $question, $current ?? $question, $priceQuestion);
+        $sources = $priceQuestion ? array_merge($prices, $sources) : array_merge($sources, $prices);
 
         return ['sources' => $sources, 'semantic' => [] !== $semanticHits];
+    }
+
+    /**
+     * Позиции действующих прайс-листов, подходящие к вопросу. Вес позиции — совпавшие основы слов, артикулы и
+     * числа вопроса («50 л», «3/4»); слова самого вопроса весят вдвое больше слов предыдущего (уточнение «а на
+     * 24 литра?» после «сколько стоит гидроаккумулятор 50 л?» выводит вперёд позицию на 24 л). Берутся позиции
+     * с весом, близким к лучшему; без вопроса о цене — только явно подходящие (два слова или артикул).
+     *
+     * @return list<array{type: string, title: string, url: string, meta: string, text: string}>
+     */
+    private function priceSources(User $user, string $searchText, string $question, bool $priceQuestion): array
+    {
+        if (null === $this->priceItems) {
+            return [];
+        }
+        $terms = [];
+        foreach ([[$question, 2], [$searchText, 1]] as [$text, $weight]) {
+            foreach (self::keywords($text) as $word) {
+                if (\in_array($word, self::PRICE_WORDS, true)) {
+                    continue;
+                }
+                // Артикулы и модели («аква-50», «sq-4-90») — целиком, слова — по основе.
+                $code = 1 === preg_match('/\d/u', $word);
+                $stem = $code ? $word : SearchQuery::stem($word);
+                if (mb_strlen($stem) >= 3) {
+                    $terms[$stem] = ['weight' => max($weight, $terms[$stem]['weight'] ?? 0), 'code' => $code, 'number' => false];
+                }
+            }
+            // Числа вопроса (объём, мощность, диаметр) — отдельно: keywords() отбрасывает короткие слова.
+            preg_match_all('/(?<![\p{L}\d])\d+(?:[.,]\d+)?(?:\/\d+)?(?![\p{L}\d])/u', $text, $m);
+            foreach ($m[0] as $number) {
+                $terms[$number] ??= ['weight' => $weight, 'code' => false, 'number' => true];
+                $terms[$number]['weight'] = max($weight, $terms[$number]['weight']);
+            }
+        }
+        $words = array_keys(array_filter($terms, static fn (array $t): bool => !$t['number']));
+        if ([] === $words) {
+            return [];
+        }
+        try {
+            $items = $this->priceItems->searchAnyCurrent(array_map('strval', $words), !$user->isActive(), 400);
+        } catch (\Throwable $e) {
+            $this->logger->warning('Прайс-листы недоступны для ответа', ['error' => $e->getMessage()]);
+
+            return [];
+        }
+        $scored = [];
+        $best = 0;
+        foreach ($items as $item) {
+            $text = PriceItemRepository::normalize(implode(' ', array_filter([$item->getSku(), $item->getName(), $item->getGroupName(), implode(' ', $item->getExtra())])));
+            $score = 0;
+            $wordHits = 0;
+            $codeHit = false;
+            foreach ($terms as $term => $t) {
+                $term = (string) $term;
+                $hit = $t['number']
+                    ? 1 === preg_match('/(?<![\d.,])'.preg_quote(str_replace(',', '.', $term), '/').'(?![\d])/u', str_replace(',', '.', $text))
+                    : str_contains($text, PriceItemRepository::normalize($term));
+                if ($hit) {
+                    $score += $t['weight'] * ($t['code'] ? 2 : 1);
+                    $wordHits += $t['number'] ? 0 : 1;
+                    $codeHit = $codeHit || $t['code'];
+                }
+            }
+            // Без вопроса о цене прайс-лист в источниках — только если позиция подходит явно.
+            if (0 === $wordHits || (!$priceQuestion && $wordHits < 2 && !$codeHit)) {
+                continue;
+            }
+            $scored[] = ['item' => $item, 'score' => $score];
+            $best = max($best, $score);
+        }
+        $byList = [];
+        foreach ($scored as $row) {
+            if ($row['score'] < $best - 2 && $row['score'] < $best / 2) {
+                continue; // заметно хуже лучшей позиции — шум
+            }
+            $list = $row['item']->getRevision()->getPriceList();
+            $byList[(int) $list->getId()]['list'] = $list;
+            $byList[(int) $list->getId()]['items'][] = $row;
+        }
+        foreach ($byList as &$group) {
+            usort($group['items'], static fn (array $a, array $b): int => [$b['score'], $a['item']->getPosition()] <=> [$a['score'], $b['item']->getPosition()]);
+            $group['best'] = $group['items'][0]['score'];
+        }
+        unset($group);
+        uasort($byList, static fn (array $a, array $b): int => $b['best'] <=> $a['best']);
+        $stems = $words;
+        $out = [];
+        foreach (\array_slice($byList, 0, self::MAX_PRICE_LISTS) as $group) {
+            $list = $group['list'];
+            $revision = $list->getCurrentRevision();
+            if (null === $revision) {
+                continue;
+            }
+            $columns = $revision->getPriceColumns();
+            $lines = [];
+            foreach (\array_slice($group['items'], 0, self::MAX_PRICE_ITEMS) as ['item' => $item]) {
+                $prices = [];
+                foreach ($item->getPrices() as $i => $value) {
+                    if ('' !== $value) {
+                        $prices[] = ($columns[$i] ?? 'Цена').': '.PriceFormat::money($value, is_numeric($value) ? $list->getCurrencySign() : null);
+                    }
+                }
+                $lines[] = '- '.(null !== $item->getSku() ? 'арт. '.$item->getSku().' — ' : '').$item->getName()
+                    .(null !== $item->getGroupName() ? ' (группа «'.$item->getGroupName().'»)' : '')
+                    .(null !== $item->getUnit() ? ', ед. '.$item->getUnit() : '')
+                    .': '.([] !== $prices ? implode('; ', $prices) : 'цена не указана');
+            }
+            $when = $revision->getEffectiveFrom() ?? $revision->getPublishedAt() ?? $revision->getUploadedAt();
+            $first = $group['items'][0]['item'];
+            $out[] = [
+                'type' => 'price',
+                'title' => $list->getTitle(),
+                'url' => $this->urls->generate('app_price_show', ['id' => $list->getId(), 'q' => $first->getSku() ?? implode(' ', \array_slice($stems, 0, 2))]),
+                'meta' => ($revision->getEffectiveFrom() ? 'действует с ' : 'обновлён ').$when->format('d.m.Y'),
+                'text' => \sprintf("Цены действуют с %s, валюта — %s.\n%s", $when->format('d.m.Y'), $list->getCurrency(), implode("\n", $lines)),
+            ];
+        }
+
+        return $out;
     }
 
     public function reset(): void

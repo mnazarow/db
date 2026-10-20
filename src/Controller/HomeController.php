@@ -9,6 +9,7 @@ use App\Entity\Section;
 use App\Entity\User;
 use App\Repository\DocumentAcknowledgementRepository;
 use App\Repository\DocumentRepository;
+use App\Repository\PriceItemRepository;
 use App\Repository\SectionRepository;
 use App\Security\Access;
 use App\Service\Llm\AnswerService;
@@ -32,6 +33,7 @@ final class HomeController extends AbstractController
         private readonly StatsService $stats,
         private readonly ?VideoApi $videoApi = null,
         private readonly ?AnswerService $answers = null,
+        private readonly ?PriceItemRepository $priceItems = null,
     ) {
     }
 
@@ -109,6 +111,7 @@ final class HomeController extends AbstractController
         $results = [];
         $content = [];
         $videos = null;
+        $prices = [];
         $query = SearchQuery::parse($q);
         if (mb_strlen($q) >= 2) {
             $statuses = null !== $user && $this->access->isContributor($user) ? Document::STATUSES : [Document::STATUS_PUBLISHED];
@@ -130,6 +133,14 @@ final class HomeController extends AbstractController
             if (null === $section && null !== $this->videoApi) {
                 $videos = $this->videoApi->search($q, null !== $user && $user->isActive(), 6);
             }
+            // Раздел «Прайс-листы»: позиции действующих прайс-листов с этими словами в артикуле или названии.
+            if (null === $section && null !== $this->priceItems) {
+                try {
+                    $prices = $this->priceItems->searchCurrent($q, null === $user, 11);
+                } catch (\Throwable) {
+                    $prices = []; // таблиц прайс-листов ещё нет (миграция не применена)
+                }
+            }
         }
 
         return $this->render('home/search.html.twig', [
@@ -139,6 +150,7 @@ final class HomeController extends AbstractController
             'results' => $results,
             'content_results' => $content,
             'video_results' => $videos,
+            'price_results' => $prices,
             // Ответ ИИ — только вошедшим сотрудникам и только если ответы включены в «Интеграциях».
             'ai_answers' => null !== $user && null !== $this->answers && $this->answers->isAvailable(),
             'ai_model' => null !== $this->answers && $this->answers->isEnabled(),

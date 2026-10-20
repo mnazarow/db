@@ -41,9 +41,10 @@ final class LlmClient
      *
      * @throws LlmException
      */
-    public function complete(string $system, string $user, ?int $maxTokens = 500): string
+    public function complete(string $system, string $user, ?int $maxTokens = 500, bool $assistant = false): string
     {
-        $cfg = $this->config();
+        // Помощник может работать со своей моделью на другом сервере (Интеграции → «Помощник»).
+        $cfg = $assistant ? $this->settings->assistant() : $this->config();
         $payload = [
             'model' => $cfg['model'],
             'messages' => [
@@ -74,8 +75,24 @@ final class LlmClient
         if (\is_array($content)) { // некоторые серверы отдают массив частей
             $content = implode('', array_map(static fn ($part) => \is_array($part) ? (string) ($part['text'] ?? '') : (string) $part, $content));
         }
+        // Модели с рассуждениями (Qwen3, DeepSeek-R1 на своём сервере) пишут ход мысли в <think>…</think> —
+        // сотруднику нужен только ответ.
+        if (\is_string($content)) {
+            $content = self::withoutThinking($content);
+        }
         if (!\is_string($content) || '' === trim($content)) {
             throw new LlmException('Ошибка LLM: пустой ответ модели'.(isset($data['error']) ? ' — '.json_encode($data['error'], \JSON_UNESCAPED_UNICODE) : '.'));
+        }
+
+        return trim($content);
+    }
+
+    /** Текст ответа без блоков рассуждений <think>…</think> (и без незакрытого блока, если ответ обрезан). */
+    public static function withoutThinking(string $content): string
+    {
+        $content = (string) preg_replace('#<think(?:ing)?>.*?</think(?:ing)?>#isu', '', $content);
+        if (preg_match('#^\s*<think(?:ing)?>#iu', $content)) {
+            return ''; // рассуждение не закончилось — ответа нет
         }
 
         return trim($content);
@@ -264,13 +281,14 @@ final class LlmClient
      *
      * @return array{ok: bool, message: string, seconds: float}
      */
-    public function test(): array
+    public function test(bool $assistant = false): array
     {
         $started = microtime(true);
         try {
-            $answer = $this->complete('Отвечай одним словом.', 'Напиши слово «готово».', 20);
+            $answer = $this->complete('Отвечай одним словом.', 'Напиши слово «готово».', 20, $assistant);
+            $cfg = $assistant ? $this->settings->assistant() : $this->config();
 
-            return ['ok' => true, 'message' => \sprintf('Модель %s ответила за %.1f с: «%s».', $this->config()['model'], microtime(true) - $started, mb_substr($answer, 0, 60)), 'seconds' => microtime(true) - $started];
+            return ['ok' => true, 'message' => \sprintf('Модель %s (%s) ответила за %.1f с: «%s».', $cfg['model'], $cfg['base_url'], microtime(true) - $started, mb_substr($answer, 0, 60)), 'seconds' => microtime(true) - $started];
         } catch (LlmException $e) {
             return ['ok' => false, 'message' => $e->getMessage(), 'seconds' => microtime(true) - $started];
         }

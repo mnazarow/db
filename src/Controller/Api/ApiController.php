@@ -80,6 +80,8 @@ final class ApiController extends AbstractController
                 'text' => $this->generateUrl('api_document_text', ['id' => 1], UrlGeneratorInterface::ABSOLUTE_URL),
                 'changes' => $this->generateUrl('api_changes', [], UrlGeneratorInterface::ABSOLUTE_URL),
                 'search' => $this->generateUrl('api_search', [], UrlGeneratorInterface::ABSOLUTE_URL),
+                // Вопросы помощнику от имени сотрудника (ключ с доступом к внутренним документам).
+                'assistant' => $this->generateUrl('api_assistant', [], UrlGeneratorInterface::ABSOLUTE_URL),
             ],
         ]);
     }

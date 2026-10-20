@@ -22,7 +22,9 @@ use App\Service\Material\MaterialImporter;
 use App\Service\Material\MaterialService;
 use App\Service\Material\MaterialState;
 use App\Service\SectionManager;
+use App\Service\Price\PriceListService;
 use App\Service\StatsAggregator;
+use App\Service\Xlsx\XlsxWriter;
 use App\Service\UserManager;
 use Doctrine\DBAL\Connection;
 use Doctrine\ORM\EntityManagerInterface;
@@ -57,6 +59,7 @@ final class DemoLoadCommand extends Command
         private readonly DocumentKindService $kinds,
         private readonly string $projectDir,
         private readonly ?StatsAggregator $statsAggregator = null,
+        private readonly ?PriceListService $prices = null,
     ) {
         parent::__construct();
     }
@@ -284,10 +287,14 @@ HTML, true, [
 
         $this->rrmdir($tmp);
 
-        // --- История событий -------------------------------------------------------------
+        // --- История событий и прайс-листы (в тестах, с --no-events, не загружаются) ---------
         if (!$input->getOption('no-events')) {
             $this->generateEvents($docs, $readers);
             $io->writeln('Сгенерирована история просмотров и скачиваний за 60 дней.');
+            if (null !== $this->prices && null !== $markova = $this->users->findOneByUsername('markova')) {
+                $this->demoPrices($markova);
+                $io->writeln('Созданы прайс-листы «Розничный прайс-лист» (открытый) и «Дилерский прайс-лист» (для сотрудников).');
+            }
         }
 
         $io->success('Демонстрационные данные загружены.');
@@ -589,7 +596,7 @@ HTML, true, [
         // принадлежат другим документам (TRUNCATE сбрасывает счётчик, и номера выдаются заново).
         // document_allowed_user — списки допуска документов с ограниченным доступом: без очистки строки
         // «привязались» бы к новым документам с теми же номерами.
-        foreach (['document_event', 'document_version', 'document_version_content', 'document_text', 'document_acknowledgement', 'document_approval', 'document_question', 'document_comment', 'document_subscription', 'document_link', 'document_allowed_user', 'material_row', 'material_parameter', 'document', 'document_kind', 'document_deletion', 'document_template', 'section_moderator', 'section'] as $table) {
+        foreach (['price_item', 'price_revision', 'price_list', 'document_event', 'document_version', 'document_version_content', 'document_text', 'document_acknowledgement', 'document_approval', 'document_question', 'document_comment', 'document_subscription', 'document_link', 'document_allowed_user', 'material_row', 'material_parameter', 'document', 'document_kind', 'document_deletion', 'document_template', 'section_moderator', 'section'] as $table) {
             if (!$this->connection->createSchemaManager()->tablesExist([$table])) {
                 continue;
             }
@@ -603,8 +610,78 @@ HTML, true, [
                     $this->documentManager->getStorage()->deleteDocumentDir((int) $entry);
                 }
             }
+            if (is_dir($storage.'/prices')) {
+                $this->rrmdir($storage.'/prices');
+            }
         }
         $this->em->clear();
+    }
+
+    /** Прайс-листы: файл Excel «как у клиентов» — шапка, группы, две колонки цен — загружается и публикуется. */
+    private function demoPrices(User $marketer): void
+    {
+        $groups = [
+            'Насосные станции' => [
+                ['ST-24', 'Насосная станция «Аква-24» 0,8 кВт, бак 24 л', 'шт', 14900],
+                ['ST-50', 'Насосная станция «Аква-50» 1,1 кВт, бак 50 л', 'шт', 18700],
+                ['ST-80N', 'Насосная станция «Аква-80Н» 1,3 кВт, нержавеющий корпус', 'шт', 26400],
+                ['ST-PRO', 'Станция повышения давления «Профи» с частотным управлением', 'шт', 48900],
+            ],
+            'Скважинные насосы' => [
+                ['SQ-3-60', 'Насос скважинный 3" «Глубина-60», кабель 30 м', 'шт', 16200],
+                ['SQ-4-90', 'Насос скважинный 4" «Глубина-90», кабель 50 м', 'шт', 24800],
+                ['SQ-4-120', 'Насос скважинный 4" «Глубина-120», кабель 70 м', 'шт', 31500],
+            ],
+            'Предохранительные клапаны' => [
+                ['KP-15', 'Клапан предохранительный 1/2", 6 бар', 'шт', 890],
+                ['KP-20', 'Клапан предохранительный 3/4", 6 бар', 'шт', 1140],
+                ['KP-25-10', 'Клапан предохранительный 1", 10 бар', 'шт', 1960],
+            ],
+            'Комплектующие' => [
+                ['GA-24', 'Гидроаккумулятор 24 л, вертикальный', 'шт', 3400],
+                ['GA-50', 'Гидроаккумулятор 50 л, вертикальный', 'шт', 5200],
+                ['RD-5', 'Реле давления механическое, 1,4–2,8 бар', 'шт', 1350],
+                ['MN-10', 'Манометр радиальный 0–10 бар', 'шт', 420],
+                ['SH-1', 'Шланг гибкий армированный 1", 1 м', 'м', 380],
+                ['KM-PRO', 'Монтажный комплект для скважины', 'компл', null],
+            ],
+        ];
+        foreach ([['Розничный прайс-лист', 'Рекомендованные розничные цены с НДС. Действуют для всех клиентов.', true, false],
+            ['Дилерский прайс-лист', 'Цены для дилеров по уровням скидки, с НДС. Не пересылайте клиентам.', false, true]] as [$title, $description, $public, $dealer]) {
+            $writer = new XlsxWriter();
+            $sheet = $writer->addSheet('Прайс');
+            $sheet->set(1, 2, 'ООО «Водокомфорт»', XlsxWriter::STYLE_TITLE)->set(2, 2, $title.' на '.date('d.m.Y'));
+            $headers = $dealer ? ['№', 'Артикул', 'Наименование', 'Ед. изм.', 'Дилер 1, руб.', 'Дилер 2, руб.', 'РРЦ, руб.'] : ['№', 'Артикул', 'Наименование', 'Ед. изм.', 'Цена, руб.', 'Наличие'];
+            foreach ($headers as $i => $label) {
+                $sheet->set(4, $i + 1, $label, XlsxWriter::STYLE_HEADER);
+            }
+            $line = 4;
+            $n = 0;
+            foreach ($groups as $group => $items) {
+                $sheet->set(++$line, 3, $group, XlsxWriter::STYLE_BLOCK);
+                foreach ($items as [$sku, $name, $unit, $price]) {
+                    $sheet->set(++$line, 1, ++$n)->set($line, 2, $sku)->set($line, 3, $name)->set($line, 4, $unit);
+                    if (null === $price) {
+                        $sheet->set($line, 5, 'по запросу');
+                    } elseif ($dealer) {
+                        $sheet->set($line, 5, round($price * 0.72))->set($line, 6, round($price * 0.8))->set($line, 7, $price);
+                    } else {
+                        $sheet->set($line, 5, $price)->set($line, 6, 0 === $n % 4 ? 'под заказ' : 'в наличии');
+                    }
+                }
+            }
+            $sheet->set($line + 2, 3, 'Цены указаны с НДС 20 %.');
+            $path = sys_get_temp_dir().'/demo-price-'.bin2hex(random_bytes(4)).'.xlsx';
+            $writer->save($path);
+            try {
+                $list = $this->prices->create($marketer, $title, $description, 'RUB', $public);
+                $revision = $this->prices->store($list, $path, $title.'.xlsx', $marketer);
+                $preview = $this->prices->preview($revision, null, null, null);
+                $this->prices->import($revision, $preview['sheet'], $preview['mapping'], new \DateTimeImmutable('first day of this month'), null, $marketer);
+            } finally {
+                @unlink($path);
+            }
+        }
     }
 
     private function rrmdir(string $dir): void

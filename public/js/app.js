@@ -43,7 +43,7 @@
                     if (res.error) { html += '<p class="' + (res.html ? 'text-muted' : 'alert alert--info') + '">' + esc(res.error) + '</p>'; }
                     if (res.sources && res.sources.length) {
                         html += '<ol class="ai-answer__sources">' + res.sources.map(function (s) {
-                            return '<li value="' + s.n + '"><span class="tag">' + (s.type === 'video' ? 'видео' : 'документ') + '</span> <a href="' + esc(s.url) + '">' + esc(s.title) + '</a>' + (s.meta ? ' <span class="text-muted">' + esc(s.meta) + '</span>' : '') + '</li>';
+                            return '<li value="' + s.n + '"><span class="tag">' + ({video: 'видео', price: 'прайс-лист'}[s.type] || 'документ') + '</span> <a href="' + esc(s.url) + '">' + esc(s.title) + '</a>' + (s.meta ? ' <span class="text-muted">' + esc(s.meta) + '</span>' : '') + '</li>';
                         }).join('') + '</ol>';
                     }
                     if (res.rate_url) {
@@ -218,6 +218,34 @@
                 var open = nav.classList.toggle('is-open');
                 toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
             });
+        }
+
+        /* Шапка: если меню, поиск и блок пользователя не помещаются в строку (пунктов меню у ролей разное
+           число, имена и подписи разной длины), шапка ужимается по шагам — сначала подписи счётчиков и роли,
+           затем имя (остаётся аватар с подсказкой), название портала у логотипа, поле поиска (вместо него —
+           пункт «Поиск»), плотнее меню и, если и этого мало, меню прячется под кнопку, как на телефоне. */
+        var headerInner = document.querySelector('.site-header__inner');
+        if (headerInner) {
+            var FIT = ['hdr-fit-1', 'hdr-fit-2', 'hdr-fit-3', 'hdr-fit-4', 'hdr-fit-5', 'hdr-fit-6'];
+            var squeezed = function () {
+                if (headerInner.scrollWidth > headerInner.clientWidth + 1) { return true; }
+                var parts = headerInner.querySelectorAll('.site-header__user, .site-header__user > *, .site-header__user .user-chip, .site-header__user .user-chip__name, .site-nav');
+                for (var i = 0; i < parts.length; i++) {
+                    if (parts[i].offsetWidth > 0 && parts[i].scrollWidth > parts[i].clientWidth + 1) { return true; }
+                }
+                var search = headerInner.querySelector('.header-search');
+                return !!(search && search.offsetWidth > 0 && search.offsetWidth < 170);
+            };
+            var fitHeader = function () {
+                FIT.forEach(function (c) { headerInner.classList.remove(c); });
+                if (window.innerWidth <= 900) { return; } // на узких экранах своя раскладка с кнопкой меню
+                for (var i = 0; i < FIT.length && squeezed(); i++) { headerInner.classList.add(FIT[i]); }
+            };
+            var fitTimer = null;
+            fitHeader();
+            window.addEventListener('resize', function () { clearTimeout(fitTimer); fitTimer = setTimeout(fitHeader, 80); });
+            window.addEventListener('load', fitHeader);
+            if (document.fonts && document.fonts.ready) { document.fonts.ready.then(fitHeader); }
         }
 
         /* Назначение ознакомления: выбрать всех / по подразделению / снять выбор */

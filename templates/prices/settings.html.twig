@@ -1,0 +1,69 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}Настройки — {{ list.title }}{% endblock %}
+{% block body_class %}page-prices{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        <div class="eyebrow"><a href="{{ path('app_prices') }}">Прайс-листы</a> · <a href="{{ path('app_price_show', {id: list.id}) }}">{{ list.title }}</a></div>
+        <h1 class="h-display">Настройки прайс-листа</h1>
+    </div>
+</section>
+
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+    {% if error %}<div class="alert alert--danger">{{ error }}</div>{% endif %}
+
+    <form method="post" class="card card--form form">
+        <input type="hidden" name="_token" value="{{ csrf_token('prices') }}">
+        <div class="form-row">
+            <label class="form-label" for="price-title">Название <span class="req">*</span></label>
+            <input class="form-control" id="price-title" name="title" value="{{ list.title }}" maxlength="255" required>
+        </div>
+        <div class="form-row">
+            <label class="form-label" for="price-description">Описание</label>
+            <textarea class="form-control" id="price-description" name="description" rows="3" maxlength="2000">{{ list.description }}</textarea>
+        </div>
+        <div class="form-grid">
+            <div class="form-row">
+                <label class="form-label" for="price-currency">Валюта</label>
+                <select class="form-control" id="price-currency" name="currency">
+                    {% for code, sign in currencies %}<option value="{{ code }}" {{ list.currency == code ? 'selected' }}>{{ code }} ({{ sign }})</option>{% endfor %}
+                </select>
+            </div>
+            <div class="form-row">
+                <label class="form-label" for="price-position">Порядок в списке</label>
+                <input class="form-control" type="number" id="price-position" name="position" value="{{ list.position }}" min="0" max="9999">
+                <div class="form-help">Меньше — выше.</div>
+            </div>
+        </div>
+        <div class="form-row form-row--check">
+            <label class="form-check"><input type="checkbox" name="public" value="1" {{ list.public ? 'checked' }}> <span>Открытый — видят и гости без входа</span></label>
+        </div>
+        <div class="form-row form-row--check">
+            <label class="form-check"><input type="checkbox" name="original_download" value="1" {{ list.originalDownload ? 'checked' }}> <span>Исходный файл могут скачать все, кто видит прайс-лист (иначе — только те, кто ведёт прайс-листы; остальным — выгрузка загруженных столбцов в Excel)</span></label>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="btn btn--pill">Сохранить</button>
+            <a class="btn btn--ghost" href="{{ path('app_price_show', {id: list.id}) }}">Отмена</a>
+        </div>
+    </form>
+
+    <div class="card card--form card__padded">
+        <h2 class="h-section">Архив и удаление</h2>
+        <p class="text-muted">Прайс-лист в архиве не видят сотрудники и гости, он не попадает в поиск и ответы помощника; маркетологи могут вернуть его в любой момент. Удаление стирает все редакции и загруженные файлы без возможности восстановления.</p>
+        <div class="form-actions">
+            <form method="post" action="{{ path('app_price_archive', {id: list.id}) }}" class="inline-form">
+                <input type="hidden" name="_token" value="{{ csrf_token('prices') }}">
+                <input type="hidden" name="archived" value="{{ list.archived ? '0' : '1' }}">
+                <button type="submit" class="btn btn--ghost">{{ list.archived ? 'Вернуть из архива' : 'Перенести в архив' }}</button>
+            </form>
+            <form method="post" action="{{ path('app_price_delete', {id: list.id}) }}" class="inline-form" data-confirm="Удалить прайс-лист «{{ list.title }}» со всеми редакциями и файлами? Это нельзя отменить.">
+                <input type="hidden" name="_token" value="{{ csrf_token('prices') }}">
+                <button type="submit" class="btn btn--ghost btn--danger">Удалить прайс-лист</button>
+            </form>
+        </div>
+    </div>
+</section>
+{% endblock %}
