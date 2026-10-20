@@ -66,6 +66,48 @@
     <div class="card__padded"><p class="form-help">Задания приложения запускает cron (в Docker — контейнер <code>cron</code>); резервную копию, её отправку во внешнее хранилище и еженедельную проверку восстановления — задания на сервере (<code>docportal backup</code>, <code>docportal remote-backup</code>, <code>docportal verify-backup</code>). Если задание давно не выполнялось, проверьте <code>docportal status</code> и журналы <code>/var/log/docportal/*-cron.log</code>. На время работ посетителей можно закрыть страницей «Идёт обновление портала»: <code>docportal maintenance on</code> (обновление включает её само).</p></div>
 </div>
 
+{% if failed_jobs is not empty or (failed_total ?? 0) > 0 %}
+<div class="card table-card" id="failed">
+    <div class="card__head card__head--padded">
+        <h2 class="h-section">Невыполненные фоновые задачи <span class="text-muted">({{ failed_total ?? failed_jobs|length }})</span></h2>
+        <div class="form-actions">
+            <form method="post" action="{{ path('admin_monitoring_failed') }}" class="inline-form">
+                <input type="hidden" name="_token" value="{{ csrf_token('monitoring_failed') }}">
+                <input type="hidden" name="action" value="retry_all">
+                <button type="submit" class="btn btn--pill btn--small">Повторить все</button>
+            </form>
+            <form method="post" action="{{ path('admin_monitoring_failed') }}" class="inline-form" data-confirm="Удалить все невыполненные задачи? Они не будут выполнены.">
+                <input type="hidden" name="_token" value="{{ csrf_token('monitoring_failed') }}">
+                <input type="hidden" name="action" value="delete_all">
+                <button type="submit" class="btn btn--ghost btn--small">Удалить все</button>
+            </form>
+        </div>
+    </div>
+    <div class="table-scroll"><table class="admin-table">
+        <thead><tr><th>Задача</th><th>Не выполнена</th><th class="col-num">Попыток</th><th>Ошибка</th><th></th></tr></thead>
+        <tbody>
+        {% for job in failed_jobs %}
+            <tr>
+                <td>{{ job.label }}{% if job.details %}<div class="text-muted small">{{ job.details }}</div>{% endif %}</td>
+                <td class="col-nowrap">{{ job.failed_at ? job.failed_at|date('d.m.Y H:i') : '—' }}</td>
+                <td class="col-num">{{ job.attempts }}</td>
+                <td class="col-wrap">{{ job.error|length > 300 ? job.error|slice(0, 300) ~ '…' : job.error }}{% if job.error_class %}<div class="text-muted small">{{ job.error_class|split('\\')|last }}</div>{% endif %}</td>
+                <td class="col-nowrap">
+                    <form method="post" action="{{ path('admin_monitoring_failed') }}" class="inline-form">
+                        <input type="hidden" name="_token" value="{{ csrf_token('monitoring_failed') }}">
+                        <input type="hidden" name="id" value="{{ job.id }}">
+                        <button type="submit" name="action" value="retry" class="btn btn--pill btn--small">Повторить</button>
+                        <button type="submit" name="action" value="delete" class="btn btn--ghost btn--small" data-confirm="Удалить задачу «{{ job.label }}»? Она не будет выполнена.">Удалить</button>
+                    </form>
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table></div>
+    <div class="card__padded"><p class="form-help">Задачи, которые не удалось выполнить и после трёх повторов (обычно — почтовый сервер или адрес портала были недоступны). «Повторить» ставит задачу в очередь снова, а если обработчик фоновых задач не работает — выполняет её сразу. Подробности ошибок — в журнале приложения.</p></div>
+</div>
+{% endif %}
+
 <div class="grid grid--two" id="token">
     <div class="card card--form">
         <div class="card__head"><h2 class="h-section">Доступ для систем мониторинга</h2>

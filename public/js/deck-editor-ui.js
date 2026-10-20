@@ -40,7 +40,7 @@
 
     function openMenu(items, x, y) {
         menuBox.innerHTML = '';
-        items.forEach(function (it) {
+        items.filter(Boolean).forEach(function (it) {
             if (it.sep) { menuBox.appendChild(U.h('<hr>')); return; }
             if (it.title) { menuBox.appendChild(U.h('<div class="de-menu__title">' + esc(it.title) + '</div>')); return; }
             var b = U.h('<button type="button" class="de-menu__item"' + (it.disabled ? ' disabled' : '') + '>' + (it.icon ? '<span class="de-menu__icon">' + it.icon + '</span>' : '') + '<span>' + esc(it.label) + '</span>' + (it.shortcut ? '<kbd>' + esc(it.shortcut) + '</kbd>' : '') + '</button>');
@@ -316,10 +316,57 @@
 
     // ---- Галерея макетов -------------------------------------------------------------------------
 
-    function layoutGallery() {
+    // Библиотека фирменных слайдов (маркетологи сохраняют удачные слайды как общие шаблоны).
+    var library = null;
+    function loadLibrary(force) {
+        if (!cfg.library) { return Promise.resolve({ templates: [], categories: [] }); }
+        if (library && !force) { return Promise.resolve(library); }
+        return DE.api(cfg.library.url).then(function (res) { library = res; return res; });
+    }
+
+    function renderLibrary(body) {
+        var box = body.querySelector('[data-library-body]');
+        var ts = (library && library.templates) || [];
+        if (!ts.length) {
+            box.innerHTML = '<p class="hints">В библиотеке пока нет слайдов.' + (cfg.isModerator ? ' Сохраните удачный слайд: меню слайда «⋯» в списке слева → «Сохранить в библиотеку…».' : ' Их добавляют маркетологи.') + '</p>';
+            return;
+        }
+        var groups = {};
+        ts.forEach(function (t, i) { (groups[t.category] = groups[t.category] || []).push(i); });
+        var html = '<div class="de-layouts">';
+        Object.keys(groups).forEach(function (g) {
+            html += '<div class="de-layouts__group"><div class="de-layouts__title">' + esc(g) + '</div><div class="de-layouts__grid">';
+            groups[g].forEach(function (i) {
+                var t = ts[i];
+                html += '<button type="button" class="de-layouts__item" data-tpl="' + i + '" title="' + esc(t.description || t.title) + '"><div class="de-layouts__thumb" data-tpl-thumb="' + i + '"></div><span>' + esc(t.title) + '</span></button>';
+            });
+            html += '</div></div>';
+        });
+        box.innerHTML = html + '</div>';
+        box.querySelectorAll('[data-tpl-thumb]').forEach(function (el) {
+            var s = U.clone(ts[+el.getAttribute('data-tpl-thumb')].slide);
+            DE.applyBinds([s]);
+            R.mount(el, s, { mode: 'thumb' });
+        });
+        box.querySelectorAll('[data-tpl]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                var t = ts[+b.getAttribute('data-tpl')];
+                dialog.close();
+                DE.addSlide(t.slide);
+                DE.toast('Вставлен слайд «' + t.title + '» из библиотеки — замените текст и картинки.');
+                DE.api(cfg.library.use.replace(/0$/, String(t.id)), { json: {}, token: cfg.library.token }).catch(function () { /* учёт не важен */ });
+            });
+        });
+    }
+
+    function layoutGallery(startTab) {
         var groups = {};
         Object.keys(cfg.layouts).forEach(function (key) { var l = cfg.layouts[key]; (groups[l.group] = groups[l.group] || []).push(key); });
-        var html = '<h2 class="h-section">Новый слайд</h2><p class="hints">Макеты в стиле «Презентации к собранию». Слайд встанет после текущего.</p><div class="de-layouts">';
+        var html = '<h2 class="h-section">Новый слайд</h2>';
+        if (cfg.library) {
+            html += '<div class="de-panel__tabs de-gallery-tabs" role="tablist"><button type="button" role="tab" data-gtab="layouts" aria-selected="true">Макеты</button><button type="button" role="tab" data-gtab="library" aria-selected="false">Библиотека слайдов</button></div>';
+        }
+        html += '<div data-gpane="layouts"><p class="hints">Макеты в стиле «Презентации к собранию». Слайд встанет после текущего.</p><div class="de-layouts">';
         Object.keys(groups).forEach(function (g) {
             html += '<div class="de-layouts__group"><div class="de-layouts__title">' + esc(g) + '</div><div class="de-layouts__grid">';
             groups[g].forEach(function (key) {
@@ -328,7 +375,11 @@
             });
             html += '</div></div>';
         });
-        html += '</div><div class="form-actions"><button type="button" class="btn btn--ghost" data-close>Отмена</button></div>';
+        html += '</div></div>';
+        if (cfg.library) {
+            html += '<div data-gpane="library" hidden><p class="hints">Фирменные слайды, которые подготовили маркетологи. Вставляется копия — замените текст и картинки. <a href="' + esc(cfg.library.page) + '" target="_blank" rel="noopener">Вся библиотека</a></p><div data-library-body><p class="hints">Загрузка…</p></div></div>';
+        }
+        html += '<div class="form-actions"><button type="button" class="btn btn--ghost" data-close>Отмена</button></div>';
         openDialog(html, function (body) {
             body.querySelectorAll('[data-layout-thumb]').forEach(function (box) {
                 var l = cfg.layouts[box.getAttribute('data-layout-thumb')];
@@ -343,7 +394,53 @@
                     DE.addSlide(cfg.kind === 'topic' ? l.boundSlide : l.slide);
                 });
             });
+            var show = function (name) {
+                body.querySelectorAll('[data-gtab]').forEach(function (t) { t.setAttribute('aria-selected', t.getAttribute('data-gtab') === name ? 'true' : 'false'); });
+                body.querySelectorAll('[data-gpane]').forEach(function (p) { p.hidden = p.getAttribute('data-gpane') !== name; });
+                if (name === 'library') {
+                    loadLibrary().then(function () { renderLibrary(body); }).catch(function (err) {
+                        body.querySelector('[data-library-body]').innerHTML = '<p class="form-error">' + esc(err.message || 'Библиотека не загрузилась.') + '</p>';
+                    });
+                }
+            };
+            body.querySelectorAll('[data-gtab]').forEach(function (t) { t.addEventListener('click', function () { show(t.getAttribute('data-gtab')); }); });
+            if (startTab === 'library' && cfg.library) { show('library'); }
         }, { wide: true });
+    }
+
+    // Сохранить слайд в библиотеку — для маркетологов и помощников маркетолога.
+    function saveToLibrary(index) {
+        var s = DE.slide(index);
+        if (!s || !cfg.library) { return; }
+        var firstText = '';
+        s.elements.some(function (e) {
+            if (e.type === 'text' && e.html) { var d = document.createElement('div'); d.innerHTML = e.html; firstText = (d.textContent || '').trim().slice(0, 120); }
+            return !!firstText;
+        });
+        var layoutName = s.layout && cfg.layouts[s.layout] ? cfg.layouts[s.layout].name : '';
+        loadLibrary().catch(function () { return { categories: [] }; }).then(function (lib) {
+            var cats = (lib && lib.categories) || [];
+            openDialog('<h2 class="h-section">Сохранить слайд в библиотеку</h2>'
+                + '<p class="hints">Слайд станет образцом для всех сотрудников: его копию можно вставить из «+ Слайд» → «Библиотека слайдов». Заметки докладчика не сохраняются.</p>'
+                + '<div class="de-lib-preview" data-lib-preview></div>'
+                + '<label class="form-label" for="de-lib-title">Название</label><input class="form-control" id="de-lib-title" maxlength="200" value="' + esc(firstText || layoutName || 'Слайд') + '">'
+                + '<label class="form-label" for="de-lib-cat">Категория</label><input class="form-control" id="de-lib-cat" maxlength="100" list="de-lib-cats" placeholder="Общие" value="' + esc(layoutName ? (cfg.layouts[s.layout].group || '') : '') + '"><datalist id="de-lib-cats">' + cats.map(function (c) { return '<option value="' + esc(c) + '">'; }).join('') + '</datalist>'
+                + '<label class="form-label" for="de-lib-desc">Описание</label><textarea class="form-control" id="de-lib-desc" rows="2" maxlength="1000" placeholder="Когда использовать (необязательно)"></textarea>'
+                + '<div class="form-actions"><button type="button" class="btn btn--pill" data-go>Сохранить в библиотеку</button><button type="button" class="btn btn--ghost" data-close>Отмена</button></div>',
+            function (body) {
+                R.mount(body.querySelector('[data-lib-preview]'), s, { mode: 'thumb' });
+                body.querySelector('#de-lib-title').select();
+                body.querySelector('[data-go]').addEventListener('click', function () {
+                    var title = body.querySelector('#de-lib-title').value.trim();
+                    if (!title) { DE.toast('Укажите название слайда.', 'error'); return; }
+                    var go = this;
+                    go.disabled = true;
+                    DE.api(cfg.library.create, { token: cfg.library.token, json: { title: title, category: body.querySelector('#de-lib-cat').value.trim(), description: body.querySelector('#de-lib-desc').value.trim(), slide: s } })
+                        .then(function (res) { dialog.close(); library = null; DE.toast(res.message); })
+                        .catch(function (err) { go.disabled = false; DE.toast(err.message, 'error'); });
+                });
+            });
+        });
     }
 
     // ---- Список слайдов --------------------------------------------------------------------------
@@ -390,6 +487,8 @@
             { label: 'Новый слайд после…', shortcut: 'Ctrl+M', fn: function () { DE.goto(index); layoutGallery(); } },
             { label: sel.length > 1 ? 'Дублировать слайды (' + sel.length + ')' : 'Дублировать', shortcut: 'Ctrl+D', fn: function () { DE.duplicateSlides(sel); } },
             { label: hidden ? 'Показывать слайд' : 'Скрыть слайд', fn: function () { DE.toggleHidden(sel); } },
+            { label: 'Вставить из библиотеки…', fn: function () { DE.goto(index); layoutGallery('library'); } },
+            cfg.isModerator && cfg.library ? { label: 'Сохранить в библиотеку…', fn: function () { saveToLibrary(index); } } : null,
             { sep: true },
             { label: 'Выше', disabled: index === 0, fn: function () { DE.moveSlides(sel, Math.min.apply(null, sel) - 1); } },
             { label: 'Ниже', disabled: index >= DE.deck.slides.length - 1, fn: function () { DE.moveSlides(sel, Math.max.apply(null, sel) + 2); } },

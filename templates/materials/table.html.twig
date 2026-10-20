@@ -182,6 +182,19 @@
             </div>
         </dialog>
 
+        <dialog class="mt-dialog mt-dialog--link" data-mt-link aria-labelledby="mt-link-title">
+            <h2 class="h-section" id="mt-link-title" data-mt-link-title>Привязать документ раздела</h2>
+            <p class="form-help">Документы раздела и его подразделов, которых нет в таблице, — и отвязанные вручную. Документ из другой строки перейдёт в эту.</p>
+            <input type="search" class="form-control" data-mt-link-search placeholder="Поиск по названию, подразделу, типу" aria-label="Поиск документа">
+            <div class="mt-link-list" data-mt-link-list></div>
+            <p class="form-error" data-mt-link-error role="alert" hidden></p>
+            <div class="form-actions mt-dialog__actions">
+                <span class="mt-toolbar__spacer"></span>
+                <button type="button" class="btn btn--ghost btn--small" data-mt-link-cancel>Отмена</button>
+                <button type="button" class="btn btn--pill btn--small" data-mt-link-submit disabled>Привязать</button>
+            </div>
+        </dialog>
+
         <div class="mt-toast" data-mt-toast role="status" aria-live="polite" hidden></div>
 
         <script type="application/json" id="mt-config">{{ config|json_encode(constant('JSON_HEX_TAG') b-or constant('JSON_HEX_AMP') b-or constant('JSON_UNESCAPED_UNICODE'))|raw }}</script>

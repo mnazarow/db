@@ -225,6 +225,82 @@ final class MaterialLinker
         return isset($this->excluded()[(int) $document->getId()]);
     }
 
+    /**
+     * Документы раздела и подразделов, которых нет в таблице: для «Привязать документ раздела…» в меню строки.
+     * Сюда попадают и отвязанные вручную (они сами больше не привязываются).
+     *
+     * @return list<array{id: int, title: string, section: string, kind: ?string, status: string, excluded: bool}>
+     */
+    public function candidates(Section $root): array
+    {
+        if (!$root->isTopLevel() || !$root->isMaterialsEnabled()) {
+            return [];
+        }
+        $linked = [];
+        foreach ($this->rows->findForSection($root) as $row) {
+            if (null !== $row->getDocument()) {
+                $linked[(int) $row->getDocument()->getId()] = true;
+            }
+        }
+        $excluded = $this->excluded();
+        /** @var list<Document> $documents */
+        $documents = $this->em->createQuery(
+            'SELECT d, s, k FROM App\Entity\Document d JOIN d.section s LEFT JOIN d.kind k
+             WHERE s.path LIKE :path AND d.status <> :archived ORDER BY d.title ASC, d.id ASC'
+        )->setParameter('path', $root->getPath().'%')->setParameter('archived', Document::STATUS_ARCHIVED)->getResult();
+        $result = [];
+        foreach ($documents as $document) {
+            $id = (int) $document->getId();
+            if (isset($linked[$id])) {
+                continue;
+            }
+            $result[] = [
+                'id' => $id,
+                'title' => $document->getTitle(),
+                'section' => $document->getSection()->getFullName(),
+                'kind' => $document->getKind()?->getName(),
+                'status' => $document->getStatus(),
+                'excluded' => isset($excluded[$id]),
+            ];
+        }
+
+        return $result;
+    }
+
+    /**
+     * Привязать к строке документ раздела вручную — когда автоматическое сопоставление ошиблось или документ
+     * был отвязан. Документ из другой строки этой таблицы переходит в эту; прежний документ строки отвязывается
+     * и сам больше не привязывается (его можно привязать вручную к другой строке).
+     *
+     * @throws \DomainException документ не из раздела таблицы или в архиве
+     */
+    public function linkManually(MaterialRow $row, Document $document, ?User $by): void
+    {
+        $table = $row->getSection();
+        if (!$document->getSection()->isSameOrDescendantOf($table)) {
+            throw new \DomainException(\sprintf('Документ «%s» не из раздела «%s» и его подразделов.', $document->getTitle(), $table->getName()));
+        }
+        if ($document->isArchived()) {
+            throw new \DomainException('Документ в архиве — его нельзя привязать к строке.');
+        }
+        if ($row->getDocument()?->getId() === $document->getId()) {
+            return;
+        }
+        foreach ($this->rows->findByDocument($document) as $other) {
+            if ($other->getId() !== $row->getId() && $other->getSection()->getId() === $table->getId()) {
+                $this->detach($other, $by, \sprintf('Документ привязан вручную к строке «%s»', $row->getTitle()));
+            }
+        }
+        $previous = $row->getDocument();
+        if (null !== $previous) {
+            $this->detach($row, $by, \sprintf('Заменён документом «%s»', $document->getTitle()));
+            $this->exclude($previous);
+        }
+        $this->allow($document);
+        $this->attach($row, $document, $by);
+        $this->em->flush();
+    }
+
     // ---- Внутреннее -----------------------------------------------------------------------------
 
     /** Привязывает документ к строке таблицы его раздела; возвращает строку или null — ничего не поменялось. */

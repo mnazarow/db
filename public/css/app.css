@@ -1214,6 +1214,18 @@ a.tab:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
 .heat--none { background: var(--gray-bg); color: var(--muted-light); }
 .heat__overdue { display: inline-block; margin-left: 3px; width: 15px; height: 15px; border-radius: 50%; background: var(--red); color: #fff; font-size: 11px; line-height: 15px; font-weight: 700; text-align: center; }
 
+/* --- Привязка документа раздела к строке вручную ------------------------------------------------------- */
+.mt-dialog--link { width: min(640px, calc(100vw - 32px)); }
+.mt-dialog--link .form-control[type=search] { width: 100%; margin: 8px 0; }
+.mt-link-list { max-height: min(50vh, 440px); overflow-y: auto; border: 1px solid var(--border-light); border-radius: 8px; }
+.mt-link-list > p { margin: 12px; }
+.mt-link-item { display: flex; gap: 10px; align-items: flex-start; padding: 8px 12px; border-top: 1px solid var(--border-light); cursor: pointer; }
+.mt-link-item:first-child { border-top: 0; }
+.mt-link-item:hover, .mt-link-item:has(input:checked) { background: var(--gray-bg); }
+.mt-link-item input { margin-top: 3px; flex: none; }
+.mt-link-item__title { display: block; font-weight: 500; overflow-wrap: anywhere; }
+.mt-link-item__meta { display: block; font-size: 12px; }
+
 /* --- Журнал изменений таблицы материалов (1.7.0) --------------------------------------------------------- */
 .mt-dialog--history { width: min(640px, calc(100vw - 32px)); }
 .mt-history-dialog__body { max-height: min(60vh, 520px); overflow-y: auto; margin: 8px 0 4px; }

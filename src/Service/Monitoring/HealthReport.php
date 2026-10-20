@@ -325,7 +325,7 @@ final class HealthReport
             $checks[] = self::check('queue', 'Фоновые задачи', self::WARNING, \sprintf('в очереди %d, самая старая ждёт с %s — обработчик не работает (см. «Обработчик фоновых задач»)',
                 $stats['pending'], $stats['oldest']->setTimezone(new \DateTimeZone(date_default_timezone_get()))->format('d.m.Y H:i')), $stats['pending']);
         } elseif ($stats['failed'] > 0) {
-            $checks[] = self::check('queue', 'Фоновые задачи', self::WARNING, \sprintf('не выполнено после повторов: %d — подробности: docportal console messenger:failed:show', $stats['failed']), $stats['failed']);
+            $checks[] = self::check('queue', 'Фоновые задачи', self::WARNING, \sprintf('не выполнено после повторов: %d — повторить или удалить: Мониторинг → «Невыполненные фоновые задачи» (или docportal console messenger:failed:show)', $stats['failed']), $stats['failed']);
         } else {
             $checks[] = self::check('queue', 'Фоновые задачи', self::OK, 0 === $stats['pending'] ? 'очередь пуста' : \sprintf('в очереди %d', $stats['pending']), $stats['pending']);
         }

@@ -384,6 +384,13 @@ final class PresentationController extends AbstractController
                 'back' => null !== $meeting ? $this->generateUrl('app_meeting_show', ['id' => $meeting->getId()]) : $this->generateUrl('app_presentations'),
                 'absolute' => $this->generateUrl('app_presentation_show', ['id' => $id], UrlGeneratorInterface::ABSOLUTE_URL),
             ],
+            'library' => [
+                'url' => $this->generateUrl('app_slide_library_json'),
+                'create' => $this->generateUrl('app_slide_library_create'),
+                'use' => $this->generateUrl('app_slide_library_use', ['id' => 0]),
+                'page' => $this->generateUrl('app_slide_library'),
+                'token' => $this->csrf->getToken('slide_library')->getValue(),
+            ],
             'layouts' => SlideLayouts::forEditor(),
             'brand' => BrandAssets::forEditor(),
             'palette' => SlideLayouts::PALETTE,
