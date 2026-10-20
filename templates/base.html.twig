@@ -45,7 +45,7 @@
                 {% endif %}
                 {% if app.user %}
                     {# Два раздела — «Подготовка презентаций» и «Подготовка пятничной презентации» — под одним пунктом меню; между ними — вкладки на странице. #}
-                    <a class="site-nav__link {{ route starts with 'app_presentation' or route starts with 'app_meeting' ? 'is-active' }}" href="{{ path('app_presentations') }}" title="Подготовка презентаций и пятничной презентации">Презентации</a>
+                    <a class="site-nav__link {{ route starts with 'app_presentation' or route starts with 'app_meeting' or route starts with 'app_slide_library' ? 'is-active' }}" href="{{ path('app_presentations') }}" title="Подготовка презентаций и пятничной презентации">Презентации</a>
                 {% endif %}
                 {% if app.user and is_granted('CONTRIBUTOR') %}
                     <a class="site-nav__link {{ route == 'app_document_new' ? 'is-active' }}" href="{{ path('app_document_new') }}">Добавить документ</a>

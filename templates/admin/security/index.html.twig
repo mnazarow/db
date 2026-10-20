@@ -115,6 +115,19 @@
                 <button type="button" class="btn btn--ghost btn--small" data-copy="#saml-sp">Скопировать</button></dd></div>
             <div><dt>Адрес приёма ответа (ACS, HTTP-POST)</dt><dd><code id="saml-acs">{{ saml.acs_url }}</code>
                 <button type="button" class="btn btn--ghost btn--small" data-copy="#saml-acs">Скопировать</button></dd></div>
+            <div><dt>Адрес единого выхода (SLO, HTTP-Redirect)</dt><dd><code id="saml-sls">{{ saml.sls_url }}</code>
+                <button type="button" class="btn btn--ghost btn--small" data-copy="#saml-sls">Скопировать</button></dd></div>
+            <div><dt>Ключ портала</dt><dd>
+                {% if saml.sp_cert_info %}
+                    сертификат «{{ saml.sp_cert_info.subject }}», действует до {{ saml.sp_cert_info.valid_to|date('d.m.Y') }}{% if saml.sp_cert_info.expired %} <span class="text-warning">(истёк)</span>{% endif %} — в метаданных портала (подпись и шифрование)
+                {% else %}
+                    не создан: зашифрованные утверждения не принимаются, запросы выхода не подписываются
+                {% endif %}
+                <form method="post" action="{{ path('admin_security_saml_key') }}" class="inline-form" {% if saml.sp_cert_info %}data-confirm="Создать новый ключ? Сертификат портала у провайдера нужно будет обновить (по метаданным портала) — до этого зашифрованные утверждения и подписанные запросы выхода не пройдут."{% endif %}>
+                    <input type="hidden" name="_token" value="{{ csrf_token('security') }}">
+                    <button type="submit" name="action" value="generate" class="btn btn--ghost btn--small">{{ saml.sp_cert_info ? 'Заменить ключ' : 'Создать ключ' }}</button>
+                    {% if saml.sp_cert_info %}<button type="submit" name="action" value="delete" class="btn btn--ghost btn--small" data-confirm="Удалить ключ портала? Зашифрованные утверждения перестанут приниматься, запросы выхода — подписываться.">Удалить</button>{% endif %}
+                </form></dd></div>
         </dl>
         <form method="post" action="{{ path('admin_security_saml_metadata') }}" class="form">
             <input type="hidden" name="_token" value="{{ csrf_token('security') }}">
@@ -199,7 +212,18 @@
                     <input class="form-control" id="saml-assistant" name="assistant_value" value="{{ saml.assistant_value }}">
                 </div>
             </div>
-            <p class="form-help">Имя и почта без указанных атрибутов берутся из обычных: displayName, mail, утверждения AD FS. Пока атрибут с группами не задан, роли назначаются в карточке пользователя. Ответ провайдера должен быть подписан (ответ целиком или утверждение) и отвечать на запрос входа из этого браузера; зашифрованные утверждения не поддерживаются. Учётная запись привязывается к NameID формата persistent, при других форматах — к логину. Выход из портала не завершает сеанс у провайдера.</p>
+            <div class="form-grid">
+                <div class="form-row">
+                    <label class="form-label" for="saml-slo-url">Адрес выхода провайдера (SLO, HTTP-Redirect)</label>
+                    <input class="form-control" id="saml-slo-url" name="idp_slo_url" type="url" value="{{ saml.idp_slo_url }}" placeholder="https://adfs.example.local/adfs/ls/">
+                    <p class="form-help">Берётся из метаданных провайдера. Нужен и для единого выхода, и для выхода из портала по запросу провайдера.</p>
+                </div>
+                <div class="form-row form-row--check">
+                    <label class="form-check"><input type="checkbox" name="slo" value="1" {{ saml.slo ? 'checked' }}><span>Единый выход: «Выйти» в портале завершает и сеанс у провайдера (во всех системах организации)</span></label>
+                    <label class="form-check"><input type="checkbox" name="want_encrypted" value="1" {{ saml.want_encrypted ? 'checked' }} {{ saml.sp_cert_info ? '' : 'disabled' }}><span>Принимать только зашифрованные утверждения{% if not saml.sp_cert_info %} (сначала создайте ключ портала){% endif %}</span></label>
+                </div>
+            </div>
+            <p class="form-help">Имя и почта без указанных атрибутов берутся из обычных: displayName, mail, утверждения AD FS. Пока атрибут с группами не задан, роли назначаются в карточке пользователя. Ответ провайдера должен быть подписан (ответ целиком или утверждение) и отвечать на запрос входа из этого браузера; с ключом портала провайдер может шифровать утверждения (AD FS: «Сертификат шифрования» из метаданных портала). Учётная запись привязывается к NameID формата persistent, при других форматах — к логину. Без единого выхода «Выйти» завершает только сеанс портала; запрос выхода от провайдера портал принимает, только если он подписан.</p>
             <div class="form-actions"><button type="submit" class="btn btn--pill btn--small">Сохранить</button></div>
         </form>
     </div>

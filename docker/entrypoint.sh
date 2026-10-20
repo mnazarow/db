@@ -107,18 +107,75 @@ run_console app:check || log "ПРЕДУПРЕЖДЕНИЕ: проверка app
 # Очередь в базе (рассылки «Отправить сейчас», PDF-сборники, уведомления об ознакомлении, итоги статистики)
 # разбирает процесс в этом же контейнере — ему видны те же файлы, что и сайту. Он перезапускается каждую минуту:
 # так не копит память и сразу работает с новым кодом. WORKER_ENABLED=0 — не запускать (задачи выполняются сразу).
+# При остановке контейнера (docker compose stop, обновление) обработчик получает SIGTERM и дожидается конца
+# текущей задачи (не дольше WORKER_STOP_TIMEOUT секунд, по умолчанию 90; stop_grace_period в docker-compose.yml
+# больше), и только потом останавливается PHP-FPM.
+WORKER_PID=""
 if [[ "${WORKER_ENABLED:-1}" == "1" ]]; then
     as_www=()
     command -v su-exec >/dev/null 2>&1 && as_www=(su-exec www-data)
     (
-        while true; do
+        stop=0
+        consumer=""
+        # Сигнал — обработчику (Symfony Messenger доделывает текущую задачу и выходит), цикл больше не перезапускает его.
+        trap 'stop=1; [[ -n "${consumer}" ]] && kill -TERM "${consumer}" 2>/dev/null; true' TERM INT QUIT
+        while [[ ${stop} -eq 0 ]]; do
             "${as_www[@]}" php -d memory_limit=512M bin/console messenger:consume async --time-limit=60 --memory-limit=256M --quiet --no-interaction \
-                >> var/log/worker.log 2>&1 || sleep 10
-            sleep 1
+                >> var/log/worker.log 2>&1 &
+            consumer=$!
+            rc=0
+            # wait прерывается сигналом (сработает trap) — тогда ждём, пока обработчик доделает задачу.
+            wait "${consumer}" || rc=$?
+            while kill -0 "${consumer}" 2>/dev/null; do wait "${consumer}" || true; done
+            consumer=""
+            if [[ ${stop} -eq 0 ]]; then
+                if [[ ${rc} -ne 0 ]]; then sleep 10 & wait $! || true; fi
+                sleep 1 & wait $! || true
+            fi
         done
     ) &
+    WORKER_PID=$!
     log "Обработчик фоновых задач запущен."
 fi
 
+if [[ -z "${WORKER_PID}" ]]; then
+    log "Запуск PHP-FPM."
+    exec php-fpm
+fi
+
 log "Запуск PHP-FPM."
-exec php-fpm
+php-fpm &
+FPM_PID=$!
+shutdown() {
+    trap - TERM INT
+    log "Остановка: обработчик фоновых задач завершает текущую задачу…"
+    kill -TERM "${WORKER_PID}" 2>/dev/null || true
+    local waited=0 limit="${WORKER_STOP_TIMEOUT:-90}"
+    while kill -0 "${WORKER_PID}" 2>/dev/null && [[ ${waited} -lt ${limit} ]]; do
+        sleep 1
+        waited=$((waited + 1))
+    done
+    if kill -0 "${WORKER_PID}" 2>/dev/null; then
+        log "Обработчик не завершился за ${limit} с — прерывается (задача повторно не выполнится: см. AtMostOnceMiddleware)."
+        pkill -KILL -P "${WORKER_PID}" 2>/dev/null || true
+        kill -KILL "${WORKER_PID}" 2>/dev/null || true
+    fi
+    # PHP-FPM — мягкая остановка (SIGQUIT): доделывает текущие запросы; не успел — обычная остановка.
+    kill -QUIT "${FPM_PID}" 2>/dev/null || true
+    waited=0
+    while kill -0 "${FPM_PID}" 2>/dev/null && [[ ${waited} -lt 20 ]]; do
+        sleep 1
+        waited=$((waited + 1))
+    done
+    kill -TERM "${FPM_PID}" 2>/dev/null || true
+    wait "${FPM_PID}" 2>/dev/null || true
+    log "Остановлено."
+    exit 0
+}
+# Образ php:*-fpm останавливается сигналом SIGQUIT (STOPSIGNAL), docker kill и Ctrl+C — SIGTERM и SIGINT.
+trap shutdown TERM INT QUIT
+rc=0
+wait "${FPM_PID}" || rc=$?
+# PHP-FPM завершился сам (ошибка) — останавливаем и обработчик, контейнер перезапустит Docker.
+kill -TERM "${WORKER_PID}" 2>/dev/null || true
+exit "${rc}"

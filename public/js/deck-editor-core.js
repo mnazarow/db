@@ -180,7 +180,7 @@
 
     DE.api = function (url, opts) {
         opts = opts || {};
-        var headers = { 'X-CSRF-Token': cfg.token, 'X-Requested-With': 'XMLHttpRequest', Accept: 'application/json' };
+        var headers = { 'X-CSRF-Token': opts.token || cfg.token, 'X-Requested-With': 'XMLHttpRequest', Accept: 'application/json' };
         var body = opts.body;
         if (opts.json !== undefined) { headers['Content-Type'] = 'application/json'; body = JSON.stringify(opts.json); }
         return fetch(url, { method: opts.method || (body ? 'POST' : 'GET'), headers: headers, body: body, credentials: 'same-origin' })

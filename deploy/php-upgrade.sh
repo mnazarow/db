@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  Переход портала на новую версию PHP (режим native; Debian и Ubuntu).
+#  Переход портала на новую версию PHP (режим native; Debian, Ubuntu, AlmaLinux, Rocky Linux, RHEL).
 #
 #    sudo docportal php-upgrade [--to 8.4] [--yes] [--keep-old]
 #    sudo docportal php-upgrade --check        — только показать, что будет сделано
@@ -9,6 +9,8 @@
 #  настройки PHP и пула PHP-FPM портала, прогревает кэш новой версией, переключает nginx на её PHP-FPM, проверяет
 #  /health. Если портал не ответил — всё возвращается на прежнюю версию. Прежний PHP-FPM потом останавливается
 #  (если им больше никто не пользуется); пакеты прежней версии остаются — для возврата.
+#  На AlmaLinux, Rocky и RHEL PHP один на сервер (модуль dnf): поток модуля переключается (из AppStream, а если в нём
+#  нет нужной версии — из репозитория Remi), портал проверяется на новой версии, при неудаче поток возвращается.
 #  Зачем: Symfony 8, на которую портал перейдёт после выхода Symfony 8.4 LTS, требует PHP 8.4+ (РУКОВОДСТВО, 8.4).
 # =============================================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,7 +19,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
     cat <<EOF
-Переход портала «${APP_TITLE}» на новую версию PHP (режим native, Debian и Ubuntu).
+Переход портала «${APP_TITLE}» на новую версию PHP (режим native: Debian, Ubuntu, AlmaLinux, Rocky, RHEL).
 
 Использование: sudo ${APP_ID} php-upgrade [параметры]
   --to X.Y      Версия PHP (по умолчанию — ${PHP_RECOMMENDED_VERSION} или новее из репозиториев ОС); с ним же —
@@ -52,7 +54,129 @@ if [[ "${CHECK_ONLY}" == "1" ]]; then LOG_FILE="/dev/null"; else log_init php-up
 load_conf || die "Портал не установлен: не найден ${CONF_FILE}."
 [[ "${INSTALL_MODE}" == "native" ]] || die "В режиме Docker версию PHP задаёт образ приложения (PHP_IMAGE в ${APP_DIR}/docker/.env, по умолчанию php:8.4-fpm-alpine) — переход не нужен."
 detect_os
-[[ "${OS_FAMILY}" == "debian" ]] || die "Переход поддерживается на Debian и Ubuntu. На RHEL-совместимых системах: dnf module switch-to php:${TARGET:-${PHP_RECOMMENDED_VERSION}} и перезапуск php-fpm (РУКОВОДСТВО, 7.2)."
+
+# --- AlmaLinux, Rocky, RHEL: поток модуля php в dnf ------------------------------------------------------
+# PHP на сервере один: пакеты заменяются на месте (dnf module switch-to), служба и сокет PHP-FPM те же. Работающий
+# PHP-FPM до перезапуска продолжает обслуживать сайт прежней версией; после перезапуска портал проверяется, и при
+# ошибке поток модуля возвращается.
+rhel_streams() { dnf -q module list php 2>/dev/null | awk '$1 == "php" {print $2}' | sort -u; }
+rhel_enabled_stream() { dnf -q module list --enabled php 2>/dev/null | awk '$1 == "php" {print $2; exit}'; }
+RHEL_PHP=$(command -v php 2>/dev/null || echo /usr/bin/php)
+rhel_php_version() { "${RHEL_PHP}" -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;' 2>/dev/null; }
+# Поток для версии: из AppStream (8.4), иначе из Remi (remi-8.4); без --to — рекомендуемая, а если её нет —
+# самая новая не ниже рекомендуемой.
+rhel_find_stream() {
+    local streams v
+    streams=$(rhel_streams)
+    if [[ -n "${TARGET}" ]]; then
+        if grep -qx "${TARGET}" <<<"${streams}"; then printf '%s' "${TARGET}"; return 0; fi
+        if grep -qx "remi-${TARGET}" <<<"${streams}"; then printf 'remi-%s' "${TARGET}"; return 0; fi
+        return 1
+    fi
+    if grep -Eqx "(remi-)?${PHP_RECOMMENDED_VERSION//./\\.}" <<<"${streams}"; then
+        TARGET="${PHP_RECOMMENDED_VERSION}"
+        rhel_find_stream
+        return
+    fi
+    v=$(sed 's/^remi-//' <<<"${streams}" | grep -E '^[0-9]+\.[0-9]+$' | sort -V | tail -n1 || true)
+    [[ -n "${v}" ]] && version_ge "${v}" "${PHP_RECOMMENDED_VERSION}" || return 1
+    TARGET="${v}"
+    rhel_find_stream
+}
+rhel_add_remi() {
+    local major
+    major=$(cut -d. -f1 <<<"${OS_VERSION}")
+    [[ "${major}" =~ ^(8|9|10)$ ]] || return 1
+    rpm -q remi-release >/dev/null 2>&1 && return 0
+    pkg_install epel-release || true
+    timeout -k 30 900 dnf install -y -q "https://rpms.remirepo.net/enterprise/remi-release-${major}.rpm" </dev/null >>"${LOG_FILE}" 2>&1 9>&-
+}
+rhel_switch() {
+    if timeout -k 60 3600 dnf module switch-to -y "php:$1" </dev/null >>"${LOG_FILE}" 2>&1 9>&-; then
+        return 0
+    fi
+    # dnf без switch-to (старые RHEL 8): сброс, новый поток и синхронизация пакетов.
+    dnf module reset -y php </dev/null >>"${LOG_FILE}" 2>&1 9>&- || return 1
+    dnf module enable -y "php:$1" </dev/null >>"${LOG_FILE}" 2>&1 9>&- || return 1
+    timeout -k 60 3600 dnf distro-sync -y 'php*' </dev/null >>"${LOG_FILE}" 2>&1 9>&-
+}
+rhel_console() { runuser -u "${SERVICE_USER}" -- "${RHEL_PHP}" -d memory_limit=512M "${APP_DIR}/current/bin/console" "$@" --env=prod --no-interaction; }
+RHEL_OLD_STREAM=""
+RHEL_OLD_VERSION=""
+rhel_rollback() {
+    error "Возврат на PHP ${RHEL_OLD_VERSION} (php:${RHEL_OLD_STREAM})…"
+    rhel_switch "${RHEL_OLD_STREAM}" || warn "Модуль php не вернулся на ${RHEL_OLD_STREAM} — проверьте: dnf module list php; dnf module switch-to php:${RHEL_OLD_STREAM}"
+    svc restart "${PHP_FPM_SERVICE:-php-fpm}" >>"${LOG_FILE}" 2>&1 || true
+    rhel_console cache:warmup >>"${LOG_FILE}" 2>&1 || true
+    PHP_VERSION="${RHEL_OLD_VERSION}"
+    save_conf
+}
+# Ошибка после начала замены пакетов: возврат прежнего потока и выход.
+rhel_fail() {
+    trap - INT TERM
+    rhel_rollback
+    die "$1 Портал работает на PHP ${RHEL_OLD_VERSION}. Подробности — ${LOG_FILE}."
+}
+rhel_upgrade() {
+    local stream new_v body missing
+    RHEL_OLD_STREAM=$(rhel_enabled_stream || true)
+    RHEL_OLD_VERSION="${PHP_VERSION:-}"
+    if [[ "${CHECK_ONLY}" == "1" ]]; then
+        printf 'Сейчас: PHP %s (модуль dnf php:%s).\n' "${RHEL_OLD_VERSION:-?}" "${RHEL_OLD_STREAM:-?}"
+        if stream=$(rhel_find_stream); then
+            if [[ "${stream#remi-}" == "${RHEL_OLD_VERSION}" ]]; then printf 'Переход не нужен: портал уже на PHP %s.\n' "${RHEL_OLD_VERSION}"; exit 0; fi
+            printf 'Будет: PHP %s (модуль php:%s).\n' "${stream#remi-}" "${stream}"
+        else
+            printf 'Будет: PHP %s из репозитория Remi (в подключённых репозиториях его нет; репозиторий подключится).\n' "${TARGET:-${PHP_RECOMMENDED_VERSION}}"
+        fi
+        printf 'Запустить переход: sudo %s php-upgrade\n' "${APP_ID}"
+        exit 0
+    fi
+    [[ -n "${RHEL_OLD_STREAM}" ]] || die "Не удалось определить включённый модуль php в dnf (dnf module list --enabled php)."
+    [[ -n "${RHEL_OLD_VERSION}" ]] || die "В ${CONF_FILE} не указана версия PHP (PHP_VERSION)."
+    acquire_lock 0
+    if ! stream=$(rhel_find_stream); then
+        info "В подключённых репозиториях нет PHP ${TARGET:-${PHP_RECOMMENDED_VERSION}+} — подключается репозиторий Remi…"
+        rhel_add_remi || die "Не удалось подключить репозиторий Remi (rpms.remirepo.net). Портал продолжает работать на PHP ${RHEL_OLD_VERSION}."
+        stream=$(rhel_find_stream) || die "PHP ${TARGET:-${PHP_RECOMMENDED_VERSION}+} нет и в репозитории Remi для «${PRETTY_NAME:-$OS_ID $OS_VERSION}». Портал продолжает работать на PHP ${RHEL_OLD_VERSION}."
+    fi
+    new_v="${stream#remi-}"
+    if [[ "${RHEL_OLD_STREAM}" == "${stream}" || "${new_v}" == "${RHEL_OLD_VERSION}" ]] || { [[ "${EXPLICIT}" != "1" ]] && version_ge "${RHEL_OLD_VERSION}" "${new_v}"; }; then
+        ok "Портал уже работает на PHP ${RHEL_OLD_VERSION} — переход не нужен."
+        exit 0
+    fi
+    printf '\nПереход портала с PHP %s (php:%s) на PHP %s (php:%s). PHP на сервере один: пакеты заменяются, PHP-FPM перезапускается.\n' "${RHEL_OLD_VERSION}" "${RHEL_OLD_STREAM}" "${new_v}" "${stream}"
+    printf 'Если после перезапуска портал не ответит — модуль php вернётся на %s.\n\n' "${RHEL_OLD_STREAM}"
+    confirm "Продолжить?" || die "Отменено."
+
+    step "PHP ${new_v}: пакеты (модуль php:${stream})"
+    # Прерывание посреди замены пакетов — возврат прежнего потока, а не наполовину обновлённый PHP.
+    trap 'rhel_fail "Переход прерван."' INT TERM
+    rhel_switch "${stream}" || rhel_fail "Пакеты PHP ${new_v} не установились."
+    pkg_install php-fpm php-cli php-mysqlnd php-xml php-mbstring php-intl php-pecl-zip php-gd php-opcache php-process php-json php-ldap \
+        || rhel_fail "Не все пакеты PHP ${new_v} установились."
+    [[ "$(rhel_php_version || true)" == "${new_v}" ]] || rhel_fail "После переключения ${RHEL_PHP} — не версии ${new_v}."
+    missing=$(php_missing_extensions "${RHEL_PHP}" | tr "\n" " ")
+    [[ -z "${missing// /}" ]] || rhel_fail "У PHP ${new_v} не хватает расширений: ${missing}."
+
+    step "Проверка портала на PHP ${new_v}"
+    rhel_console cache:warmup >>"${LOG_FILE}" 2>&1 || rhel_fail "Портал не запускается на PHP ${new_v} (cache:warmup)."
+    svc restart "${PHP_FPM_SERVICE:-php-fpm}" || rhel_fail "PHP-FPM ${new_v} не запустился."
+    body=$(wait_for_health 20 3) || rhel_fail "Портал не отвечает на PHP ${new_v} (${body:-нет ответа})."
+    trap - INT TERM
+    PHP_VERSION="${new_v}"
+    save_conf
+    install_cli_wrapper || true
+    ok "Портал работает на PHP ${new_v}: ${body}"
+    info "Возврат при необходимости: sudo ${APP_ID} php-upgrade --to ${RHEL_OLD_VERSION} (модуль php:${RHEL_OLD_STREAM})."
+    printf '\n%sГотово: портал работает на PHP %s.%s Журнал: %s\n' "${C_GREEN}${C_BOLD}" "${new_v}" "${C_RESET}" "${LOG_FILE}"
+    print_warnings_summary
+    exit 0
+}
+if [[ "${OS_FAMILY}" == "rhel" ]]; then
+    rhel_upgrade
+fi
+[[ "${OS_FAMILY}" == "debian" ]] || die "Переход поддерживается на Debian, Ubuntu, AlmaLinux, Rocky и RHEL."
 OLD="${PHP_VERSION:-}"
 [[ -n "${OLD}" ]] || die "В ${CONF_FILE} не указана версия PHP (PHP_VERSION)."
 OLD_SOCK="${PHP_FPM_SOCK:-/run/php/php${OLD}-fpm.sock}"

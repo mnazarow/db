@@ -10,7 +10,9 @@ use App\Message\RefreshStatistics;
 use App\Message\SendMaterialsReminder;
 use App\Message\SendTeamDigest;
 use App\Service\AcknowledgementService;
+use App\Message\BackgroundMessage;
 use App\Service\BackgroundJobs;
+use App\Service\FailedJobs;
 use App\Service\Monitoring\HealthReport;
 use App\Messenger\AtMostOnceMiddleware;
 use App\Service\PortalSettings;
@@ -27,7 +29,10 @@ use Symfony\Component\Messenger\MessageBus;
 use Symfony\Component\Messenger\Middleware\MiddlewareInterface;
 use Symfony\Component\Messenger\Middleware\StackInterface;
 use Symfony\Component\Messenger\Middleware\StackMiddleware;
+use Symfony\Component\Messenger\Stamp\ErrorDetailsStamp;
 use Symfony\Component\Messenger\Stamp\ReceivedStamp;
+use Symfony\Component\Messenger\Stamp\RedeliveryStamp;
+use Symfony\Component\Messenger\Stamp\SentToFailureTransportStamp;
 use Symfony\Component\Messenger\Stamp\TransportMessageIdStamp;
 use Symfony\Component\Messenger\Transport\InMemory\InMemoryTransport;
 use Symfony\Component\Messenger\Worker;
@@ -178,6 +183,86 @@ final class BackgroundJobsTest extends PortalTestCase
         self::assertContains(SendMaterialsReminder::class, $sent);
     }
 
+    /** Невыполненные задачи — в «Мониторинге»: повторить (по одной и все) и удалить без консоли. */
+    public function testFailedJobsRetryAndDeleteFromMonitoring(): void
+    {
+        $c = static::getContainer();
+        $failed = $c->get('messenger.transport.failed');
+        $fail = static function (object $message, string $error) use ($failed): void {
+            $failed->send(new Envelope($message, [
+                new SentToFailureTransportStamp('async'),
+                new RedeliveryStamp(3),
+                ErrorDetailsStamp::create(new \RuntimeException($error)),
+            ]));
+        };
+        $fail(new RefreshStatistics(), 'Сервер базы недоступен');
+        $fail(new SendTeamDigest('admin'), 'SMTP недоступен');
+        $fail(new UnhandledTestTask(), 'нет обработчика');
+        $jobs = $c->get(FailedJobs::class);
+        self::assertSame(3, $jobs->count());
+        $rows = $jobs->all();
+        $labels = array_column($rows, 'label');
+        sort($labels);
+        self::assertSame(['UnhandledTestTask', 'Пересчёт итогов статистики', 'Сводка руководителям'], $labels);
+        $digest = array_values(array_filter($rows, static fn (array $r): bool => 'Сводка руководителям' === $r['label']))[0];
+        self::assertSame('SMTP недоступен', $digest['error']);
+        self::assertSame('запросил admin', $digest['details']);
+        self::assertSame(4, $digest['attempts']);
+
+        // Пользователю страница недоступна, администратору — со списком и кнопками.
+        $this->loginAs('ivanov');
+        $this->client->request('POST', '/admin/monitoring/failed', ['action' => 'retry_all']);
+        self::assertResponseStatusCodeSame(403);
+        $this->loginAs('admin');
+        $crawler = $this->client->request('GET', '/admin/monitoring');
+        self::assertResponseIsSuccessful();
+        $section = $crawler->filter('#failed');
+        self::assertStringContainsString('Невыполненные фоновые задачи (3)', $section->text());
+        self::assertStringContainsString('SMTP недоступен', $section->text());
+        self::assertStringContainsString('повторить или удалить: Мониторинг', $this->check($c->get(HealthReport::class)->build(), 'queue')['message']);
+        $token = $section->filter('input[name=_token]')->first()->attr('value');
+
+        $this->client->request('POST', '/admin/monitoring/failed', ['_token' => 'wrong', 'action' => 'retry_all']);
+        self::assertResponseStatusCodeSame(403);
+
+        // Повтор одной: обработчик не работает — задача выполняется сразу и уходит из невыполненных.
+        $stats = array_values(array_filter($rows, static fn (array $r): bool => 'Пересчёт итогов статистики' === $r['label']))[0];
+        $this->client->request('POST', '/admin/monitoring/failed', ['_token' => $token, 'action' => 'retry', 'id' => $stats['id']]);
+        self::assertResponseRedirects('/admin/monitoring#failed');
+        $this->client->followRedirect();
+        self::assertSelectorTextContains('.alert', 'Задача повторена');
+        self::assertSame(2, $jobs->count());
+
+        // «Повторить все»: сводка выполняется, задача без обработчика остаётся с ошибкой.
+        $this->client->request('POST', '/admin/monitoring/failed', ['_token' => $token, 'action' => 'retry_all']);
+        $this->client->followRedirect();
+        self::assertSelectorTextContains('.alert', 'Повторено задач: 1; не удалось: 1');
+        self::assertSame(['UnhandledTestTask'], array_column($jobs->all(), 'label'));
+
+        // Удаление: одной и всех.
+        $left = $jobs->all()[0]['id'];
+        $this->client->request('POST', '/admin/monitoring/failed', ['_token' => $token, 'action' => 'delete', 'id' => $left]);
+        $this->client->followRedirect();
+        self::assertSelectorTextContains('.alert', 'удалена из невыполненных');
+        self::assertSame(0, $jobs->count());
+        $this->client->request('POST', '/admin/monitoring/failed', ['_token' => $token, 'action' => 'delete', 'id' => $left]);
+        $this->client->followRedirect();
+        self::assertSelectorTextContains('.alert', 'уже повторена или удалена');
+        $fail(new UnhandledTestTask(), 'x');
+        $fail(new UnhandledTestTask(), 'y');
+        $this->client->request('POST', '/admin/monitoring/failed', ['_token' => $token, 'action' => 'delete_all']);
+        $this->client->followRedirect();
+        self::assertSelectorTextContains('.alert', 'Удалено невыполненных задач: 2');
+        $crawler = $this->client->request('GET', '/admin/monitoring');
+        self::assertSame(0, $crawler->filter('#failed')->count(), 'нет невыполненных — блока нет');
+
+        // Запись, которую уже не прочитать (класс задачи удалён), очередь убирает сама.
+        $utc = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d H:i:s');
+        $this->em()->getConnection()->insert('messenger_messages', ['body' => 'x', 'headers' => '[]', 'queue_name' => 'failed', 'created_at' => $utc, 'available_at' => $utc]);
+        self::assertSame([], $jobs->all());
+        self::assertSame(0, $jobs->count());
+    }
+
     /** @param array<string, mixed> $report @return array<string, mixed> */
     private function check(array $report, string $key): array
     {
@@ -188,4 +273,9 @@ final class BackgroundJobsTest extends PortalTestCase
         }
         self::fail('Нет проверки '.$key);
     }
+}
+
+/** Задача без обработчика: её повтор не удаётся. */
+final class UnhandledTestTask implements BackgroundMessage
+{
 }

@@ -1016,7 +1016,7 @@ case "\${cmd}" in
   restore ARCHIVE     Восстановление из резервной копии
   verify-backup [ARCHIVE]   Пробное восстановление копии во временную базу (по умолчанию — последней)
   remote-backup …     Копии во внешнем хранилище (rclone или каталог): status | set НАЗНАЧЕНИЕ [--keep N] | off | test | push
-  php-upgrade [--to 8.4] [--check]   Переход на новую версию PHP (Debian, Ubuntu): пакеты, PHP-FPM, nginx,
+  php-upgrade [--to 8.4] [--check]   Переход на новую версию PHP (Debian, Ubuntu, AlmaLinux, Rocky): пакеты, PHP-FPM, nginx,
                       проверка; при неудаче — возврат на прежнюю. Нужен PHP ${PHP_RECOMMENDED_VERSION}+ для будущей Symfony 8
   maintenance on|off|status   Режим обслуживания: посетители видят страницу «Идёт обновление портала»
                       (on --message "текст" --allow IP,IP — портал остаётся доступен с указанных адресов)

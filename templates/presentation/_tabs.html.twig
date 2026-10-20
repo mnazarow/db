@@ -1,5 +1,6 @@
-{# Переход между разделами «Подготовка презентаций» и «Подготовка пятничной презентации». #}
+{# Переход между разделами «Подготовка презентаций» и «Подготовка пятничной презентации» (и библиотекой слайдов). #}
 <nav class="deck-sections" aria-label="Разделы презентаций">
     <a class="deck-sections__link {{ current == 'presentations' ? 'is-active' }}" href="{{ path('app_presentations') }}"{{ current == 'presentations' ? ' aria-current="page"' }}>Подготовка презентаций</a>
     <a class="deck-sections__link {{ current == 'meetings' ? 'is-active' }}" href="{{ path('app_meetings') }}"{{ current == 'meetings' ? ' aria-current="page"' }}>Подготовка пятничной презентации</a>
+    <a class="deck-sections__link deck-sections__link--aside {{ current == 'library' ? 'is-active' }}" href="{{ path('app_slide_library') }}"{{ current == 'library' ? ' aria-current="page"' }}>Библиотека слайдов</a>
 </nav>

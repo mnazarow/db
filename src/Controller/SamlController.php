@@ -9,9 +9,11 @@ use App\Service\PortalSettings;
 use App\Service\Sso\SamlService;
 use App\Service\Sso\SsoException;
 use App\Service\Sso\SsoUserProvisioner;
+use Psr\Cache\CacheItemPoolInterface;
 use Psr\Log\LoggerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Bundle\SecurityBundle\Security;
+use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Routing\Attribute\Route;
@@ -25,6 +27,10 @@ use Symfony\Component\Routing\Attribute\Route;
  * пересылает ответ на этот же портал (/login/saml/acs/finish) — уже со своего сайта, вместе с cookie сеанса.
  * Там ответ сверяется с номером запроса: чужой ответ (полученный злоумышленником для себя) в сеанс коллеги не
  * подставить. Работает и по http, и по https.
+ *
+ * Единый выход (SLO): «Выйти» в портале уводит к провайдеру с запросом выхода (SamlLogoutSubscriber), провайдер
+ * возвращает ответ на /login/saml/sls; запрос выхода от провайдера (сотрудник вышел в другой системе) приходит
+ * туда же — сеанс портала этого сотрудника завершается, провайдер получает ответ «выход выполнен».
  */
 final class SamlController extends AbstractController
 {
@@ -33,12 +39,22 @@ final class SamlController extends AbstractController
     private const MAX_PENDING = 5;
     private const REQUEST_TTL = 900;
 
+    /** Ключ сеанса: данные входа через SAML (NameID, SessionIndex) — для запроса единого выхода. */
+    public const SESSION_SAML = 'saml_session';
+
+    /** Признак запроса: выход начал провайдер — портал не отправляет ему встречный запрос выхода. */
+    public const IDP_LOGOUT_ATTRIBUTE = '_saml_idp_logout';
+
+    /** Номера запросов выхода, начатых порталом (кэш, 15 минут): ответ провайдера сверяется с ними. */
+    public const LOGOUT_CACHE_PREFIX = 'saml_logout_';
+
     public function __construct(
         private readonly SamlService $saml,
         private readonly PortalSettings $settings,
         private readonly SsoUserProvisioner $provisioner,
         private readonly Security $security,
         private readonly LoggerInterface $auditLogger,
+        private readonly ?CacheItemPoolInterface $cache = null,
     ) {
     }
 
@@ -90,7 +106,8 @@ final class SamlController extends AbstractController
         try {
             // Номер запроса, на который отвечает провайдер, — из ответа; принимается, только если такой запрос
             // начат в этом сеансе и не устарел.
-            $inResponseTo = self::inResponseTo((string) $request->request->get('SAMLResponse'));
+            $decoded = base64_decode((string) $request->request->get('SAMLResponse'), true);
+            $inResponseTo = self::inResponseTo(false !== $decoded ? $decoded : '');
             if (null !== $inResponseTo && isset($pending[$inResponseTo]) && $pending[$inResponseTo] > time() - self::REQUEST_TTL) {
                 $requestId = $inResponseTo;
             } elseif (null !== $inResponseTo) {
@@ -113,8 +130,73 @@ final class SamlController extends AbstractController
         }
         // Программный вход: события входа (журнал аудита, второй фактор) — как при обычном входе.
         $this->security->login($user, PortalAuthenticator::class, 'main');
+        // Для единого выхода: кого и в каком сеансе провайдера выводить.
+        $request->getSession()->set(self::SESSION_SAML, $data['session']);
 
         return $this->redirectToRoute('app_home');
+    }
+
+    /** Единый выход: ответ провайдера на выход из портала или запрос выхода от провайдера. */
+    #[Route('/login/saml/sls', name: 'app_saml_sls', methods: ['GET'])]
+    public function sls(Request $request): Response
+    {
+        if (!$this->saml->isEnabled()) {
+            throw $this->createNotFoundException('Вход через SAML не настроен.');
+        }
+        if ($request->query->has('SAMLResponse')) {
+            return $this->logoutResponse($request);
+        }
+        if (!$request->query->has('SAMLRequest')) {
+            throw $this->createNotFoundException();
+        }
+        if ('' === $this->settings->saml()['idp_slo_url']) {
+            $this->auditLogger->warning('SAML: запрос выхода от провайдера не обработан — не задан адрес выхода провайдера');
+
+            return new Response('Единый выход не настроен: не задан адрес выхода провайдера (панель администратора → Вход и безопасность → SAML).', 503, ['Content-Type' => 'text/plain; charset=UTF-8']);
+        }
+        try {
+            $result = $this->saml->processLogout($request);
+        } catch (SsoException $e) {
+            $this->auditLogger->warning('SAML: запрос выхода от провайдера отклонён', ['error' => $e->getMessage(), 'ip' => $request->getClientIp()]);
+
+            return new Response('Запрос выхода не принят: он не подписан провайдером или устарел (подробности — в журнале аудита).', 400, ['Content-Type' => 'text/plain; charset=UTF-8']);
+        }
+        $current = $request->hasSession() ? $request->getSession()->get(self::SESSION_SAML) : null;
+        $user = $this->security->getUser();
+        $matches = \is_array($current) && null !== $user && ($current['name_id'] ?? null) === $result['name_id']
+            && ($current['idp'] ?? null) === $this->settings->saml()['idp_entity_id']
+            && ([] === $result['session_indexes'] || \in_array((string) ($current['session_index'] ?? ''), $result['session_indexes'], true));
+        if ($matches) {
+            // Провайдеру встречный запрос выхода не нужен: выход начал он сам.
+            $request->attributes->set(self::IDP_LOGOUT_ATTRIBUTE, true);
+            $this->auditLogger->info('SAML: выход по запросу провайдера', ['user' => $user->getUserIdentifier(), 'ip' => $request->getClientIp()]);
+            $this->security->logout(false);
+        }
+
+        return new RedirectResponse($result['redirect']);
+    }
+
+    private function logoutResponse(Request $request): Response
+    {
+        $inResponseTo = self::inResponseTo(SamlService::inflate((string) $request->query->get('SAMLResponse')) ?? '', 'LogoutResponse');
+        $item = null;
+        if (null !== $inResponseTo && null !== $this->cache) {
+            $item = $this->cache->getItem(self::LOGOUT_CACHE_PREFIX.hash('sha256', $inResponseTo));
+        }
+        try {
+            if (null === $item || !$item->isHit()) {
+                throw new SsoException('ответ провайдера относится к другому выходу.');
+            }
+            $this->saml->processLogout($request, $inResponseTo);
+            $this->cache?->deleteItem($item->getKey());
+            $this->addFlash('success', 'Вы вышли из портала и из учётной записи организации.');
+        } catch (SsoException $e) {
+            // Сеанс портала уже завершён; не удалось только подтвердить выход у провайдера.
+            $this->auditLogger->warning('SAML: ответ провайдера на выход не принят', ['error' => $e->getMessage(), 'ip' => $request->getClientIp()]);
+            $this->addFlash('warning', 'Вы вышли из портала. Выход из учётной записи организации провайдер не подтвердил — закройте браузер, если работаете за чужим компьютером.');
+        }
+
+        return $this->redirectToRoute('app_login', ['kerberos' => 'off']);
     }
 
     /** Метаданные портала (SP): провайдеру — для регистрации портала. */
@@ -133,14 +215,13 @@ final class SamlController extends AbstractController
     }
 
     /** Номер запроса (InResponseTo) из ответа провайдера — без проверки подписи, только чтобы найти запрос. */
-    private static function inResponseTo(string $encoded): ?string
+    private static function inResponseTo(string $xml, string $element = 'Response'): ?string
     {
-        $xml = base64_decode($encoded, true);
-        if (false === $xml || '' === $xml || \strlen($xml) > 2_000_000) {
+        if ('' === $xml || \strlen($xml) > 2_000_000) {
             return null;
         }
 
-        return preg_match('/<(?:[\w-]+:)?Response\b[^>]*\sInResponseTo\s*=\s*(["\'])([^"\'<>]{1,200})\1/', $xml, $m) ? html_entity_decode($m[2], \ENT_QUOTES | \ENT_XML1) : null;
+        return preg_match('/<(?:[\w-]+:)?'.$element.'\b[^>]*\sInResponseTo\s*=\s*(["\'])([^"\'<>]{1,200})\1/', $xml, $m) ? html_entity_decode($m[2], \ENT_QUOTES | \ENT_XML1) : null;
     }
 
     private function fail(Request $request, SsoException $e): Response

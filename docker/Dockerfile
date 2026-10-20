@@ -12,12 +12,13 @@ ARG TZ=Europe/Moscow
 ARG WITH_PREVIEW=0
 ARG WITH_OCR=0
 
-# Системные библиотеки и расширения PHP, необходимые Symfony, Doctrine и входу через LDAP.
+# Системные библиотеки и расширения PHP, необходимые Symfony, Doctrine и входу через LDAP; pcntl — чтобы
+# обработчик фоновых задач при остановке контейнера доделывал текущую задачу (сигнал SIGTERM).
 RUN set -eux; \
     apk add --no-cache icu-libs libzip libpng libjpeg-turbo freetype tzdata bash curl mysql-client su-exec libldap poppler-utils qpdf; \
     apk add --no-cache --virtual .build-deps $PHPIZE_DEPS icu-dev libzip-dev libpng-dev libjpeg-turbo-dev freetype-dev openldap-dev; \
     docker-php-ext-configure gd --with-freetype --with-jpeg; \
-    docker-php-ext-install -j"$(nproc)" intl zip gd pdo_mysql opcache ldap; \
+    docker-php-ext-install -j"$(nproc)" intl zip gd pdo_mysql opcache ldap pcntl; \
     apk del .build-deps; \
     cp /usr/share/zoneinfo/${TZ} /etc/localtime && echo "${TZ}" > /etc/timezone
 

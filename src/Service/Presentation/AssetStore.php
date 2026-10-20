@@ -10,6 +10,7 @@ use App\Entity\User;
 use App\Repository\PresentationAssetRepository;
 use App\Repository\PresentationRepository;
 use App\Repository\PresentationVersionRepository;
+use App\Repository\SlideTemplateRepository;
 use Doctrine\ORM\EntityManagerInterface;
 
 /**
@@ -28,6 +29,7 @@ final class AssetStore
         private readonly PresentationAssetRepository $assets,
         private readonly PresentationRepository $presentations,
         private readonly PresentationVersionRepository $versions,
+        private readonly ?SlideTemplateRepository $templates = null,
     ) {
     }
 
@@ -87,7 +89,33 @@ final class AssetStore
         $removed = 0;
         foreach ($this->assets->findByPresentation($presentation) as $asset) {
             if ($this->presentations->isTokenUsedElsewhere($asset->getToken(), $presentation->getId())
-                || $this->versions->isTokenUsedElsewhere($asset->getToken(), $presentation->getId())) {
+                || $this->versions->isTokenUsedElsewhere($asset->getToken(), $presentation->getId())
+                || true === $this->templates?->isTokenUsed($asset->getToken())) {
+                continue;
+            }
+            @unlink($this->path($asset));
+            $this->em->remove($asset);
+            ++$removed;
+        }
+
+        return $removed;
+    }
+
+    /**
+     * Удалить изображения слайда библиотеки, которые больше ни к чему не относятся: презентации, где их
+     * загрузили, уже нет, и ни одна презентация, версия или другой слайд библиотеки на них не ссылается.
+     *
+     * @param list<string> $tokens
+     */
+    public function cleanupTokens(array $tokens, ?int $exceptTemplate = null): int
+    {
+        $removed = 0;
+        foreach (array_unique($tokens) as $token) {
+            $asset = $this->assets->findOneByToken($token);
+            if (null === $asset || null !== $asset->getPresentation()
+                || $this->presentations->isTokenUsedElsewhere($token, null)
+                || $this->versions->isTokenUsedElsewhere($token, null)
+                || true === $this->templates?->isTokenUsed($token, $exceptTemplate)) {
                 continue;
             }
             @unlink($this->path($asset));

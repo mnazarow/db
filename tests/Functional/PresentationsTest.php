@@ -300,6 +300,89 @@ final class PresentationsTest extends PortalTestCase
         self::assertNull($this->presentations()->find($id));
     }
 
+    /** Библиотека фирменных слайдов: маркетолог сохраняет слайд, сотрудник вставляет копию; изображения не теряются. */
+    public function testSlideLibrary(): void
+    {
+        $id = $this->create('markova', 'Образцы слайдов');
+        $cfg = $this->editor($id);
+        self::assertArrayHasKey('library', $cfg);
+        $img = $this->api('POST', $cfg['urls']['upload'], $cfg['token'], null, ['file' => $this->png()]);
+        $deck = DeckValidator::decode($this->find($id)->getContent());
+        $slide = $deck['slides'][1];
+        $slide['notes'] = 'Заметка докладчика';
+        $slide['elements'][] = ['id' => 'pic1', 'type' => 'image', 'x' => 700, 'y' => 200, 'w' => 400, 'h' => 300, 'src' => $img['src'], 'link' => ['slide' => $deck['slides'][0]['id']]];
+
+        // Сотрудник не сохраняет в библиотеку; без токена — никто.
+        $res = $this->api('POST', $cfg['library']['create'], 'wrong', ['title' => 'x', 'slide' => $slide]);
+        self::assertResponseStatusCodeSame(403);
+        $res = $this->api('POST', $cfg['library']['create'], $cfg['library']['token'], ['title' => '  Итоги   месяца ', 'category' => 'Отчёты', 'description' => 'Цифры и выводы', 'slide' => $slide]);
+        self::assertTrue($res['ok'] ?? false, json_encode($res, \JSON_UNESCAPED_UNICODE));
+        self::assertSame('Итоги месяца', $res['template']['title']);
+        self::assertSame('', $res['template']['slide']['notes'], 'заметки докладчика в библиотеку не попадают');
+        $saved = array_values(array_filter($res['template']['slide']['elements'], static fn (array $e): bool => 'pic1' === $e['id']))[0];
+        self::assertSame($img['src'], $saved['src']);
+        self::assertNull($saved['link'], 'ссылки на слайды презентации отброшены');
+        $templateId = $res['template']['id'];
+        $res = $this->api('POST', $cfg['library']['create'], $cfg['library']['token'], ['title' => '', 'slide' => $slide]);
+        self::assertResponseStatusCodeSame(422);
+        $res = $this->api('POST', $cfg['library']['create'], $cfg['library']['token'], ['title' => 'Пустой', 'slide' => 'не слайд']);
+        self::assertResponseStatusCodeSame(422);
+
+        $other = $this->create('smirnov', 'Моя презентация');
+        $scfg = $this->editor($other);
+        $res = $this->api('POST', $scfg['library']['create'], $scfg['library']['token'], ['title' => 'Мой', 'slide' => $slide]);
+        self::assertResponseStatusCodeSame(403);
+        self::assertStringContainsString('маркетологи', $res['error']);
+
+        // Сотрудник видит библиотеку в редакторе и на странице, вставка учитывается.
+        $list = $this->api('GET', $scfg['library']['url'], $scfg['library']['token']);
+        self::assertSame(['Отчёты'], $list['categories']);
+        self::assertFalse($list['canManage']);
+        self::assertSame('Итоги месяца', $list['templates'][0]['title']);
+        $this->api('POST', str_replace('/0/', '/'.$templateId.'/', $scfg['library']['use']), $scfg['library']['token'], []);
+        self::assertTrue($this->client->getResponse()->isSuccessful());
+        $crawler = $this->client->request('GET', '/presentations/library');
+        self::assertResponseIsSuccessful();
+        self::assertStringContainsString('Итоги месяца', $crawler->filter('#tpl-'.$templateId)->text());
+        self::assertStringContainsString('1 вставка', $crawler->filter('#tpl-'.$templateId)->text());
+        self::assertSame(0, $crawler->filter('#tpl-'.$templateId.' form')->count(), 'сотрудник библиотеку не меняет');
+
+        // Удаление презентации, из которой сохранили слайд, не удаляет его изображение.
+        $this->loginAs('markova');
+        $cfg = $this->editor($id);
+        $assets = static::getContainer()->get(\App\Repository\PresentationAssetRepository::class);
+        $token = substr($img['src'], 6);
+        $file = static::getContainer()->get(\App\Service\Presentation\AssetStore::class)->path($assets->findOneByToken($token));
+        self::assertFileExists($file);
+        $this->client->request('POST', '/presentations/'.$id.'/delete', ['_token' => $cfg['formToken']]);
+        self::assertResponseRedirects('/presentations');
+        $this->em()->clear();
+        self::assertNotNull($assets->findOneByToken($token));
+        self::assertFileExists($file);
+        $this->client->request('GET', '/presentations/assets/'.$token.'.png');
+        self::assertResponseIsSuccessful();
+
+        // Правка, порядок и удаление на странице библиотеки; с удалением уходит и ничейное изображение.
+        $crawler = $this->client->request('GET', '/presentations/library');
+        $form = $crawler->filter('#tpl-'.$templateId.' form[action$="/'.$templateId.'"]')->form(['title' => 'Итоги квартала', 'category' => 'Отчёты для руководства']);
+        $this->client->submit($form);
+        self::assertResponseRedirects('/presentations/library#tpl-'.$templateId);
+        $crawler = $this->client->followRedirect();
+        self::assertStringContainsString('Отчёты для руководства', $crawler->text());
+        $libToken = $crawler->filter('#tpl-'.$templateId.' input[name=_token]')->attr('value');
+        $this->client->request('POST', '/presentations/library/'.$templateId.'/move', ['_token' => $libToken, 'direction' => -1]);
+        self::assertResponseRedirects();
+        $this->client->request('POST', '/presentations/library/'.$templateId.'/delete', ['_token' => 'wrong']);
+        self::assertResponseStatusCodeSame(403);
+        $this->client->request('POST', '/presentations/library/'.$templateId.'/delete', ['_token' => $libToken]);
+        self::assertResponseRedirects('/presentations/library');
+        $this->em()->clear();
+        self::assertNull($assets->findOneByToken($token));
+        self::assertFileDoesNotExist($file);
+        $crawler = $this->client->request('GET', '/presentations/library');
+        self::assertStringContainsString('В библиотеке пока нет слайдов', $crawler->text());
+    }
+
     public function testPptxImporterReadsSampleStyleSlides(): void
     {
         // Колода из макетов (таблица, диаграмма, QR, фото) → PowerPoint → импорт: элементы на месте.

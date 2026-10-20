@@ -1,0 +1,5 @@
+{# Источник импорта: каталог на сервере или Confluence. #}
+<nav class="tabs tabs--links" aria-label="Источник импорта">
+    <a class="tab {{ current == 'directory' ? 'is-active' }}" href="{{ path('admin_import') }}"{{ current == 'directory' ? ' aria-current="page"' }}>Из каталога на сервере</a>
+    <a class="tab {{ current == 'confluence' ? 'is-active' }}" href="{{ path('admin_import_confluence') }}"{{ current == 'confluence' ? ' aria-current="page"' }}>Из Confluence</a>
+</nav>

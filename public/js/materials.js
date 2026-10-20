@@ -656,6 +656,88 @@
         });
     }
 
+    // ---- Привязка документа раздела вручную ----------------------------------------------------------
+    // Документы раздела и подразделов, которых нет в таблице (и отвязанные вручную), — привязать к строке,
+    // когда автоматическое сопоставление ошиблось.
+
+    var linkDialog = document.querySelector('[data-mt-link]');
+    var linkState = { row: null, documents: [], selected: null };
+
+    function renderLinkList() {
+        var list = linkDialog.querySelector('[data-mt-link-list]');
+        var q = linkDialog.querySelector('[data-mt-link-search]').value.trim().toLowerCase();
+        var shown = linkState.documents.filter(function (d) {
+            return !q || (d.title + ' ' + d.section + ' ' + (d.kind || '')).toLowerCase().indexOf(q) !== -1;
+        });
+        if (!linkState.documents.length) {
+            list.innerHTML = '<p class="mt-muted">Все документы раздела уже в таблице.</p>';
+        } else if (!shown.length) {
+            list.innerHTML = '<p class="mt-muted">Ничего не найдено.</p>';
+        } else {
+            list.innerHTML = shown.map(function (d) {
+                var meta = [d.section, d.kind, d.status === 'draft' ? 'черновик' : '', d.excluded ? 'отвязан вручную' : ''].filter(Boolean).join(' · ');
+                return '<label class="mt-link-item"><input type="radio" name="mt-link-doc" value="' + d.id + '"' + (linkState.selected === d.id ? ' checked' : '') + '>'
+                    + '<span><span class="mt-link-item__title">' + esc(d.title) + '</span><span class="mt-muted mt-link-item__meta">' + esc(meta) + '</span></span></label>';
+            }).join('');
+        }
+        linkDialog.querySelector('[data-mt-link-submit]').disabled = linkState.selected === null;
+    }
+
+    function openLink(id) {
+        if (!linkDialog) { return; }
+        var row = findRow(id);
+        linkState = { row: id, documents: [], selected: null };
+        linkDialog.querySelector('[data-mt-link-title]').textContent = (row && row.document ? 'Заменить документ: ' : 'Привязать документ: ') + ((row && row.title) || 'без названия');
+        linkDialog.querySelector('[data-mt-link-search]').value = '';
+        linkDialog.querySelector('[data-mt-link-error]').hidden = true;
+        linkDialog.querySelector('[data-mt-link-list]').innerHTML = '<p class="mt-muted">Загрузка…</p>';
+        linkDialog.querySelector('[data-mt-link-submit]').disabled = true;
+        linkDialog.returnFocusTo = id;
+        linkDialog.showModal();
+        fetch(config.base + '/documents', { credentials: 'same-origin', headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(function (response) { return response.json().catch(function () { return { ok: false, error: 'Ошибка сервера (' + response.status + ').' }; }); })
+            .then(function (res) {
+                if (!res.ok) { linkDialog.querySelector('[data-mt-link-list]').innerHTML = '<p class="form-error">' + esc(res.error || 'Не удалось загрузить документы.') + '</p>'; return; }
+                linkState.documents = res.documents;
+                renderLinkList();
+                linkDialog.querySelector('[data-mt-link-search]').focus();
+            })
+            .catch(function () { linkDialog.querySelector('[data-mt-link-list]').innerHTML = '<p class="form-error">Нет связи с порталом.</p>'; });
+    }
+
+    if (linkDialog) {
+        linkDialog.querySelector('[data-mt-link-search]').addEventListener('input', renderLinkList);
+        linkDialog.querySelector('[data-mt-link-list]').addEventListener('change', function (e) {
+            if (e.target.name === 'mt-link-doc') { linkState.selected = parseInt(e.target.value, 10); renderLinkList(); }
+        });
+        linkDialog.querySelector('[data-mt-link-list]').addEventListener('dblclick', function (e) {
+            if (e.target.closest('.mt-link-item') && linkState.selected !== null) { linkDialog.querySelector('[data-mt-link-submit]').click(); }
+        });
+        linkDialog.querySelector('[data-mt-link-cancel]').addEventListener('click', function () { linkDialog.close(); });
+        linkDialog.querySelector('[data-mt-link-submit]').addEventListener('click', function () {
+            if (linkState.selected === null) { return; }
+            var button = this;
+            button.disabled = true;
+            request('/rows/' + linkState.row + '/link', { document: linkState.selected }).then(function (res) {
+                button.disabled = false;
+                if (!res.ok) {
+                    var error = linkDialog.querySelector('[data-mt-link-error]');
+                    error.textContent = res.error || 'Не удалось привязать документ.';
+                    error.hidden = false;
+                    return;
+                }
+                linkDialog.close();
+                rows = res.rows;
+                render();
+                renderSummary(res.summary);
+                toast(res.message);
+            });
+        });
+        linkDialog.addEventListener('close', function () {
+            if (linkDialog.returnFocusTo) { focusMenuButton(linkDialog.returnFocusTo); linkDialog.returnFocusTo = null; }
+        });
+    }
+
     // ---- Меню строки -------------------------------------------------------------------------------
 
     function closeMenu() {
@@ -679,7 +761,10 @@
         var structure = config.canStructure !== false;
         if (row.document) {
             if (!row.document.hidden) { items.push(['open', 'Открыть документ']); }
+            if (structure) { items.push(['link', 'Заменить документом раздела…']); }
             if (structure) { items.push(['detach', 'Отвязать файл от строки']); }
+        } else if (linkDialog) {
+            items.push(['link', 'Привязать документ раздела…']);
         }
         items.push(['history', 'История изменений']);
         if (structure) { items.push(['delete', 'Удалить строку']); }
@@ -703,6 +788,7 @@
             if (action === 'upload') { uploadRow = id; fileInput.click(); }
             if (action === 'open' && row.document && row.document.url) { location.href = row.document.url; }
             if (action === 'detach') { detach(id); }
+            if (action === 'link') { openLink(id); }
             if (action === 'history') { openHistory(id); }
             if (action === 'delete') { deleteRow(id); }
         });

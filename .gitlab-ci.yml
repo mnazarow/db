@@ -116,6 +116,9 @@ shellcheck:
   script:
     - shellcheck -x -S warning -e SC2034 deploy/*.sh docker/entrypoint.sh scripts/*.sh
     - shellcheck -S warning video/deploy/docker/entrypoint.sh
+    # Присваивания «VAR=…$( [[ … ]] && … )…», которые под set -e прерывают скрипт.
+    - apk add --no-cache python3 >/dev/null
+    - python3 scripts/check-errexit.py deploy/*.sh docker/entrypoint.sh scripts/*.sh video/deploy/docker/entrypoint.sh
 
 release:
   stage: release

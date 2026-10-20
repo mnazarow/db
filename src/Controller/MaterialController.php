@@ -9,6 +9,7 @@ use App\Entity\MaterialRow;
 use App\Entity\MaterialRowChange;
 use App\Entity\Section;
 use App\Entity\User;
+use App\Repository\DocumentRepository;
 use App\Repository\MaterialRowChangeRepository;
 use App\Security\Access;
 use App\Service\Csv;
@@ -16,6 +17,7 @@ use App\Service\DocumentKindService;
 use App\Service\FileStorage;
 use App\Service\Material\MaterialExporter;
 use App\Service\Material\MaterialHistory;
+use App\Service\Material\MaterialLinker;
 use App\Service\Material\MaterialService;
 use App\Service\Material\MaterialState;
 use App\Service\Material\MaterialSummary;
@@ -235,6 +237,44 @@ final class MaterialController extends AbstractController
         $this->materials->detach($material, $user);
 
         return $this->json(['ok' => true, 'row' => $this->materials->serializeRow($material, $user), 'summary' => $this->summary->forSection($section)]);
+    }
+
+    /** Документы раздела, которых нет в таблице: для диалога «Привязать документ раздела…». */
+    #[Route('/documents', name: 'app_section_materials_documents', methods: ['GET'])]
+    public function documents(Section $section, #[CurrentUser] User $user, MaterialLinker $linker): JsonResponse
+    {
+        $this->checkAccess($section, $user);
+
+        return $this->json(['ok' => true, 'documents' => array_map(fn (array $d): array => $d + [
+            'url' => $this->generateUrl('app_document_show', ['id' => $d['id']]),
+        ], $linker->candidates($section))]);
+    }
+
+    /** Привязать к строке документ раздела вручную; замена документа строки — для тех, кто меняет устройство таблицы. */
+    #[Route('/rows/{row}/link', name: 'app_section_materials_row_link', requirements: ['row' => '\d+'], methods: ['POST'])]
+    public function linkDocument(Section $section, int $row, Request $request, #[CurrentUser] User $user, MaterialLinker $linker, DocumentRepository $documents): JsonResponse
+    {
+        $this->checkApi($request, $section, $user);
+        $material = $this->row($section, $row);
+        if (null !== $material->getDocument() && !$this->access->canManageSection($user, $section)) {
+            return $this->json(['ok' => false, 'error' => 'Заменить документ строки может маркетолог или модератор раздела.'], 403);
+        }
+        $document = $documents->find((int) $request->request->get('document'));
+        if (null === $document) {
+            return $this->json(['ok' => false, 'error' => 'Документ не найден.'], 404);
+        }
+        try {
+            $linker->linkManually($material, $document, $user);
+        } catch (\DomainException $e) {
+            return $this->json(['ok' => false, 'error' => $e->getMessage()], 422);
+        }
+
+        return $this->json([
+            'ok' => true,
+            'message' => \sprintf('Документ «%s» привязан к строке.', $document->getTitle()),
+            'rows' => array_map(fn (MaterialRow $r): array => $this->materials->serializeRow($r, $user), $this->materials->rows($section)),
+            'summary' => $this->summary->forSection($section),
+        ]);
     }
 
     // ---- Журнал изменений -----------------------------------------------------------------------------

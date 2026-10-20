@@ -121,6 +121,21 @@ final class PortalSettings
     public const SAML_SP_BASE_URL = 'saml.sp_base_url';
     public const SAML_ALLOW_IDP_INITIATED = 'saml.allow_idp_initiated';
     public const SAML_DOMAINS = 'saml.domains';
+    /** Единый выход (SLO): адрес выхода провайдера и включён ли выход у провайдера при выходе из портала. */
+    public const SAML_IDP_SLO_URL = 'saml.idp_slo_url';
+    public const SAML_SLO = 'saml.slo';
+    /** Ключ и сертификат портала: расшифровка утверждений, подпись запросов выхода. */
+    public const SAML_SP_CERT = 'saml.sp_cert';
+    public const SAML_SP_KEY = 'saml.sp_key';
+    /** Принимать только зашифрованные утверждения. */
+    public const SAML_WANT_ENCRYPTED = 'saml.want_encrypted';
+
+    /** Импорт из Confluence: адрес, способ входа (cloud — почта и API-токен, token — личный токен, basic — логин и пароль). */
+    public const CONFLUENCE_URL = 'confluence.url';
+    public const CONFLUENCE_AUTH = 'confluence.auth';
+    public const CONFLUENCE_USER = 'confluence.user';
+    public const CONFLUENCE_TOKEN = 'confluence.token';
+    public const CONFLUENCE_AUTH_TYPES = ['cloud', 'token', 'basic'];
     public const SSO_DOMAINS = 'sso.domains';
     public const SAML_DEFAULT_BUTTON = 'Войти через SAML';
 
@@ -203,7 +218,7 @@ final class PortalSettings
     public const OCR_DEFAULT_DPI = 200;
 
     /** Настройки, значения которых не должны попадать в журнал. */
-    private const SECRET_NAMES = [self::WEBHOOK_SECRET, self::LLM_API_KEY, self::EMBED_API_KEY, self::SSO_CLIENT_SECRET, self::TELEGRAM_TOKEN, self::MONITORING_TOKEN, self::ONLYOFFICE_SECRET, self::PUSH_PRIVATE_KEY];
+    private const SECRET_NAMES = [self::WEBHOOK_SECRET, self::LLM_API_KEY, self::EMBED_API_KEY, self::SSO_CLIENT_SECRET, self::TELEGRAM_TOKEN, self::MONITORING_TOKEN, self::ONLYOFFICE_SECRET, self::PUSH_PRIVATE_KEY, self::SAML_SP_KEY, self::CONFLUENCE_TOKEN];
 
     /** Служебные значения, которые портал меняет сам (в журнал аудита не пишутся). */
     private const INTERNAL_NAMES = [self::TELEGRAM_OFFSET, self::MATERIALS_REMIND_LAST_RUN, self::TEAM_DIGEST_LAST_RUN, self::ONLYOFFICE_LINK_KEY, self::STATS_AGGREGATED_ON,
@@ -528,8 +543,10 @@ final class PortalSettings
      *
      * sp_base_url — адрес портала для провайдера (пусто — APP_DEFAULT_URI); allow_idp_initiated — принимать ответы,
      * не запрошенные порталом (вход из портала провайдера); domains — допустимые домены логинов (через запятую).
+     * idp_slo_url и slo — единый выход; sp_cert и sp_key — ключ портала (расшифровка утверждений, подпись запросов
+     * выхода); want_encrypted — принимать только зашифрованные утверждения.
      *
-     * @return array{enabled: bool, idp_entity_id: string, idp_sso_url: string, idp_cert: string, button: string, create_users: bool, username_attr: string, name_attr: string, email_attr: string, department_attr: string, roles_attr: string, admin_value: string, marketer_value: string, assistant_value: string, sp_base_url: string, allow_idp_initiated: bool, domains: string}
+     * @return array{enabled: bool, idp_entity_id: string, idp_sso_url: string, idp_cert: string, button: string, create_users: bool, username_attr: string, name_attr: string, email_attr: string, department_attr: string, roles_attr: string, admin_value: string, marketer_value: string, assistant_value: string, sp_base_url: string, allow_idp_initiated: bool, domains: string, idp_slo_url: string, slo: bool, sp_cert: string, sp_key: string, want_encrypted: bool}
      */
     public function saml(): array
     {
@@ -553,6 +570,11 @@ final class PortalSettings
             'sp_base_url' => rtrim(trim((string) $this->get(self::SAML_SP_BASE_URL, '')), '/'),
             'allow_idp_initiated' => (bool) $this->get(self::SAML_ALLOW_IDP_INITIATED, false),
             'domains' => self::domainList((string) $this->get(self::SAML_DOMAINS, '')),
+            'idp_slo_url' => trim((string) $this->get(self::SAML_IDP_SLO_URL, '')),
+            'slo' => (bool) $this->get(self::SAML_SLO, false),
+            'sp_cert' => trim((string) $this->get(self::SAML_SP_CERT, '')),
+            'sp_key' => trim((string) $this->get(self::SAML_SP_KEY, '')),
+            'want_encrypted' => (bool) $this->get(self::SAML_WANT_ENCRYPTED, false),
         ];
     }
 
@@ -598,7 +620,46 @@ final class PortalSettings
             self::SAML_SP_BASE_URL => rtrim(trim((string) ($values['sp_base_url'] ?? '')), '/'),
             self::SAML_ALLOW_IDP_INITIATED => (bool) ($values['allow_idp_initiated'] ?? false),
             self::SAML_DOMAINS => self::domainList((string) ($values['domains'] ?? '')),
-        ], $by);
+            self::SAML_IDP_SLO_URL => trim((string) ($values['idp_slo_url'] ?? '')),
+            self::SAML_SLO => (bool) ($values['slo'] ?? false),
+            self::SAML_WANT_ENCRYPTED => (bool) ($values['want_encrypted'] ?? false),
+        ] + (\array_key_exists('sp_key', $values) ? [
+            // Ключ портала меняется только явно (создать, удалить), а не при каждом сохранении формы.
+            self::SAML_SP_CERT => trim(str_replace("\r\n", "\n", (string) ($values['sp_cert'] ?? ''))),
+            self::SAML_SP_KEY => trim(str_replace("\r\n", "\n", (string) $values['sp_key'])),
+        ] : []), $by);
+    }
+
+    /**
+     * Подключение к Confluence для импорта. url — адрес Confluence (Cloud: https://компания.atlassian.net/wiki).
+     *
+     * @return array{url: string, auth: string, user: string, token: string}
+     */
+    public function confluence(): array
+    {
+        $auth = (string) $this->get(self::CONFLUENCE_AUTH, 'cloud');
+
+        return [
+            'url' => rtrim(trim((string) $this->get(self::CONFLUENCE_URL, '')), '/'),
+            'auth' => \in_array($auth, self::CONFLUENCE_AUTH_TYPES, true) ? $auth : 'cloud',
+            'user' => trim((string) $this->get(self::CONFLUENCE_USER, '')),
+            'token' => (string) $this->get(self::CONFLUENCE_TOKEN, ''),
+        ];
+    }
+
+    /** @param array{url?: string, auth?: string, user?: string, token?: ?string} $values token null — оставить прежний */
+    public function setConfluence(array $values, ?User $by = null): void
+    {
+        $auth = (string) ($values['auth'] ?? 'cloud');
+        $update = [
+            self::CONFLUENCE_URL => rtrim(trim((string) ($values['url'] ?? '')), '/'),
+            self::CONFLUENCE_AUTH => \in_array($auth, self::CONFLUENCE_AUTH_TYPES, true) ? $auth : 'cloud',
+            self::CONFLUENCE_USER => trim((string) ($values['user'] ?? '')),
+        ];
+        if (null !== ($values['token'] ?? null)) {
+            $update[self::CONFLUENCE_TOKEN] = trim((string) $values['token']);
+        }
+        $this->setMany($update, $by);
     }
 
     /** Обязателен ли второй фактор для администраторов. */

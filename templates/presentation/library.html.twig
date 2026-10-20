@@ -1,0 +1,81 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}Библиотека слайдов{% endblock %}
+{% block body_class %}page-decks{% endblock %}
+{% block stylesheets %}<link rel="stylesheet" href="{{ asset('css/deck.css') }}">{% endblock %}
+
+{% block body %}
+<section class="hero hero--compact">
+    <div class="container">
+        {% include 'presentation/_tabs.html.twig' with {current: 'library'} %}
+        <div class="hero__row">
+            <div>
+                <h1 class="h-display">Библиотека слайдов</h1>
+                <p class="hero__meta">Фирменные слайды, которые маркетологи подготовили как образцы: вставьте копию в свою презентацию — в редакторе «+ Слайд» → «Библиотека» — и замените текст и картинки.{% if can_manage %} Сохранить слайд в библиотеку: в редакторе меню слайда «⋯» → «Сохранить в библиотеку…».{% endif %}</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="container section">
+    {% include '_flashes.html.twig' %}
+
+    {% for category, items in groups %}
+        <div class="deck-block">
+            <div class="deck-block__head"><h2 class="h-section">{{ category }} <span class="tag">{{ items|length }}</span></h2></div>
+            <div class="deck-grid">
+                {% for t in items %}
+                    <article class="deck-card deck-card--template" id="tpl-{{ t.id }}">
+                        <div class="deck-card__thumb"><div class="deck-card__slide" data-deck-slide="{{ t.slide|json_encode }}"></div>
+                            {% if t.useCount > 0 %}<span class="deck-card__count" title="Сколько раз вставляли в презентации">{{ t.useCount|plural(['вставка', 'вставки', 'вставок']) }}</span>{% endif %}
+                        </div>
+                        <div class="deck-card__body">
+                            <h3 class="deck-card__title">{{ t.title }}</h3>
+                            {% if t.description %}<p class="deck-card__desc">{{ t.description }}</p>{% endif %}
+                            <div class="deck-card__meta"><span>{{ t.createdBy ? t.createdBy.displayName : 'без автора' }}</span><span>{{ t.updatedAt|date('d.m.Y') }}</span></div>
+                            {% if can_manage %}
+                                <details class="deck-card__manage">
+                                    <summary>Изменить</summary>
+                                    <form method="post" action="{{ path('app_slide_library_update', {id: t.id}) }}" class="form">
+                                        <input type="hidden" name="_token" value="{{ csrf_token('slide_library') }}">
+                                        <label class="form-label" for="tpl-title-{{ t.id }}">Название</label>
+                                        <input class="form-control" id="tpl-title-{{ t.id }}" name="title" value="{{ t.title }}" maxlength="200" required>
+                                        <label class="form-label" for="tpl-cat-{{ t.id }}">Категория</label>
+                                        <input class="form-control" id="tpl-cat-{{ t.id }}" name="category" value="{{ t.category }}" maxlength="100" list="tpl-categories">
+                                        <label class="form-label" for="tpl-desc-{{ t.id }}">Описание</label>
+                                        <textarea class="form-control" id="tpl-desc-{{ t.id }}" name="description" rows="2" maxlength="1000">{{ t.description }}</textarea>
+                                        <div class="form-actions"><button type="submit" class="btn btn--pill btn--small">Сохранить</button></div>
+                                    </form>
+                                    <div class="form-actions">
+                                        <form method="post" action="{{ path('app_slide_library_move', {id: t.id}) }}" class="inline-form">
+                                            <input type="hidden" name="_token" value="{{ csrf_token('slide_library') }}">
+                                            <button type="submit" name="direction" value="-1" class="btn btn--ghost btn--small" {{ loop.first ? 'disabled' }} aria-label="Раньше в категории">←</button>
+                                            <button type="submit" name="direction" value="1" class="btn btn--ghost btn--small" {{ loop.last ? 'disabled' }} aria-label="Позже в категории">→</button>
+                                        </form>
+                                        <form method="post" action="{{ path('app_slide_library_delete', {id: t.id}) }}" class="inline-form" data-confirm="Удалить слайд «{{ t.title }}» из библиотеки? В презентациях, куда его вставили, он останется.">
+                                            <input type="hidden" name="_token" value="{{ csrf_token('slide_library') }}">
+                                            <button type="submit" class="btn btn--ghost btn--small btn--danger">Удалить</button>
+                                        </form>
+                                    </div>
+                                </details>
+                            {% endif %}
+                        </div>
+                    </article>
+                {% endfor %}
+            </div>
+        </div>
+    {% else %}
+        <div class="card empty-state empty-state--compact">
+            <p>В библиотеке пока нет слайдов.{% if can_manage %} Откройте презентацию в редакторе и в меню слайда «⋯» выберите «Сохранить в библиотеку…» — слайд появится здесь и в галерее «Новый слайд» у всех сотрудников.{% else %} Их добавляют маркетологи; пока пользуйтесь макетами галереи «Новый слайд».{% endif %}</p>
+        </div>
+    {% endfor %}
+    <datalist id="tpl-categories">{% for c in categories %}<option value="{{ c }}">{% endfor %}</datalist>
+</section>
+
+<script type="application/json" id="deck-config">{{ deck_render_config()|json_encode(constant('JSON_HEX_TAG') b-or constant('JSON_HEX_AMP') b-or constant('JSON_UNESCAPED_UNICODE') b-or constant('JSON_UNESCAPED_SLASHES'))|raw }}</script>
+{% endblock %}
+
+{% block javascripts %}
+    <script src="{{ asset('js/deck-render.js') }}" defer></script>
+    <script src="{{ asset('js/deck-pages.js') }}" defer></script>
+{% endblock %}

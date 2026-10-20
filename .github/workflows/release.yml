@@ -17,7 +17,7 @@ jobs:
     name: Архив дистрибутива и релиз
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Тег совпадает с VERSION
         if: startsWith(github.ref, 'refs/tags/')
         run: |
@@ -29,7 +29,7 @@ jobs:
           extensions: intl, pdo_mysql, zip, gd, ldap, mbstring, xml, curl, fileinfo
           tools: composer:v2
           coverage: none
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
       - name: Зависимости
@@ -49,7 +49,7 @@ jobs:
           version=$(tr -d ' \n\r' < VERSION)
           awk -v v="## ${version} " 'index($0, v) == 1 {on = 1; next} on && /^## / {exit} on {print}' CHANGELOG.md > dist/notes.md
           [ -s dist/notes.md ] || echo "Версия ${version}." > dist/notes.md
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: docportal-release
           path: |
