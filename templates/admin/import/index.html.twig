@@ -4,6 +4,7 @@
 {% block admin_title %}Импорт из каталога{% endblock %}
 
 {% block admin_body %}
+{% include 'admin/import/_tabs.html.twig' with {current: 'directory'} %}
 {% if not dir_exists %}
     <div class="alert alert--danger">Каталог импорта <code>{{ import_dir }}</code> не существует, и создать его не удалось. Создайте каталог на сервере с правами на запись для пользователя веб-сервера или укажите другой путь в параметре <code>IMPORT_DIR</code>.</div>
 {% elseif not dir_writable %}

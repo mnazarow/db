@@ -1,0 +1,97 @@
+{% extends 'admin/_layout.html.twig' %}
+
+{% block title %}Импорт из Confluence{% endblock %}
+{% block admin_title %}Импорт из Confluence{% endblock %}
+
+{% block admin_body %}
+{% include 'admin/import/_tabs.html.twig' with {current: 'confluence'} %}
+
+<div class="grid grid--two">
+    <div class="stack">
+        <div class="card card--form" id="connection">
+            <div class="card__head"><h2 class="h-section">Подключение</h2>
+                {% if configured %}<span class="badge badge--done"><span class="badge__dot"></span>задано</span>{% else %}<span class="badge"><span class="badge__dot"></span>не задано</span>{% endif %}</div>
+            <form method="post" action="{{ path('admin_import_confluence_settings') }}" class="form">
+                <input type="hidden" name="_token" value="{{ csrf_token('import') }}">
+                <div class="form-row">
+                    <label class="form-label" for="cf-url">Адрес Confluence</label>
+                    <input class="form-control" id="cf-url" name="url" type="url" value="{{ config.url }}" placeholder="https://компания.atlassian.net/wiki">
+                    <div class="form-help">Confluence Cloud — https://компания.atlassian.net/wiki; Server и Data Center — адрес сайта Confluence (с путём, если он есть, например https://wiki.example.ru/confluence).</div>
+                </div>
+                <div class="form-row">
+                    <span class="form-label">Вход</span>
+                    <div class="choice-list">
+                        <label class="form-check form-check--radio"><input type="radio" name="auth" value="cloud" {{ config.auth == 'cloud' ? 'checked' }}><span>Cloud: почта и API-токен (id.atlassian.com → Безопасность → API-токены)</span></label>
+                        <label class="form-check form-check--radio"><input type="radio" name="auth" value="token" {{ config.auth == 'token' ? 'checked' }}><span>Server, Data Center: личный токен доступа (профиль → Personal Access Tokens)</span></label>
+                        <label class="form-check form-check--radio"><input type="radio" name="auth" value="basic" {{ config.auth == 'basic' ? 'checked' }}><span>Server, Data Center: логин и пароль</span></label>
+                    </div>
+                </div>
+                <div class="form-grid">
+                    <div class="form-row">
+                        <label class="form-label" for="cf-user">Почта или логин</label>
+                        <input class="form-control" id="cf-user" name="user" value="{{ config.user }}" autocomplete="off">
+                        <div class="form-help">Для личного токена не нужен.</div>
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label" for="cf-token">Токен или пароль</label>
+                        <input class="form-control" id="cf-token" name="token" type="password" autocomplete="new-password" placeholder="{{ config.token_set ? 'сохранён: ' ~ config.token_masked ~ ' — пусто, чтобы оставить' : '' }}">
+                    </div>
+                </div>
+                <div class="form-actions"><button type="submit" class="btn btn--pill btn--small">Сохранить и проверить</button></div>
+            </form>
+            <p class="form-help">Учётной записи достаточно прав на чтение нужных пространств. Токен хранится в настройках портала и в журнал не попадает.</p>
+        </div>
+    </div>
+
+    <div class="stack">
+        <div class="card card--form" id="start">
+            <h2 class="h-section">Импорт пространства</h2>
+            {% if not configured %}
+                <p class="text-muted">Сначала задайте подключение к Confluence.</p>
+            {% else %}
+                {% if spaces_error %}<div class="alert alert--warning">Список пространств не получен: {{ spaces_error }} Ключ пространства можно ввести вручную.</div>{% endif %}
+                <form method="post" action="{{ path('admin_import_confluence_start') }}" class="form">
+                    <input type="hidden" name="_token" value="{{ csrf_token('import') }}">
+                    <div class="form-row">
+                        <label class="form-label" for="cf-space">Пространство</label>
+                        <input class="form-control" id="cf-space" name="space" list="cf-spaces" required maxlength="255" placeholder="ключ, например DOCS">
+                        <datalist id="cf-spaces">{% for s in spaces %}<option value="{{ s.key }}">{{ s.name }}{% if imported[s.key] is defined %} — импортировано страниц: {{ imported[s.key] }}{% endif %}</option>{% endfor %}</datalist>
+                        {% if spaces|length > 0 %}<div class="form-help">Доступно пространств: {{ spaces|length }} — начните вводить ключ или название.</div>{% endif %}
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label" for="cf-root">Только ветка страницы (номер)</label>
+                        <input class="form-control" id="cf-root" name="root" inputmode="numeric" pattern="[0-9]*" placeholder="пусто — всё пространство">
+                        <div class="form-help">Номер страницы — в её адресе: …/pages/<b>123456</b>/… Импортируются она и её дочерние страницы.</div>
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label" for="cf-section">Куда</label>
+                        <select class="form-control" id="cf-section" name="section">
+                            <option value="0">Новый раздел с названием пространства (или существующий с таким названием)</option>
+                            {% for s in tree %}
+                                <option value="{{ s.id }}">{% if s.depth > 0 %}{% for i in 1..s.depth %}— {% endfor %}{% endif %}{{ s.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-row">
+                        <span class="form-label">Статус документов</span>
+                        <div class="choice-list choice-list--inline">
+                            <label class="form-check form-check--radio"><input type="radio" name="status" value="published" checked><span>Опубликовать сразу</span></label>
+                            <label class="form-check form-check--radio"><input type="radio" name="status" value="draft"><span>Черновики</span></label>
+                        </div>
+                    </div>
+                    <div class="form-row form-row--check">
+                        <label class="form-check"><input type="checkbox" name="attachments" value="1" checked><span>Импортировать вложения (PDF, Word, Excel и др.) отдельными документами рядом со страницей</span></label>
+                        <label class="form-check"><input type="checkbox" name="flat" value="1"><span>Без подразделов: все страницы — документами одного раздела</span></label>
+                    </div>
+                    <div class="form-actions"><button type="submit" class="btn btn--pill">Начать импорт</button></div>
+                </form>
+            {% endif %}
+        </div>
+        <div class="card card--info">
+            <h2 class="h-section">Как это работает</h2>
+            <p>Каждая страница Confluence становится документом-страницей с тем же названием, страница с дочерними — ещё и подразделом (в нём её документ и дочерние страницы). Текст переносится с заголовками, списками, таблицами и блоками кода; панели «Информация», «Примечание», «Внимание» становятся выделенными цитатами, изображения из вложений встраиваются в страницу, ссылки между страницами ведут на импортированные документы.</p>
+            <p>Повторный импорт того же пространства обновляет только изменившиеся страницы и вложения (новая версия документа); документы, удалённые или перенесённые в портале, не возвращаются. Для больших пространств удобнее консольная команда <code>docportal console app:import:confluence КЛЮЧ</code>.</p>
+        </div>
+    </div>
+</div>
+{% endblock %}

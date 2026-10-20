@@ -129,6 +129,13 @@ final class PortalSettings
     public const SAML_SP_KEY = 'saml.sp_key';
     /** Принимать только зашифрованные утверждения. */
     public const SAML_WANT_ENCRYPTED = 'saml.want_encrypted';
+
+    /** Импорт из Confluence: адрес, способ входа (cloud — почта и API-токен, token — личный токен, basic — логин и пароль). */
+    public const CONFLUENCE_URL = 'confluence.url';
+    public const CONFLUENCE_AUTH = 'confluence.auth';
+    public const CONFLUENCE_USER = 'confluence.user';
+    public const CONFLUENCE_TOKEN = 'confluence.token';
+    public const CONFLUENCE_AUTH_TYPES = ['cloud', 'token', 'basic'];
     public const SSO_DOMAINS = 'sso.domains';
     public const SAML_DEFAULT_BUTTON = 'Войти через SAML';
 
@@ -211,7 +218,7 @@ final class PortalSettings
     public const OCR_DEFAULT_DPI = 200;
 
     /** Настройки, значения которых не должны попадать в журнал. */
-    private const SECRET_NAMES = [self::WEBHOOK_SECRET, self::LLM_API_KEY, self::EMBED_API_KEY, self::SSO_CLIENT_SECRET, self::TELEGRAM_TOKEN, self::MONITORING_TOKEN, self::ONLYOFFICE_SECRET, self::PUSH_PRIVATE_KEY, self::SAML_SP_KEY];
+    private const SECRET_NAMES = [self::WEBHOOK_SECRET, self::LLM_API_KEY, self::EMBED_API_KEY, self::SSO_CLIENT_SECRET, self::TELEGRAM_TOKEN, self::MONITORING_TOKEN, self::ONLYOFFICE_SECRET, self::PUSH_PRIVATE_KEY, self::SAML_SP_KEY, self::CONFLUENCE_TOKEN];
 
     /** Служебные значения, которые портал меняет сам (в журнал аудита не пишутся). */
     private const INTERNAL_NAMES = [self::TELEGRAM_OFFSET, self::MATERIALS_REMIND_LAST_RUN, self::TEAM_DIGEST_LAST_RUN, self::ONLYOFFICE_LINK_KEY, self::STATS_AGGREGATED_ON,
@@ -621,6 +628,38 @@ final class PortalSettings
             self::SAML_SP_CERT => trim(str_replace("\r\n", "\n", (string) ($values['sp_cert'] ?? ''))),
             self::SAML_SP_KEY => trim(str_replace("\r\n", "\n", (string) $values['sp_key'])),
         ] : []), $by);
+    }
+
+    /**
+     * Подключение к Confluence для импорта. url — адрес Confluence (Cloud: https://компания.atlassian.net/wiki).
+     *
+     * @return array{url: string, auth: string, user: string, token: string}
+     */
+    public function confluence(): array
+    {
+        $auth = (string) $this->get(self::CONFLUENCE_AUTH, 'cloud');
+
+        return [
+            'url' => rtrim(trim((string) $this->get(self::CONFLUENCE_URL, '')), '/'),
+            'auth' => \in_array($auth, self::CONFLUENCE_AUTH_TYPES, true) ? $auth : 'cloud',
+            'user' => trim((string) $this->get(self::CONFLUENCE_USER, '')),
+            'token' => (string) $this->get(self::CONFLUENCE_TOKEN, ''),
+        ];
+    }
+
+    /** @param array{url?: string, auth?: string, user?: string, token?: ?string} $values token null — оставить прежний */
+    public function setConfluence(array $values, ?User $by = null): void
+    {
+        $auth = (string) ($values['auth'] ?? 'cloud');
+        $update = [
+            self::CONFLUENCE_URL => rtrim(trim((string) ($values['url'] ?? '')), '/'),
+            self::CONFLUENCE_AUTH => \in_array($auth, self::CONFLUENCE_AUTH_TYPES, true) ? $auth : 'cloud',
+            self::CONFLUENCE_USER => trim((string) ($values['user'] ?? '')),
+        ];
+        if (null !== ($values['token'] ?? null)) {
+            $update[self::CONFLUENCE_TOKEN] = trim((string) $values['token']);
+        }
+        $this->setMany($update, $by);
     }
 
     /** Обязателен ли второй фактор для администраторов. */
