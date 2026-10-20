@@ -695,6 +695,17 @@ fi
 printf '\n%sОбновление завершено: версия %s.%s Журнал: %s\n' "${C_GREEN}${C_BOLD}" "${NEW_VERSION}" "${C_RESET}" "${LOG_FILE}"
 [[ -n "${BACKUP_FILE}" ]] && printf 'Резервная копия перед обновлением: %s\n' "${BACKUP_FILE}"
 [[ "${VIDEO_ENABLED:-}" == "1" ]] && printf 'Раздел «Видео»: включён (%s video status — проверка).\n' "${APP_ID}"
+# Помощник (1.8.0): пока языковая модель не подключена, кнопки «Помощник» у сотрудников нет — подсказка, как подключить.
+AI_READY="0"
+if [[ "${INSTALL_MODE}" == "docker" ]]; then
+    (cd "${APP_DIR}/docker" && docker compose exec -T -u www-data app php bin/console app:ai:configure --ready --no-interaction) >/dev/null 2>&1 && AI_READY="1"
+else
+    runuser -u "${SERVICE_USER}" -- "$(php_bin_for "${PHP_VERSION:-}" || echo php)" "${APP_DIR}/current/bin/console" app:ai:configure --ready --env=prod --no-interaction >/dev/null 2>&1 && AI_READY="1"
+fi
+if [[ "${AI_READY}" != "1" ]]; then
+    printf 'Помощник (чат по документам и прайс-листам): языковая модель не подключена, сотрудники кнопку «Помощник» не видят.\n'
+    printf '  Подключить: sudo %s ai enable — модель на этом сервере; sudo %s ai connect --url … --model … — на другом (РУКОВОДСТВО, 7.7).\n' "${APP_ID}" "${APP_ID}"
+fi
 # PHP ниже рекомендуемого: портал работает, но будущей Symfony 8 нужен PHP 8.4+ — переход отдельной командой.
 if [[ "${INSTALL_MODE}" == "native" && -n "${PHP_VERSION:-}" ]] && ! version_ge "${PHP_VERSION}" "${PHP_RECOMMENDED_VERSION}"; then
     printf 'PHP %s: рекомендуется перейти на PHP %s (понадобится для перехода портала на Symfony 8) — sudo %s php-upgrade.\n' "${PHP_VERSION}" "${PHP_RECOMMENDED_VERSION}" "${APP_ID}"

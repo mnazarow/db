@@ -139,11 +139,30 @@ final class AssistantTest extends PortalTestCase
         $this->settings()->setLlm(['enabled' => false, 'base_url' => 'http://llm.test/v1', 'model' => 'test-model', 'answers' => true]);
         $this->loginAs('smirnov');
         $crawler = $this->client->request('GET', '/');
-        if (!static::getContainer()->get(ChatAssistant::class)->isAvailable()) {
-            self::assertSame(0, $crawler->filter('[data-assistant]')->count());
-            $this->client->request('GET', '/assistant');
-            self::assertResponseStatusCodeSame(404);
-        }
+        self::assertFalse(static::getContainer()->get(ChatAssistant::class)->isAvailable());
+        self::assertSame(0, $crawler->filter('[data-assistant]')->count(), 'сотруднику — без кнопки, пока помощнику нечем отвечать');
+        $this->client->request('GET', '/assistant');
+        self::assertResponseStatusCodeSame(404);
+
+        // Администратор видит кнопку с подсказкой, как подключить модель.
+        $this->loginAs('admin');
+        $crawler = $this->client->request('GET', '/');
+        self::assertSame(1, $crawler->filter('[data-assistant] .assistant__setup')->count());
+        self::assertSame(0, $crawler->filter('[data-assistant-form]')->count());
+        self::assertStringContainsString('docportal ai enable', $crawler->filter('.assistant__setup')->text());
+        $crawler = $this->client->request('GET', '/assistant');
+        self::assertResponseIsSuccessful();
+        self::assertSame(1, $crawler->filter('.assistant__setup')->count());
+        $tester = new CommandTester((new Application(self::$kernel))->find('app:ai:configure'));
+        self::assertSame(1, $tester->execute(['--ready' => true]), 'модель не подключена');
+        $check = new CommandTester((new Application(self::$kernel))->find('app:check'));
+        $check->execute([]);
+        self::assertStringContainsString('модель не подключена', $check->getDisplay());
+        $this->settings()->setLlm(['enabled' => true, 'base_url' => 'http://llm.test/v1', 'model' => 'test-model', 'answers' => true]);
+        self::assertSame(0, $tester->execute(['--ready' => true]));
+        $crawler = $this->client->request('GET', '/');
+        self::assertSame(0, $crawler->filter('.assistant__setup')->count());
+        self::assertSame(1, $crawler->filter('[data-assistant-form]')->count());
     }
 
     public function testTelegramAssistantForLinkedEmployees(): void

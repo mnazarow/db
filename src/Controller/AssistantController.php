@@ -38,7 +38,12 @@ final class AssistantController extends AbstractController
     public function page(Request $request, #[CurrentUser] User $user): Response
     {
         if (!$this->assistant->isAvailable()) {
-            throw $this->createNotFoundException('Помощник выключен администратором.');
+            if (!$user->isAdmin()) {
+                throw $this->createNotFoundException('Помощник выключен администратором.');
+            }
+
+            // Администратору — как подключить модель.
+            return $this->render('assistant/page.html.twig', ['conversations' => [], 'current' => null, 'has_model' => false, 'setup' => true]);
         }
         $current = $request->query->getInt('c') > 0 ? $this->assistant->find($user, $request->query->getInt('c')) : null;
 

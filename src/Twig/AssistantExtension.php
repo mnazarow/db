@@ -30,6 +30,7 @@ final class AssistantExtension extends AbstractExtension
     {
         return [
             new TwigFunction('assistant_available', [$this, 'available']),
+            new TwigFunction('assistant_setup_needed', [$this, 'setupNeeded']),
             new TwigFunction('assistant_config', [$this, 'config']),
         ];
     }
@@ -38,6 +39,21 @@ final class AssistantExtension extends AbstractExtension
     {
         try {
             return $this->security->getUser() instanceof User && $this->assistant->isAvailable();
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    /**
+     * Модель помощнику не подключена — администратор видит кнопку «Помощник» с подсказкой, как её подключить
+     * (сотрудники кнопку не видят, пока помощнику нечем отвечать).
+     */
+    public function setupNeeded(): bool
+    {
+        try {
+            $user = $this->security->getUser();
+
+            return $user instanceof User && $user->isAdmin() && $user->isActive() && !$this->assistant->isAvailable();
         } catch (\Throwable) {
             return false;
         }

@@ -15,14 +15,29 @@
                 <span>ответы по документам, видео и прайс-листам портала</span>
             </div>
             <div class="assistant__tools">
-                {% if mode == 'panel' %}<button type="button" class="assistant__tool" data-assistant-list-toggle title="Мои разговоры" aria-label="Мои разговоры"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg></button>{% endif %}
-                <button type="button" class="assistant__tool" data-assistant-new title="Новый разговор" aria-label="Новый разговор"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+                {% if mode == 'panel' and not setup|default(false) %}<button type="button" class="assistant__tool" data-assistant-list-toggle title="Мои разговоры" aria-label="Мои разговоры"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg></button>{% endif %}
+                {% if not setup|default(false) %}<button type="button" class="assistant__tool" data-assistant-new title="Новый разговор" aria-label="Новый разговор"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>{% endif %}
                 {% if mode == 'panel' %}
                     <a class="assistant__tool" href="{{ path('app_assistant') }}" data-assistant-expand title="Открыть на всю страницу" aria-label="Открыть на всю страницу"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/></svg></a>
                     <button type="button" class="assistant__tool" data-assistant-close title="Закрыть" aria-label="Закрыть"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
                 {% endif %}
             </div>
         </header>
+        {% if setup|default(false) %}
+        <div class="assistant__body assistant__body--setup">
+            <div class="assistant__setup">
+                <p><b>Помощнику не подключена языковая модель</b> — поэтому сотрудники кнопку «Помощник» пока не видят (эту подсказку видят только администраторы).</p>
+                <p>Подключите модель одним из способов:</p>
+                <ol>
+                    <li><b>На сервере портала</b> (Ollama и модель по объёму памяти, 5–15 минут):<br><code>sudo docportal ai enable</code></li>
+                    <li><b>На отдельном сервере</b> с видеокартой: на нём <code>sudo bash ai-server.sh --allow IP_портала</code> (скрипт — в <code>deploy/</code> дистрибутива), затем на сервере портала команда, которую он выведет: <code>sudo docportal ai connect --url … --api-key … --model …</code></li>
+                    <li><b>Облачный сервис</b> или свой сервер vLLM / Ollama — адрес, модель и ключ в настройках.</li>
+                </ol>
+                <p><a class="btn btn--pill btn--small" href="{{ path('admin_integrations') }}#assistant">Настройки помощника</a></p>
+                <p class="hints">Проверить на сервере: <code>docportal ai status</code>. Подробно — РУКОВОДСТВО, раздел 7.7.</p>
+            </div>
+        </div>
+        {% else %}
         <div class="assistant__body">
             <nav class="assistant__list" data-assistant-list {{ mode == 'panel' ? 'hidden' }} aria-label="Мои разговоры">
                 <div class="assistant__list-head">Мои разговоры</div>
@@ -51,5 +66,6 @@
                 <p class="assistant__note">Ответ готовит {{ assistant_config().model ? 'ИИ' : 'портал' }} по материалам портала — сверяйтесь с источниками по ссылкам.</p>
             </div>
         </div>
+        {% endif %}
     </section>
 </div>

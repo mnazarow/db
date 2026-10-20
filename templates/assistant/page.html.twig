@@ -15,6 +15,6 @@
     </div>
 </section>
 <section class="container section">
-    {% include 'assistant/_chat.html.twig' with {mode: 'page', current: current, conversations: conversations} only %}
+    {% include 'assistant/_chat.html.twig' with {mode: 'page', current: current, conversations: conversations, setup: setup|default(false)} only %}
 </section>
 {% endblock %}
