@@ -7,6 +7,8 @@ namespace App\Tests\Functional;
 use App\Entity\User;
 use App\Service\PortalSettings;
 use App\Tests\PortalTestCase;
+use App\Service\Sso\SamlService;
+use RobRichards\XMLSecLibs\XMLSecEnc;
 use RobRichards\XMLSecLibs\XMLSecurityDSig;
 use RobRichards\XMLSecLibs\XMLSecurityKey;
 
@@ -14,13 +16,16 @@ use RobRichards\XMLSecLibs\XMLSecurityKey;
  * Вход через SAML 2.0: переход к провайдеру, метаданные портала, приём подписанного ответа (создание учётной
  * записи и роль из групп), отказ при повторе, подделке, чужом адресате, без подписи, с истёкшим сроком, без
  * запроса из этого браузера и при подмене заголовка Host, ограничения по доменам и защита существующих
- * учётных записей, заполнение настроек по метаданным провайдера.
+ * учётных записей, заполнение настроек по метаданным провайдера; зашифрованные утверждения (ключ портала) и
+ * единый выход в обе стороны.
  */
 final class SamlLoginTest extends PortalTestCase
 {
     private const IDP = 'https://idp.test/metadata';
     private const ACS = 'http://localhost/login/saml/acs';
     private const SP = 'http://localhost/saml/metadata';
+    private const SLS = 'http://localhost/login/saml/sls';
+    private const IDP_SLO = 'https://idp.test/slo';
 
     private static ?string $key = null;
     private static ?string $cert = null;
@@ -45,8 +50,142 @@ final class SamlLoginTest extends PortalTestCase
 
     protected function tearDown(): void
     {
-        $this->settings()->setSaml(['enabled' => false]);
+        $this->settings()->setSaml(['enabled' => false, 'sp_key' => '', 'sp_cert' => '']);
         parent::tearDown();
+    }
+
+    /** Ключ портала: провайдер шифрует утверждение сертификатом из метаданных портала. */
+    public function testEncryptedAssertionsWithPortalKey(): void
+    {
+        $this->loginAs('admin');
+        $crawler = $this->client->request('GET', '/admin/security');
+        self::assertStringContainsString('не создан', $crawler->filter('#saml')->text());
+        $this->client->submit($crawler->filter('form[action$="/admin/security/saml/key"] button[value=generate]')->form());
+        self::assertResponseRedirects('/admin/security#saml');
+        $saml = $this->settings()->saml();
+        self::assertStringContainsString('BEGIN CERTIFICATE', $saml['sp_cert']);
+        self::assertStringContainsString('PRIVATE KEY', $saml['sp_key']);
+        $crawler = $this->client->request('GET', '/admin/security');
+        self::assertStringContainsString('сертификат «localhost»', $crawler->filter('#saml')->text());
+        self::assertStringNotContainsString('PRIVATE KEY', $crawler->html(), 'ключ на странице не показывается');
+        $this->client->request('GET', '/saml/metadata');
+        $xml = (string) $this->client->getResponse()->getContent();
+        self::assertStringContainsString('use="encryption"', $xml);
+        self::assertStringContainsString('Location="'.self::SLS.'"', $xml);
+        $this->client->getCookieJar()->clear();
+
+        // Зашифрованное утверждение принимается; при «только зашифрованные» открытое — нет.
+        $this->postResponse($this->response('olga.secret@corp.local', ['displayName' => ['Ольга']], inResponseTo: $this->startLogin(), encryptFor: $saml['sp_cert']));
+        self::assertResponseRedirects('/');
+        self::assertNotNull($this->em()->getRepository(User::class)->findOneBy(['username' => 'olga.secret']));
+        $this->settings()->setSaml(['want_encrypted' => true] + $this->settings()->saml());
+        $this->client->getCookieJar()->clear();
+        $this->assertRejected($this->response('olga.secret@corp.local', [], inResponseTo: $this->startLogin()));
+        $this->client->getCookieJar()->clear();
+        $this->postResponse($this->response('olga.secret@corp.local', [], inResponseTo: $this->startLogin(), encryptFor: $saml['sp_cert']));
+        self::assertResponseRedirects('/');
+        // Зашифровано чужим ключом — портал не расшифрует.
+        $other = static::getContainer()->get(SamlService::class)->generateSpKey();
+        $this->client->getCookieJar()->clear();
+        $this->assertRejected($this->response('olga.secret@corp.local', [], inResponseTo: $this->startLogin(), encryptFor: $other['cert']));
+
+        // Удаление ключа выключает и «только зашифрованные».
+        $this->loginAs('admin');
+        $crawler = $this->client->request('GET', '/admin/security');
+        $this->client->submit($crawler->filter('form[action$="/admin/security/saml/key"] button[value=delete]')->form());
+        self::assertSame('', $this->settings()->saml()['sp_key']);
+        self::assertFalse($this->settings()->saml()['want_encrypted']);
+    }
+
+    /** Единый выход: «Выйти» уводит к провайдеру; выход у провайдера завершает сеанс портала. */
+    public function testSingleLogoutBothWays(): void
+    {
+        $pair = static::getContainer()->get(SamlService::class)->generateSpKey();
+        $this->settings()->setSaml(['idp_slo_url' => self::IDP_SLO, 'slo' => true, 'sp_key' => $pair['key'], 'sp_cert' => $pair['cert']] + $this->settings()->saml());
+
+        // Выход из портала → запрос выхода провайдеру (подписан ключом портала) с NameID и SessionIndex.
+        $this->postResponse($this->response('pavel.slo@corp.local', [], inResponseTo: $this->startLogin()));
+        self::assertResponseRedirects('/');
+        $crawler = $this->client->request('GET', '/');
+        $token = (string) $crawler->filter('form[action="/logout"] input[name=_csrf_token]')->attr('value');
+        $this->client->request('POST', '/logout', ['_csrf_token' => $token]);
+        $location = (string) $this->client->getResponse()->headers->get('Location');
+        self::assertStringStartsWith(self::IDP_SLO.'?SAMLRequest=', $location);
+        parse_str((string) parse_url($location, \PHP_URL_QUERY), $query);
+        self::assertArrayHasKey('Signature', $query);
+        $request = (string) SamlService::inflate((string) $query['SAMLRequest']);
+        self::assertStringContainsString('Destination="'.self::IDP_SLO.'"', $request);
+        self::assertStringContainsString('>pavel.slo@corp.local</saml:NameID>', $request);
+        self::assertStringContainsString('<samlp:SessionIndex>_s', $request);
+        preg_match('/ID="([^"]+)"/', $request, $m);
+        $this->client->request('GET', '/presentations');
+        self::assertResponseRedirects('/login', null, 'сеанс портала завершён сразу');
+
+        // Ответ провайдера — «вы вышли»; повтор того же ответа не подтверждается.
+        $answer = $this->logoutResponse($m[1]);
+        $this->client->request('GET', '/login/saml/sls?'.$this->redirectQuery('SAMLResponse', $answer, false));
+        self::assertResponseRedirects('/login?kerberos=off');
+        $this->client->followRedirect();
+        self::assertSelectorTextContains('.alert', 'Вы вышли из портала и из учётной записи организации');
+        $this->client->request('GET', '/login/saml/sls?'.$this->redirectQuery('SAMLResponse', $answer, false));
+        $this->client->followRedirect();
+        self::assertSelectorTextContains('.alert', 'провайдер не подтвердил');
+
+        // Выход у провайдера: подписанный запрос завершает сеанс этого сотрудника, провайдер получает ответ.
+        $this->postResponse($this->response('pavel.slo@corp.local', [], inResponseTo: $this->startLogin()));
+        $this->client->request('GET', '/presentations');
+        self::assertResponseIsSuccessful();
+        $sessionIndex = $this->lastSessionIndex;
+        $this->client->request('GET', '/login/saml/sls?'.$this->redirectQuery('SAMLRequest', $this->logoutRequest('pavel.slo@corp.local', $sessionIndex), false));
+        self::assertResponseStatusCodeSame(400, 'без подписи провайдера запрос выхода не принимается');
+        $this->client->request('GET', '/presentations');
+        self::assertResponseIsSuccessful();
+        $this->client->request('GET', '/login/saml/sls?'.$this->redirectQuery('SAMLRequest', $this->logoutRequest('someone.else@corp.local', null), true));
+        self::assertStringStartsWith(self::IDP_SLO.'?SAMLResponse=', (string) $this->client->getResponse()->headers->get('Location'));
+        $this->client->request('GET', '/presentations');
+        self::assertResponseIsSuccessful('запрос выхода другого сотрудника этот сеанс не завершает');
+        $this->client->request('GET', '/login/saml/sls?'.$this->redirectQuery('SAMLRequest', $this->logoutRequest('pavel.slo@corp.local', $sessionIndex), true));
+        $location = (string) $this->client->getResponse()->headers->get('Location');
+        self::assertStringStartsWith(self::IDP_SLO.'?SAMLResponse=', $location);
+        parse_str((string) parse_url($location, \PHP_URL_QUERY), $query);
+        self::assertStringContainsString('urn:oasis:names:tc:SAML:2.0:status:Success', (string) SamlService::inflate((string) $query['SAMLResponse']));
+        $this->client->request('GET', '/presentations');
+        self::assertResponseRedirects('/login');
+
+        // Без единого выхода «Выйти» завершает только сеанс портала.
+        $this->settings()->setSaml(['slo' => false] + $this->settings()->saml());
+        $this->postResponse($this->response('pavel.slo@corp.local', [], inResponseTo: $this->startLogin()));
+        $crawler = $this->client->request('GET', '/');
+        $this->client->request('POST', '/logout', ['_csrf_token' => (string) $crawler->filter('form[action="/logout"] input[name=_csrf_token]')->attr('value')]);
+        self::assertStringNotContainsString('idp.test', (string) $this->client->getResponse()->headers->get('Location'));
+    }
+
+    private ?string $lastSessionIndex = null;
+
+    private function logoutResponse(string $inResponseTo): string
+    {
+        return '<samlp:LogoutResponse xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_lr'.bin2hex(random_bytes(8)).'" Version="2.0" IssueInstant="'.gmdate('Y-m-d\TH:i:s\Z').'" Destination="'.self::SLS.'" InResponseTo="'.$inResponseTo.'">'
+            .'<saml:Issuer>'.self::IDP.'</saml:Issuer><samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></samlp:Status></samlp:LogoutResponse>';
+    }
+
+    private function logoutRequest(string $nameId, ?string $sessionIndex): string
+    {
+        return '<samlp:LogoutRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_lq'.bin2hex(random_bytes(8)).'" Version="2.0" IssueInstant="'.gmdate('Y-m-d\TH:i:s\Z').'" Destination="'.self::SLS.'" NotOnOrAfter="'.gmdate('Y-m-d\TH:i:s\Z', time() + 300).'">'
+            .'<saml:Issuer>'.self::IDP.'</saml:Issuer><saml:NameID Format="urn:oasis:names:tc:SAML:2.0:nameid-format:persistent">'.htmlspecialchars($nameId, \ENT_XML1).'</saml:NameID>'
+            .(null !== $sessionIndex ? '<samlp:SessionIndex>'.$sessionIndex.'</samlp:SessionIndex>' : '').'</samlp:LogoutRequest>';
+    }
+
+    /** Параметры HTTP-Redirect: сообщение (deflate + base64) и, если нужно, подпись ключом провайдера. */
+    private function redirectQuery(string $param, string $xml, bool $sign): string
+    {
+        $query = $param.'='.urlencode(base64_encode((string) gzdeflate($xml)));
+        if ($sign) {
+            $query .= '&SigAlg='.urlencode(XMLSecurityKey::RSA_SHA256);
+            openssl_sign($query, $signature, (string) self::$key, \OPENSSL_ALGO_SHA256);
+            $query .= '&Signature='.urlencode(base64_encode($signature));
+        }
+
+        return $query;
     }
 
     public function testLoginPageRedirectAndMetadata(): void
@@ -253,9 +392,10 @@ final class SamlLoginTest extends PortalTestCase
     }
 
     /** @param array<string, list<string>> $attributes */
-    private function response(string $nameId, array $attributes, string $audience = self::SP, bool $sign = true, bool $expired = false, ?string $inResponseTo = null, string $acs = self::ACS, string $format = 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent'): string
+    private function response(string $nameId, array $attributes, string $audience = self::SP, bool $sign = true, bool $expired = false, ?string $inResponseTo = null, string $acs = self::ACS, string $format = 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent', ?string $encryptFor = null): string
     {
         $id = bin2hex(random_bytes(8));
+        $this->lastSessionIndex = '_s'.$id;
         $now = gmdate('Y-m-d\TH:i:s\Z', $expired ? time() - 7200 : time());
         $before = gmdate('Y-m-d\TH:i:s\Z', ($expired ? time() - 7200 : time()) - 60);
         $later = gmdate('Y-m-d\TH:i:s\Z', ($expired ? time() - 7200 : time()) + 300);
@@ -289,6 +429,22 @@ final class SamlLoginTest extends PortalTestCase
             $dsig->add509Cert((string) self::$cert);
             $dsig->insertSignature($root, $root->getElementsByTagName('Issuer')->item(0)->nextSibling);
             $assertion = (string) $dom->saveXML($root);
+        }
+
+        if (null !== $encryptFor) {
+            // Утверждение (подписанное) шифруется сертификатом портала — как это делает AD FS.
+            $dom = new \DOMDocument();
+            $dom->loadXML($assertion);
+            $enc = new XMLSecEnc();
+            $enc->setNode($dom->documentElement);
+            $enc->type = XMLSecEnc::Element;
+            $symmetric = new XMLSecurityKey(XMLSecurityKey::AES256_CBC);
+            $symmetric->generateSessionKey();
+            $public = new XMLSecurityKey(XMLSecurityKey::RSA_OAEP_MGF1P, ['type' => 'public']);
+            $public->loadKey($encryptFor, false, true);
+            $enc->encryptKey($public, $symmetric);
+            $data = $enc->encryptNode($symmetric, false);
+            $assertion = '<saml:EncryptedAssertion>'.$data->ownerDocument->saveXML($data).'</saml:EncryptedAssertion>';
         }
 
         return '<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_r'.$id.'" Version="2.0" IssueInstant="'.$now.'" Destination="'.$acs.'"'.$irt.'>'

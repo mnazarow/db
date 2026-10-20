@@ -62,7 +62,9 @@ final class SecurityController extends AbstractController
                 'base_ready' => null !== $this->saml->spBaseUrl(),
                 'default_base' => $this->portalUrl->baseUri(),
                 'acs_url' => $this->saml->acsUrl() ?: '—',
+                'sls_url' => $this->saml->slsUrl() ?: '—',
                 'certs' => $this->saml->certificateInfo(),
+                'sp_cert_info' => $this->saml->hasSpKey() ? $this->saml->spCertificateInfo() : null,
             ],
         ]);
     }
@@ -80,6 +82,12 @@ final class SecurityController extends AbstractController
         $ssoUrl = trim((string) $request->request->get('idp_sso_url'));
         if ('' !== $ssoUrl && !preg_match('~^https://~i', $ssoUrl)) {
             $this->addFlash('danger', 'SAML: адрес входа провайдера должен начинаться с https://.');
+
+            return $this->redirectToRoute('admin_security', ['_fragment' => 'saml']);
+        }
+        $sloUrl = trim((string) $request->request->get('idp_slo_url'));
+        if ('' !== $sloUrl && !preg_match('~^https://~i', $sloUrl)) {
+            $this->addFlash('danger', 'SAML: адрес выхода провайдера должен начинаться с https://.');
 
             return $this->redirectToRoute('admin_security', ['_fragment' => 'saml']);
         }
@@ -107,7 +115,13 @@ final class SecurityController extends AbstractController
             'sp_base_url' => $base,
             'allow_idp_initiated' => $request->request->has('allow_idp_initiated'),
             'domains' => (string) $request->request->get('domains'),
+            'idp_slo_url' => $sloUrl,
+            'slo' => $request->request->has('slo'),
+            'want_encrypted' => $request->request->has('want_encrypted') && $this->saml->hasSpKey(),
         ], $user);
+        if ($request->request->has('slo') && '' === $sloUrl) {
+            $this->addFlash('warning', 'SAML: единый выход не заработает, пока не задан адрес выхода провайдера.');
+        }
         $this->addFlash('success', $this->saml->isEnabled() || !$request->request->has('enabled') ? 'Настройки входа через SAML сохранены.' : 'Настройки сохранены, но вход через SAML не заработает, пока не заданы идентификатор провайдера, адрес входа, сертификат и адрес портала (здесь или в APP_DEFAULT_URI).');
 
         return $this->redirectToRoute('admin_security', ['_fragment' => 'saml']);
@@ -125,8 +139,33 @@ final class SecurityController extends AbstractController
 
             return $this->redirectToRoute('admin_security', ['_fragment' => 'saml']);
         }
-        $this->settings->setSaml(['idp_entity_id' => $parsed['entity_id'], 'idp_sso_url' => $parsed['sso_url'], 'idp_cert' => implode("\n", $parsed['certs'])] + $this->settings->saml(), $user);
+        $this->settings->setSaml(['idp_entity_id' => $parsed['entity_id'], 'idp_sso_url' => $parsed['sso_url'], 'idp_cert' => implode("\n", $parsed['certs'])]
+            + ('' !== $parsed['slo_url'] ? ['idp_slo_url' => $parsed['slo_url']] : []) + $this->settings->saml(), $user);
         $this->addFlash('success', \sprintf('SAML: из метаданных взяты провайдер %s, адрес входа и сертификаты (%d). Проверьте остальные настройки и включите вход.', $parsed['entity_id'], \count($parsed['certs'])));
+
+        return $this->redirectToRoute('admin_security', ['_fragment' => 'saml']);
+    }
+
+    /** Ключ портала для SAML: создать (заменить) или удалить. */
+    #[Route('/saml/key', name: 'admin_security_saml_key', methods: ['POST'])]
+    public function samlKey(Request $request, #[CurrentUser] User $user): Response
+    {
+        $this->checkToken($request);
+        if ('delete' === $request->request->get('action')) {
+            $this->settings->setSaml(['sp_key' => '', 'sp_cert' => '', 'want_encrypted' => false] + $this->settings->saml(), $user);
+            $this->addFlash('success', 'SAML: ключ портала удалён.');
+
+            return $this->redirectToRoute('admin_security', ['_fragment' => 'saml']);
+        }
+        try {
+            $pair = $this->saml->generateSpKey();
+        } catch (SsoException $e) {
+            $this->addFlash('danger', 'SAML: '.$e->getMessage());
+
+            return $this->redirectToRoute('admin_security', ['_fragment' => 'saml']);
+        }
+        $this->settings->setSaml(['sp_key' => $pair['key'], 'sp_cert' => $pair['cert']] + $this->settings->saml(), $user);
+        $this->addFlash('success', 'SAML: создан ключ портала. Обновите регистрацию портала у провайдера по метаданным портала — в них появился сертификат для шифрования и подписи.');
 
         return $this->redirectToRoute('admin_security', ['_fragment' => 'saml']);
     }
